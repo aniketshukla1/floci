@@ -85,6 +85,8 @@ class SamTransformProcessor {
                         expandServerlessSimpleTable(logicalId, mergeGlobals(globals, "SimpleTable", properties), expandedResources);
                 case "AWS::Serverless::Api" ->
                         expandServerlessApi(logicalId, mergeGlobals(globals, "Api", properties), expandedResources);
+                case "AWS::Serverless::HttpApi" ->
+                        expandServerlessHttpApi(logicalId, mergeGlobals(globals, "HttpApi", properties), expandedResources);
                 default -> LOG.debugv("Unsupported SAM resource type: {0} ({1})", type, logicalId);
             }
         }
@@ -648,6 +650,54 @@ class SamTransformProcessor {
         stageDef.set("Properties", stageProps);
         ArrayNode stageDeps = objectMapper.createArrayNode();
         stageDeps.add(deploymentLogicalId);
+        stageDef.set("DependsOn", stageDeps);
+        resources.set(stageLogicalId, stageDef);
+    }
+
+    /**
+     * Expands {@code AWS::Serverless::HttpApi} into a real {@code AWS::ApiGatewayV2::Api}
+     * (HTTP protocol) plus its stage — the V2 analogue of {@link #expandServerlessApi}.
+     * HTTP APIs deploy through an auto-deploying stage rather than a separate
+     * {@code Deployment} resource, so a single {@code $default} (or configured) stage is
+     * synthesized with {@code AutoDeploy = true}.
+     */
+    private void expandServerlessHttpApi(String logicalId, JsonNode properties, ObjectNode resources) {
+        resources.remove(logicalId);
+
+        ObjectNode apiDef = objectMapper.createObjectNode();
+        apiDef.put("Type", "AWS::ApiGatewayV2::Api");
+        ObjectNode apiProps = objectMapper.createObjectNode();
+        apiProps.put("ProtocolType", "HTTP");
+
+        JsonNode name = properties.path("Name");
+        if (!name.isMissingNode() && !name.isNull()) {
+            apiProps.set("Name", name.deepCopy());
+        } else {
+            apiProps.put("Name", logicalId);
+        }
+        copyIfPresent(properties, "Description", apiProps);
+        copyIfPresent(properties, "CorsConfiguration", apiProps);
+
+        apiDef.set("Properties", apiProps);
+        resources.set(logicalId, apiDef);
+
+        String stageLogicalId = logicalId + "Stage";
+        ObjectNode stageDef = objectMapper.createObjectNode();
+        stageDef.put("Type", "AWS::ApiGatewayV2::Stage");
+        ObjectNode stageProps = objectMapper.createObjectNode();
+        stageProps.set("ApiId", ref(logicalId));
+        stageProps.put("AutoDeploy", true);
+
+        JsonNode stageName = properties.path("StageName");
+        if (!stageName.isMissingNode() && !stageName.isNull()) {
+            stageProps.set("StageName", stageName.deepCopy());
+        } else {
+            stageProps.put("StageName", "$default");
+        }
+
+        stageDef.set("Properties", stageProps);
+        ArrayNode stageDeps = objectMapper.createArrayNode();
+        stageDeps.add(logicalId);
         stageDef.set("DependsOn", stageDeps);
         resources.set(stageLogicalId, stageDef);
     }

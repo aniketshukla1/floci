@@ -712,4 +712,53 @@ class SamTransformProcessorTest {
         assertTrue(expanded.path("Transform").isMissingNode());
         assertTrue(expanded.path("Globals").isMissingNode());
     }
+
+    @Test
+    void expandSamTemplate_httpApiBecomesApiGatewayV2() throws Exception {
+        // Regression for #1759: AWS::Serverless::HttpApi was dropped entirely, so the API
+        // never materialized. It must expand into a real AWS::ApiGatewayV2::Api plus its stage.
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": { "StageName": "live", "Description": "my http api" }
+                }
+              }
+            }
+            """);
+
+        JsonNode resources = processor.expandSamTemplate(template).path("Resources");
+
+        JsonNode api = resources.path("MyHttpApi");
+        assertEquals("AWS::ApiGatewayV2::Api", api.path("Type").asText());
+        assertEquals("HTTP", api.path("Properties").path("ProtocolType").asText());
+        assertEquals("MyHttpApi", api.path("Properties").path("Name").asText());
+        assertEquals("my http api", api.path("Properties").path("Description").asText());
+
+        JsonNode stage = resources.path("MyHttpApiStage");
+        assertEquals("AWS::ApiGatewayV2::Stage", stage.path("Type").asText());
+        assertEquals("live", stage.path("Properties").path("StageName").asText());
+        assertTrue(stage.path("Properties").path("AutoDeploy").asBoolean());
+        assertEquals("MyHttpApi", stage.path("Properties").path("ApiId").path("Ref").asText());
+    }
+
+    @Test
+    void expandSamTemplate_httpApiDefaultsNameAndDefaultStage() throws Exception {
+        // A property-less HttpApi is valid SAM: name falls back to the logical id and the
+        // stage to the HTTP-API "$default".
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": { "Gw": { "Type": "AWS::Serverless::HttpApi" } }
+            }
+            """);
+
+        JsonNode resources = processor.expandSamTemplate(template).path("Resources");
+
+        assertEquals("AWS::ApiGatewayV2::Api", resources.path("Gw").path("Type").asText());
+        assertEquals("Gw", resources.path("Gw").path("Properties").path("Name").asText());
+        assertEquals("$default", resources.path("GwStage").path("Properties").path("StageName").asText());
+    }
 }
