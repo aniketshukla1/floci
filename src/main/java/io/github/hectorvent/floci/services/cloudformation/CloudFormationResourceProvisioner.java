@@ -587,7 +587,11 @@ public class CloudFormationResourceProvisioner {
         String vpcId = resolveOptional(props, "VpcId", engine);
         String cidr = resolveOptional(props, "CidrBlock", engine);
         String az = resolveOptional(props, "AvailabilityZone", engine);
+        String mapPublicIpOnLaunch = resolveOptional(props, "MapPublicIpOnLaunch", engine);
         var subnet = ec2Service.createSubnet(region, vpcId, cidr, az);
+        if (mapPublicIpOnLaunch != null) {
+            ec2Service.modifySubnetAttribute(region, subnet.getSubnetId(), "mapPublicIpOnLaunch", mapPublicIpOnLaunch);
+        }
         r.setPhysicalId(subnet.getSubnetId());
         r.getAttributes().put("SubnetId", subnet.getSubnetId());
         r.getAttributes().put("VpcId", subnet.getVpcId());
