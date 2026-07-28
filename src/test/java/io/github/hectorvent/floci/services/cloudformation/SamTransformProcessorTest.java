@@ -817,8 +817,12 @@ class SamTransformProcessorTest {
 
         // The API still expands...
         assertEquals("AWS::ApiGatewayV2::Api", resources.path("Gw").path("Type").asText());
-        // ...but the user's colliding resource is left intact, not replaced by a synthesized Stage.
+        // ...and the user's colliding resource is left intact, not replaced by a synthesized Stage.
         assertEquals("AWS::S3::Bucket", resources.path("GwStage").path("Type").asText());
         assertEquals("user-owned", resources.path("GwStage").path("Properties").path("BucketName").asText());
+        // A collision-safe logical id keeps the generated auto-deploy stage in the stack as well.
+        assertEquals("AWS::ApiGatewayV2::Stage", resources.path("GwStage2").path("Type").asText());
+        assertEquals("$default", resources.path("GwStage2").path("Properties").path("StageName").asText());
+        assertTrue(resources.path("GwStage2").path("Properties").path("AutoDeploy").asBoolean());
     }
 }

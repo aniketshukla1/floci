@@ -689,15 +689,10 @@ class SamTransformProcessor {
         apiDef.set("Properties", apiProps);
         resources.set(logicalId, apiDef);
 
-        String stageLogicalId = logicalId + "Stage";
         // Never overwrite a resource the user already declared under the synthesized stage's
-        // logical id — skip synthesis and leave the stage to them rather than silently
-        // clobbering their resource (#1956).
-        if (resources.has(stageLogicalId)) {
-            LOG.warnv("SAM HttpApi {0}: not synthesizing stage — a resource named {1} already exists",
-                    logicalId, stageLogicalId);
-            return;
-        }
+        // logical id. Use the same collision-safe suffixing as other generated SAM resources so
+        // the HttpApi still receives its required auto-deploying stage (#1956).
+        String stageLogicalId = uniqueId(logicalId + "Stage", resources);
         ObjectNode stageDef = objectMapper.createObjectNode();
         stageDef.put("Type", "AWS::ApiGatewayV2::Stage");
         ObjectNode stageProps = objectMapper.createObjectNode();
