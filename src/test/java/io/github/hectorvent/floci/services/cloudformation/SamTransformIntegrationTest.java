@@ -386,7 +386,7 @@ class SamTransformIntegrationTest {
     }
 
     @Test
-    void samHttpApi_definitionUriCreatesApiGatewayV2Routes() {
+    void samHttpApi_intrinsicDefinitionUriCreatesApiGatewayV2Routes() {
         String suffix = Long.toString(System.nanoTime(), 36);
         String stackName = "sam-http-api-uri-" + suffix;
         String apiName = "sam-http-api-uri-" + suffix;
@@ -417,7 +417,8 @@ class SamTransformIntegrationTest {
                 Type: AWS::Serverless::HttpApi
                 Properties:
                   Name: %s
-                  DefinitionUri: s3://%s/openapi.json
+                  DefinitionUri:
+                    Fn::Sub: s3://%s/openapi.json
             """.formatted(apiName, bucketName);
 
         given()

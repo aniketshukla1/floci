@@ -2777,16 +2777,11 @@ public class CloudFormationResourceProvisioner {
         }
 
         JsonNode location = engine.resolveNode(props.get("BodyS3Location"));
-        String bucket = textOrNull(location, "Bucket");
-        String key = textOrNull(location, "Key");
-        String version = textOrNull(location, "Version");
-        if (bucket == null || bucket.isBlank() || key == null || key.isBlank()) {
-            throw new AwsException("ValidationException",
-                    "BodyS3Location must specify non-empty Bucket and Key values", 400);
-        }
+        ApiGatewayV2BodyS3Location bodyS3Location = parseApiGatewayV2BodyS3Location(location);
 
         try {
-            byte[] document = s3Service.getObject(bucket, key, version).getData();
+            byte[] document = s3Service.getObject(bodyS3Location.bucket(), bodyS3Location.key(),
+                    bodyS3Location.version()).getData();
             String content = new String(document, StandardCharsets.UTF_8).trim();
             if (content.startsWith("{") || content.startsWith("[")) {
                 return objectMapper.readTree(content);
@@ -2796,8 +2791,31 @@ public class CloudFormationResourceProvisioner {
             throw e;
         } catch (Exception e) {
             throw new AwsException("ValidationException",
-                    "Unable to parse OpenAPI document from s3://" + bucket + "/" + key, 400);
+                    "Unable to parse OpenAPI document from s3://" + bodyS3Location.bucket() + "/"
+                            + bodyS3Location.key(), 400);
         }
+    }
+
+    private ApiGatewayV2BodyS3Location parseApiGatewayV2BodyS3Location(JsonNode location) {
+        if (location != null && location.isTextual()) {
+            String uri = location.asText();
+            if (uri.startsWith("s3://")) {
+                String withoutScheme = uri.substring("s3://".length());
+                int slash = withoutScheme.indexOf('/');
+                if (slash > 0 && slash < withoutScheme.length() - 1) {
+                    return new ApiGatewayV2BodyS3Location(withoutScheme.substring(0, slash),
+                            withoutScheme.substring(slash + 1), null);
+                }
+            }
+        } else if (location != null && location.isObject()) {
+            String bucket = textOrNull(location, "Bucket");
+            String key = textOrNull(location, "Key");
+            if (bucket != null && !bucket.isBlank() && key != null && !key.isBlank()) {
+                return new ApiGatewayV2BodyS3Location(bucket, key, textOrNull(location, "Version"));
+            }
+        }
+        throw new AwsException("ValidationException",
+                "BodyS3Location must resolve to a non-empty S3 location", 400);
     }
 
     /**
@@ -2966,6 +2984,8 @@ public class CloudFormationResourceProvisioner {
     private record ApiGatewayV2BodyResources(List<String> routeIds, List<String> integrationIds) {}
 
     private record ApiGatewayV2BodyResourceState(List<Route> routes, List<Integration> integrations) {}
+
+    private record ApiGatewayV2BodyS3Location(String bucket, String key, String version) {}
 
     private static boolean isHttpApiOperation(String method) {
         return switch (method.toLowerCase(Locale.ROOT)) {
