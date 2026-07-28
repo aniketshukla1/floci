@@ -2752,10 +2752,12 @@ public class CloudFormationResourceProvisioner {
         // Keep the currently-serving body resources in place until the replacement has been
         // fully created. A failed replacement therefore cannot leave the API with no routes.
         ApiGatewayV2BodyResources replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
+        ApiGatewayV2BodyResourceState previous = null;
         try {
+            previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
             deleteApiGatewayV2BodyResources(r, region, apiId);
         } catch (RuntimeException e) {
-            deleteApiGatewayV2BodyResources(region, apiId, replacement);
+            rollbackApiGatewayV2BodyReplacement(region, apiId, replacement, previous, e);
             throw e;
         }
         storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, replacement.routeIds());
@@ -2876,6 +2878,57 @@ public class CloudFormationResourceProvisioner {
         }
     }
 
+    private ApiGatewayV2BodyResourceState snapshotApiGatewayV2BodyResources(StackResource r, String region,
+                                                                               String apiId) {
+        List<Route> routes = new ArrayList<>();
+        for (String routeId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR)) {
+            try {
+                routes.add(apiGatewayV2Service.getRoute(region, apiId, routeId));
+            } catch (AwsException e) {
+                if (e.getHttpStatus() != 404) {
+                    throw e;
+                }
+            }
+        }
+
+        List<Integration> integrations = new ArrayList<>();
+        for (String integrationId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR)) {
+            try {
+                integrations.add(apiGatewayV2Service.getIntegration(region, apiId, integrationId));
+            } catch (AwsException e) {
+                if (e.getHttpStatus() != 404) {
+                    throw e;
+                }
+            }
+        }
+        return new ApiGatewayV2BodyResourceState(routes, integrations);
+    }
+
+    private void rollbackApiGatewayV2BodyReplacement(String region, String apiId,
+                                                      ApiGatewayV2BodyResources replacement,
+                                                      ApiGatewayV2BodyResourceState previous,
+                                                      RuntimeException failure) {
+        try {
+            deleteApiGatewayV2BodyResources(region, apiId, replacement);
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
+        if (previous == null) {
+            return;
+        }
+        try {
+            // Routes refer to integrations, so restore integrations before their routes.
+            for (Integration integration : previous.integrations()) {
+                apiGatewayV2Service.restoreIntegration(region, apiId, integration);
+            }
+            for (Route route : previous.routes()) {
+                apiGatewayV2Service.restoreRoute(region, apiId, route);
+            }
+        } catch (RuntimeException restoreFailure) {
+            failure.addSuppressed(restoreFailure);
+        }
+    }
+
     private static List<String> apiGatewayV2BodyResourceIds(StackResource r, String attributeName) {
         String ids = r.getAttributes().get(attributeName);
         return ids == null || ids.isBlank() ? List.of() : Arrays.asList(ids.split(","));
@@ -2911,6 +2964,8 @@ public class CloudFormationResourceProvisioner {
     }
 
     private record ApiGatewayV2BodyResources(List<String> routeIds, List<String> integrationIds) {}
+
+    private record ApiGatewayV2BodyResourceState(List<Route> routes, List<Integration> integrations) {}
 
     private static boolean isHttpApiOperation(String method) {
         return switch (method.toLowerCase(Locale.ROOT)) {

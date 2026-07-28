@@ -16,7 +16,9 @@ import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -72,6 +74,45 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("old-route", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
         verify(apiGatewayV2Service, never()).deleteRoute(REGION, API_ID, "old-route");
         verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "partial-route");
+    }
+
+    @Test
+    void restoresExistingRoutesWhenOldRouteDeletionFails() throws Exception {
+        Route oldOne = route("old-one", "GET /before-one");
+        Route oldTwo = route("old-two", "GET /before-two");
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            return switch ((String) request.get("routeKey")) {
+                case "GET /before-one" -> oldOne;
+                case "GET /before-two" -> oldTwo;
+                case "GET /after" -> route("replacement-route", "GET /after");
+                default -> throw new AssertionError("Unexpected route key: " + request.get("routeKey"));
+            };
+        });
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-one")).thenReturn(oldOne);
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-two")).thenReturn(oldTwo);
+        doAnswer(invocation -> {
+            if ("old-two".equals(invocation.getArgument(2))) {
+                throw new AwsException("InternalFailure", "simulated delete failure", 500);
+            }
+            return null;
+        }).when(apiGatewayV2Service).deleteRoute(eq(REGION), eq(API_ID), anyString());
+
+        StackResource original = provision(body("""
+                {"paths":{"/before-one":{"get":{}},"/before-two":{"get":{}}}}
+                """), null, Map.of());
+
+        StackResource replacement = provision(body("""
+                {"paths":{"/after":{"get":{}}}}
+                """), original.getPhysicalId(), original.getAttributes());
+
+        assertEquals("CREATE_COMPLETE", original.getStatus());
+        assertEquals("CREATE_FAILED", replacement.getStatus());
+        assertEquals("old-one,old-two", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+        verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "replacement-route");
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
     }
 
     private StackResource provision(JsonNode properties, String existingPhysicalId,
