@@ -77,6 +77,29 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
+    void retainsPartialRoutesWhenMaterializationCleanupFails() throws Exception {
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            return switch ((String) request.get("routeKey")) {
+                case "GET /first" -> route("partial-route", "GET /first");
+                case "GET /second" -> throw new AwsException("InternalFailure", "simulated route failure", 500);
+                default -> throw new AssertionError("Unexpected route key: " + request.get("routeKey"));
+            };
+        });
+        doAnswer(invocation -> {
+            throw new AwsException("InternalFailure", "simulated cleanup failure", 500);
+        }).when(apiGatewayV2Service).deleteRoute(REGION, API_ID, "partial-route");
+
+        StackResource failed = provision(body("""
+                {"paths":{"/first":{"get":{}},"/second":{"get":{}}}}
+                """), null, Map.of());
+
+        assertEquals("CREATE_FAILED", failed.getStatus());
+        assertEquals("partial-route", failed.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+    }
+
+    @Test
     void restoresExistingRoutesWhenOldRouteDeletionFails() throws Exception {
         Route oldOne = route("old-one", "GET /before-one");
         Route oldTwo = route("old-two", "GET /before-two");
