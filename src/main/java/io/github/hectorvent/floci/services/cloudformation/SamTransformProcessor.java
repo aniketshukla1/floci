@@ -988,7 +988,10 @@ class SamTransformProcessor {
             copyIfPresent(definitionUri, "Bucket", location);
             copyIfPresent(definitionUri, "Key", location);
             copyIfPresent(definitionUri, "Version", location);
-            return location.has("Bucket") && location.has("Key") ? location : null;
+            // An intrinsic expression (for example Ref or Fn::Sub) cannot be split until the
+            // CloudFormation engine resolves it during provisioning. Preserve it as-is instead
+            // of silently dropping the HttpApi definition and its routes.
+            return location.has("Bucket") && location.has("Key") ? location : definitionUri.deepCopy();
         }
         return null;
     }

@@ -952,4 +952,25 @@ class SamTransformProcessorTest {
         assertEquals("api-specs", properties.path("BodyS3Location").path("Bucket").asText());
         assertEquals("openapi.yaml", properties.path("BodyS3Location").path("Key").asText());
     }
+    @Test
+    void expandSamTemplate_httpApiPreservesIntrinsicDefinitionUriForProvisioning() throws Exception {
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": {
+                    "DefinitionUri": { "Fn::Sub": "s3://${SpecBucket}/openapi.yaml" }
+                  }
+                }
+              }
+            }
+            """);
+
+        JsonNode bodyS3Location = processor.expandSamTemplate(template)
+                .path("Resources").path("MyHttpApi").path("Properties").path("BodyS3Location");
+
+        assertEquals("s3://${SpecBucket}/openapi.yaml", bodyS3Location.path("Fn::Sub").asText());
+    }
 }
