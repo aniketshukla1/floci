@@ -177,7 +177,7 @@ public class WarmPool implements ContainerTeardown {
     public void pushCodeUpdate(LambdaFunction fn) {
         LOG.infov("Reactive S3 Sync: invalidating warm pool for function {0} to pick up new code",
                 fn.getFunctionName());
-        drainFunction(fn.getFunctionName());
+        drainFunctionVersion(fn.getFunctionName(), fn.getVersion());
     }
 
     /**
@@ -193,7 +193,7 @@ public class WarmPool implements ContainerTeardown {
 
     /**
      * Stops and removes all warm containers for every version of the given function.
-     * Called on function delete or code update.
+     * Called when a function is deleted.
      */
     public void drainFunction(String functionName) {
         List<ContainerHandle> toStop = new ArrayList<>();
@@ -205,6 +205,19 @@ public class WarmPool implements ContainerTeardown {
         }
         if (toStop.isEmpty()) return;
         LOG.infov("Draining {0} container(s) for function: {1}", toStop.size(), functionName);
+        stopInParallel(toStop);
+    }
+
+    /**
+     * Stops and removes warm containers for one specified function version.
+     * Code and configuration updates use this to invalidate only the mutable
+     * {@code $LATEST} version without disrupting published versions.
+     */
+    public void drainFunctionVersion(String functionName, String functionVersion) {
+        List<ContainerHandle> toStop = removePool(poolKey(functionName, functionVersion));
+        if (toStop.isEmpty()) return;
+        LOG.infov("Draining {0} container(s) for function {1} version {2}",
+                toStop.size(), functionName, functionVersion == null ? "$LATEST" : functionVersion);
         stopInParallel(toStop);
     }
 
