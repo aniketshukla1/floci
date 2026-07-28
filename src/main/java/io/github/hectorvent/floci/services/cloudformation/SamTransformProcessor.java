@@ -210,6 +210,13 @@ class SamTransformProcessor {
         apiProps.set("Name", !name.isMissingNode() ? name.deepCopy() : objectMapper.getNodeFactory().textNode(logicalId));
         apiProps.put("ProtocolType", "HTTP");
         copyIfPresent(properties, "Description", apiProps);
+
+        // Preserve inline OpenAPI route definitions so the ApiGatewayV2 provisioner can
+        // materialize the routes and integrations declared by SAM DefinitionBody.
+        JsonNode definitionBody = properties.path("DefinitionBody");
+        if (!definitionBody.isMissingNode() && !definitionBody.isNull()) {
+            apiProps.set("Body", definitionBody.deepCopy());
+        }
         apiDef.set("Properties", apiProps);
         resources.set(logicalId, apiDef);
 
