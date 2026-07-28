@@ -5180,14 +5180,91 @@ public class CloudFormationResourceProvisioner {
             req.put("corsConfiguration", cors);
         }
 
+        boolean creating = r.getPhysicalId() == null;
         Api api;
-        if (r.getPhysicalId() == null) {
+        if (creating) {
             api = apiGatewayV2Service.createApi(region, req);
         } else {
             api = apiGatewayV2Service.updateApi(region, r.getPhysicalId(), req);
         }
         r.setPhysicalId(api.getApiId());
         r.getAttributes().put("ApiEndpoint", api.getApiEndpoint());
+        if (creating) {
+            provisionApiGatewayV2BodyRoutes(region, api.getApiId(), props, engine);
+        }
+    }
+
+    /**
+     * CloudFormation's ApiGatewayV2 {@code Body} is an OpenAPI document. Materialize each
+     * declared HTTP operation as the route that API Gateway V2 serves, including a route target
+     * when the operation declares an x-amazon-apigateway-integration extension.
+     */
+    private void provisionApiGatewayV2BodyRoutes(String region, String apiId, JsonNode props,
+                                                 CloudFormationTemplateEngine engine) {
+        if (props == null || !props.hasNonNull("Body")) {
+            return;
+        }
+        JsonNode paths = engine.resolveNode(props.get("Body")).path("paths");
+        if (!paths.isObject()) {
+            return;
+        }
+
+        Iterator<Map.Entry<String, JsonNode>> pathEntries = paths.fields();
+        while (pathEntries.hasNext()) {
+            Map.Entry<String, JsonNode> pathEntry = pathEntries.next();
+            if (!pathEntry.getValue().isObject()) {
+                continue;
+            }
+            Iterator<Map.Entry<String, JsonNode>> operations = pathEntry.getValue().fields();
+            while (operations.hasNext()) {
+                Map.Entry<String, JsonNode> operation = operations.next();
+                String method = operation.getKey();
+                if (!isHttpApiOperation(method) || !operation.getValue().isObject()) {
+                    continue;
+                }
+
+                Map<String, Object> routeRequest = new HashMap<>();
+                routeRequest.put("routeKey", openApiRouteKey(method, pathEntry.getKey()));
+                JsonNode integration = operation.getValue().path("x-amazon-apigateway-integration");
+                if (integration.isObject()) {
+                    String integrationType = textOrNull(integration, "type");
+                    if (integrationType != null && !integrationType.isBlank()) {
+                        Map<String, Object> integrationRequest = new HashMap<>();
+                        integrationRequest.put("integrationType", integrationType.toUpperCase(Locale.ROOT));
+                        putOpenApiIntegrationValue(integrationRequest, "integrationUri", integration, "uri");
+                        putOpenApiIntegrationValue(integrationRequest, "integrationMethod", integration, "httpMethod");
+                        putOpenApiIntegrationValue(integrationRequest, "payloadFormatVersion", integration,
+                                "payloadFormatVersion");
+                        Integration createdIntegration = apiGatewayV2Service.createIntegration(region, apiId,
+                                integrationRequest);
+                        routeRequest.put("target", "integrations/" + createdIntegration.getIntegrationId());
+                    }
+                }
+                apiGatewayV2Service.createRoute(region, apiId, routeRequest);
+            }
+        }
+    }
+
+    private static boolean isHttpApiOperation(String method) {
+        return switch (method.toLowerCase(Locale.ROOT)) {
+            case "get", "put", "post", "delete", "options", "head", "patch", "trace",
+                    "x-amazon-apigateway-any-method" -> true;
+            default -> false;
+        };
+    }
+
+    private static String openApiRouteKey(String method, String path) {
+        String routeMethod = "x-amazon-apigateway-any-method".equals(method) ? "ANY"
+                : method.toUpperCase(Locale.ROOT);
+        return routeMethod + " " + path;
+    }
+
+    private static void putOpenApiIntegrationValue(Map<String, Object> request, String requestKey,
+                                                   JsonNode integration, String openApiKey) {
+        String value = textOrNull(integration, openApiKey);
+        if (value != null) {
+            request.put(requestKey, value);
+        }
     }
 
     private Map<String, String> parseApiGatewayV2Tags(JsonNode tagsNode, CloudFormationTemplateEngine engine) {

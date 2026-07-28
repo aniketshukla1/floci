@@ -13,6 +13,7 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -464,6 +465,60 @@ class SamTransformIntegrationTest {
 
         assertThat(resourcesXml, containsString("<ResourceType>AWS::ApiGateway::RestApi</ResourceType>"));
         assertThat(resourcesXml, not(containsString("AWS::Serverless::Api")));
+    }
+
+    @Test
+    void samHttpApi_definitionBodyCreatesApiGatewayV2Routes() {
+        String suffix = Long.toString(System.nanoTime(), 36);
+        String stackName = "sam-http-api-" + suffix;
+        String apiName = "sam-http-api-" + suffix;
+        stacksToDelete.add(stackName);
+
+        String template = """
+            AWSTemplateFormatVersion: '2010-09-09'
+            Transform: AWS::Serverless-2016-10-31
+            Resources:
+              HttpApi:
+                Type: AWS::Serverless::HttpApi
+                Properties:
+                  Name: %s
+                  DefinitionBody:
+                    openapi: 3.0.1
+                    paths:
+                      /hello:
+                        get: {}
+                      /widgets:
+                        post: {}
+            """.formatted(apiName);
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateStack")
+            .formParam("StackName", stackName)
+            .formParam("TemplateBody", template)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(containsString("<StackId>"));
+
+        waitForStackStatus(stackName, "CREATE_COMPLETE");
+
+        String apiId = given()
+        .when()
+            .get("/v2/apis")
+        .then()
+            .statusCode(200)
+            .body("items.find { it.name == '" + apiName + "' }.protocolType", equalTo("HTTP"))
+            .extract()
+            .path("items.find { it.name == '" + apiName + "' }.apiId");
+
+        given()
+        .when()
+            .get("/v2/apis/" + apiId + "/routes")
+        .then()
+            .statusCode(200)
+            .body("items.routeKey", hasItems("GET /hello", "POST /widgets"));
     }
 
     @Test
