@@ -5208,7 +5208,7 @@ public class CloudFormationResourceProvisioner {
                 previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
                 deleteApiGatewayV2BodyResources(r, region, apiId);
             } catch (RuntimeException e) {
-                rollbackApiGatewayV2BodyReplacement(region, apiId,
+                rollbackApiGatewayV2BodyReplacement(r, region, apiId,
                         new ApiGatewayV2BodyResources(List.of(), List.of()), previous, e);
                 throw e;
             }
@@ -5217,13 +5217,19 @@ public class CloudFormationResourceProvisioner {
 
         // Keep the currently-serving body resources in place until the replacement has been
         // fully created. A failed replacement therefore cannot leave the API with no routes.
-        ApiGatewayV2BodyResources replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
+        ApiGatewayV2BodyResources replacement;
+        try {
+            replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
+        } catch (ApiGatewayV2BodyMaterializationException e) {
+            retainApiGatewayV2BodyResourceIds(r, e.resources());
+            throw e;
+        }
         ApiGatewayV2BodyResourceState previous = null;
         try {
             previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
             deleteApiGatewayV2BodyResources(r, region, apiId);
         } catch (RuntimeException e) {
-            rollbackApiGatewayV2BodyReplacement(region, apiId, replacement, previous, e);
+            rollbackApiGatewayV2BodyReplacement(r, region, apiId, replacement, previous, e);
             throw e;
         }
         storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, replacement.routeIds());
@@ -5338,8 +5344,12 @@ public class CloudFormationResourceProvisioner {
             }
             return new ApiGatewayV2BodyResources(routeIds, integrationIds);
         } catch (RuntimeException e) {
-            deleteApiGatewayV2BodyResources(region, apiId,
-                    new ApiGatewayV2BodyResources(routeIds, integrationIds));
+            ApiGatewayV2BodyResources partial = new ApiGatewayV2BodyResources(routeIds, integrationIds);
+            List<RuntimeException> cleanupFailures = cleanupApiGatewayV2BodyResources(region, apiId, partial);
+            if (!cleanupFailures.isEmpty()) {
+                cleanupFailures.forEach(e::addSuppressed);
+                throw new ApiGatewayV2BodyMaterializationException(e, partial);
+            }
             throw e;
         }
     }
@@ -5388,14 +5398,14 @@ public class CloudFormationResourceProvisioner {
         return new ApiGatewayV2BodyResourceState(routes, integrations);
     }
 
-    private void rollbackApiGatewayV2BodyReplacement(String region, String apiId,
+    private void rollbackApiGatewayV2BodyReplacement(StackResource r, String region, String apiId,
                                                       ApiGatewayV2BodyResources replacement,
                                                       ApiGatewayV2BodyResourceState previous,
                                                       RuntimeException failure) {
-        try {
-            deleteApiGatewayV2BodyResources(region, apiId, replacement);
-        } catch (RuntimeException cleanupFailure) {
-            failure.addSuppressed(cleanupFailure);
+        List<RuntimeException> cleanupFailures = cleanupApiGatewayV2BodyResources(region, apiId, replacement);
+        if (!cleanupFailures.isEmpty()) {
+            cleanupFailures.forEach(failure::addSuppressed);
+            retainApiGatewayV2BodyResourceIds(r, replacement);
         }
         if (previous == null) {
             return;
@@ -5411,6 +5421,39 @@ public class CloudFormationResourceProvisioner {
         } catch (RuntimeException restoreFailure) {
             failure.addSuppressed(restoreFailure);
         }
+    }
+
+    private List<RuntimeException> cleanupApiGatewayV2BodyResources(String region, String apiId,
+                                                                      ApiGatewayV2BodyResources resources) {
+        List<RuntimeException> failures = new ArrayList<>();
+        for (String routeId : resources.routeIds()) {
+            try {
+                deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
+            } catch (RuntimeException e) {
+                failures.add(e);
+            }
+        }
+        for (String integrationId : resources.integrationIds()) {
+            try {
+                deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
+            } catch (RuntimeException e) {
+                failures.add(e);
+            }
+        }
+        return failures;
+    }
+
+    private void retainApiGatewayV2BodyResourceIds(StackResource r, ApiGatewayV2BodyResources resources) {
+        retainApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, resources.routeIds());
+        retainApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
+                resources.integrationIds());
+    }
+
+    private static void retainApiGatewayV2BodyResourceIds(StackResource r, String attributeName,
+                                                           List<String> resourceIds) {
+        LinkedHashSet<String> retained = new LinkedHashSet<>(apiGatewayV2BodyResourceIds(r, attributeName));
+        retained.addAll(resourceIds);
+        storeApiGatewayV2BodyResourceIds(r, attributeName, new ArrayList<>(retained));
     }
 
     private static List<String> apiGatewayV2BodyResourceIds(StackResource r, String attributeName) {
@@ -5452,6 +5495,20 @@ public class CloudFormationResourceProvisioner {
     private record ApiGatewayV2BodyResourceState(List<Route> routes, List<Integration> integrations) {}
 
     private record ApiGatewayV2BodyS3Location(String bucket, String key, String version) {}
+
+    private static final class ApiGatewayV2BodyMaterializationException extends RuntimeException {
+        private final ApiGatewayV2BodyResources resources;
+
+        private ApiGatewayV2BodyMaterializationException(RuntimeException cause,
+                                                          ApiGatewayV2BodyResources resources) {
+            super(cause.getMessage(), cause);
+            this.resources = resources;
+        }
+
+        private ApiGatewayV2BodyResources resources() {
+            return resources;
+        }
+    }
 
     private static boolean isHttpApiOperation(String method) {
         return switch (method.toLowerCase(Locale.ROOT)) {
