@@ -931,4 +931,25 @@ class SamTransformProcessorTest {
         assertTrue(body.path("paths").has("/hello"), "route definitions must survive the transform");
     }
 
+    @Test
+    void expandSamTemplate_httpApiMapsDefinitionUriToBodyS3Location() throws Exception {
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": { "DefinitionUri": "s3://api-specs/openapi.yaml" }
+                }
+              }
+            }
+            """);
+
+        JsonNode properties = processor.expandSamTemplate(template)
+                .path("Resources").path("MyHttpApi").path("Properties");
+
+        assertTrue(properties.path("Body").isMissingNode(), "DefinitionUri must not become an inline Body");
+        assertEquals("api-specs", properties.path("BodyS3Location").path("Bucket").asText());
+        assertEquals("openapi.yaml", properties.path("BodyS3Location").path("Key").asText());
+    }
 }
