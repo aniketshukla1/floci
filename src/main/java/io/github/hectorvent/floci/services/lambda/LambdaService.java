@@ -612,7 +612,9 @@ public class LambdaService {
         String name = ref.name();
         String qualifier = ref.qualifier();
         LambdaFunction fn = resolveInvokeTarget(region, name, qualifier);
-        return executorService.invoke(fn, payload, type);
+        InvokeResult result = executorService.invoke(fn, payload, type);
+        result.setExecutedVersion(fn.getVersion());
+        return result;
     }
 
     private LambdaFunction resolveInvokeTarget(String region, String name, String qualifier) {
