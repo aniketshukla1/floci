@@ -761,4 +761,64 @@ class SamTransformProcessorTest {
         assertEquals("Gw", resources.path("Gw").path("Properties").path("Name").asText());
         assertEquals("$default", resources.path("GwStage").path("Properties").path("StageName").asText());
     }
+
+    @Test
+    void expandSamTemplate_httpApiPreservesDefinitionBodyAsRoutes() throws Exception {
+        // Regression for #1956: a route-bearing HttpApi carries its routes in the inline
+        // OpenAPI DefinitionBody, which must survive as the ApiGatewayV2::Api Body — otherwise
+        // the API expands with no routes.
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": {
+                    "DefinitionBody": {
+                      "openapi": "3.0.1",
+                      "paths": {
+                        "/hello": { "get": { "x-amazon-apigateway-integration": { "type": "aws_proxy" } } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        JsonNode resources = processor.expandSamTemplate(template).path("Resources");
+
+        JsonNode api = resources.path("MyHttpApi");
+        assertEquals("AWS::ApiGatewayV2::Api", api.path("Type").asText());
+        JsonNode body = api.path("Properties").path("Body");
+        assertFalse(body.isMissingNode(), "DefinitionBody must be preserved as the API Body");
+        assertEquals("3.0.1", body.path("openapi").asText());
+        assertTrue(body.path("paths").has("/hello"), "route definitions must survive the transform");
+    }
+
+    @Test
+    void expandSamTemplate_httpApiDoesNotOverwriteUserDeclaredStageResource() throws Exception {
+        // Regression for #1956: the synthesized "<id>Stage" must never clobber a resource the
+        // user already declared under that logical id.
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "Gw": { "Type": "AWS::Serverless::HttpApi" },
+                "GwStage": {
+                  "Type": "AWS::S3::Bucket",
+                  "Properties": { "BucketName": "user-owned" }
+                }
+              }
+            }
+            """);
+
+        JsonNode resources = processor.expandSamTemplate(template).path("Resources");
+
+        // The API still expands...
+        assertEquals("AWS::ApiGatewayV2::Api", resources.path("Gw").path("Type").asText());
+        // ...but the user's colliding resource is left intact, not replaced by a synthesized Stage.
+        assertEquals("AWS::S3::Bucket", resources.path("GwStage").path("Type").asText());
+        assertEquals("user-owned", resources.path("GwStage").path("Properties").path("BucketName").asText());
+    }
 }

@@ -678,10 +678,26 @@ class SamTransformProcessor {
         copyIfPresent(properties, "Description", apiProps);
         copyIfPresent(properties, "CorsConfiguration", apiProps);
 
+        // Preserve inline OpenAPI route definitions: SAM's DefinitionBody carries the HttpApi's
+        // routes and maps to the ApiGatewayV2::Api Body. Dropping it expands the API with no
+        // routes, defeating the purpose for route-bearing templates (#1956).
+        JsonNode definitionBody = properties.path("DefinitionBody");
+        if (!definitionBody.isMissingNode() && !definitionBody.isNull()) {
+            apiProps.set("Body", definitionBody.deepCopy());
+        }
+
         apiDef.set("Properties", apiProps);
         resources.set(logicalId, apiDef);
 
         String stageLogicalId = logicalId + "Stage";
+        // Never overwrite a resource the user already declared under the synthesized stage's
+        // logical id — skip synthesis and leave the stage to them rather than silently
+        // clobbering their resource (#1956).
+        if (resources.has(stageLogicalId)) {
+            LOG.warnv("SAM HttpApi {0}: not synthesizing stage — a resource named {1} already exists",
+                    logicalId, stageLogicalId);
+            return;
+        }
         ObjectNode stageDef = objectMapper.createObjectNode();
         stageDef.put("Type", "AWS::ApiGatewayV2::Stage");
         ObjectNode stageProps = objectMapper.createObjectNode();
