@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.ec2;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -83,6 +84,8 @@ public class Ec2Service implements ContainerTeardown {
     private static final Logger LOG = Logger.getLogger(Ec2Service.class);
     private static final DateTimeFormatter ISO_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
             .withZone(ZoneOffset.UTC);
+    private static final Duration CONTAINER_LAUNCH_TIMEOUT = Duration.ofSeconds(60);
+    private static final long CONTAINER_LAUNCH_POLL_MILLIS = 50;
 
     private final String accountId;
     private final EmulatorConfig config;
@@ -733,6 +736,42 @@ public class Ec2Service implements ContainerTeardown {
         }
 
         return reservation;
+    }
+
+    /**
+     * Waits for a container-backed EC2 instance to reach a terminal launch state.
+     * CloudFormation uses this to avoid reporting a stack success when the asynchronous
+     * Docker launch has already failed. Mock-mode instances do not launch containers.
+     *
+     * @param instance the instance returned by {@link #runInstances}
+     * @throws AwsException if the container terminates during launch or does not start in time
+     */
+    public void awaitContainerLaunch(Instance instance) {
+        if (config.services().ec2().mock()) {
+            return;
+        }
+
+        long deadline = System.nanoTime() + CONTAINER_LAUNCH_TIMEOUT.toNanos();
+        while (System.nanoTime() < deadline) {
+            String state = instance.getState() != null ? instance.getState().getName() : null;
+            if ("running".equals(state)) {
+                return;
+            }
+            if ("terminated".equals(state)) {
+                throw new AwsException("InstanceLaunchFailure",
+                        "EC2 instance " + instance.getInstanceId() + " terminated during container launch", 500);
+            }
+            try {
+                Thread.sleep(CONTAINER_LAUNCH_POLL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AwsException("InternalError", "Interrupted while waiting for EC2 instance "
+                        + instance.getInstanceId() + " to launch", 500);
+            }
+        }
+
+        throw new AwsException("InstanceLaunchFailure", "EC2 instance " + instance.getInstanceId()
+                + " did not start its container within " + CONTAINER_LAUNCH_TIMEOUT.toSeconds() + " seconds", 500);
     }
 
     /**

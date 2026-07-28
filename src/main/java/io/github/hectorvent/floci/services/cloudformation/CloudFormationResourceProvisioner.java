@@ -947,6 +947,7 @@ public class CloudFormationResourceProvisioner {
         var instance = reservation.getInstances().get(0);
         r.setPhysicalId(instance.getInstanceId());
         r.getAttributes().put("InstanceId", instance.getInstanceId());
+        ec2Service.awaitContainerLaunch(instance);
         if (instance.getPrivateIpAddress() != null) {
             r.getAttributes().put("PrivateIp", instance.getPrivateIpAddress());
         }
