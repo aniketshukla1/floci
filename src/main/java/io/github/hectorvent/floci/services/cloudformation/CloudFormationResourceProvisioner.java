@@ -2744,14 +2744,23 @@ public class CloudFormationResourceProvisioner {
     private void reconcileApiGatewayV2BodyRoutes(StackResource r, String region, String apiId, JsonNode props,
                                                  CloudFormationTemplateEngine engine) {
         JsonNode body = resolveApiGatewayV2OpenApiBody(props, engine);
-        deleteApiGatewayV2BodyResources(r, region, apiId);
         if (body == null) {
+            deleteApiGatewayV2BodyResources(r, region, apiId);
             return;
         }
 
-        ApiGatewayV2BodyResources created = materializeApiGatewayV2BodyRoutes(region, apiId, body);
-        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, created.routeIds());
-        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR, created.integrationIds());
+        // Keep the currently-serving body resources in place until the replacement has been
+        // fully created. A failed replacement therefore cannot leave the API with no routes.
+        ApiGatewayV2BodyResources replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
+        try {
+            deleteApiGatewayV2BodyResources(r, region, apiId);
+        } catch (RuntimeException e) {
+            deleteApiGatewayV2BodyResources(region, apiId, replacement);
+            throw e;
+        }
+        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, replacement.routeIds());
+        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
+                replacement.integrationIds());
     }
 
     private JsonNode resolveApiGatewayV2OpenApiBody(JsonNode props, CloudFormationTemplateEngine engine) {
@@ -2798,59 +2807,73 @@ public class CloudFormationResourceProvisioner {
                                                                           JsonNode body) {
         List<String> routeIds = new ArrayList<>();
         List<String> integrationIds = new ArrayList<>();
-        JsonNode paths = body.path("paths");
-        if (!paths.isObject()) {
-            return new ApiGatewayV2BodyResources(routeIds, integrationIds);
-        }
-
-        Iterator<Map.Entry<String, JsonNode>> pathEntries = paths.fields();
-        while (pathEntries.hasNext()) {
-            Map.Entry<String, JsonNode> pathEntry = pathEntries.next();
-            if (!pathEntry.getValue().isObject()) {
-                continue;
+        try {
+            JsonNode paths = body.path("paths");
+            if (!paths.isObject()) {
+                return new ApiGatewayV2BodyResources(routeIds, integrationIds);
             }
-            Iterator<Map.Entry<String, JsonNode>> operations = pathEntry.getValue().fields();
-            while (operations.hasNext()) {
-                Map.Entry<String, JsonNode> operation = operations.next();
-                String method = operation.getKey();
-                if (!isHttpApiOperation(method) || !operation.getValue().isObject()) {
+
+            Iterator<Map.Entry<String, JsonNode>> pathEntries = paths.fields();
+            while (pathEntries.hasNext()) {
+                Map.Entry<String, JsonNode> pathEntry = pathEntries.next();
+                if (!pathEntry.getValue().isObject()) {
                     continue;
                 }
-
-                Map<String, Object> routeRequest = new HashMap<>();
-                routeRequest.put("routeKey", openApiRouteKey(method, pathEntry.getKey()));
-                JsonNode integration = operation.getValue().path("x-amazon-apigateway-integration");
-                if (integration.isObject()) {
-                    String integrationType = textOrNull(integration, "type");
-                    if (integrationType != null && !integrationType.isBlank()) {
-                        Map<String, Object> integrationRequest = new HashMap<>();
-                        integrationRequest.put("integrationType", integrationType.toUpperCase(Locale.ROOT));
-                        putOpenApiIntegrationValue(integrationRequest, "integrationUri", integration, "uri");
-                        putOpenApiIntegrationValue(integrationRequest, "integrationMethod", integration, "httpMethod");
-                        putOpenApiIntegrationValue(integrationRequest, "payloadFormatVersion", integration,
-                                "payloadFormatVersion");
-                        Integration createdIntegration = apiGatewayV2Service.createIntegration(region, apiId,
-                                integrationRequest);
-                        integrationIds.add(createdIntegration.getIntegrationId());
-                        routeRequest.put("target", "integrations/" + createdIntegration.getIntegrationId());
+                Iterator<Map.Entry<String, JsonNode>> operations = pathEntry.getValue().fields();
+                while (operations.hasNext()) {
+                    Map.Entry<String, JsonNode> operation = operations.next();
+                    String method = operation.getKey();
+                    if (!isHttpApiOperation(method) || !operation.getValue().isObject()) {
+                        continue;
                     }
+
+                    Map<String, Object> routeRequest = new HashMap<>();
+                    routeRequest.put("routeKey", openApiRouteKey(method, pathEntry.getKey()));
+                    JsonNode integration = operation.getValue().path("x-amazon-apigateway-integration");
+                    if (integration.isObject()) {
+                        String integrationType = textOrNull(integration, "type");
+                        if (integrationType != null && !integrationType.isBlank()) {
+                            Map<String, Object> integrationRequest = new HashMap<>();
+                            integrationRequest.put("integrationType", integrationType.toUpperCase(Locale.ROOT));
+                            putOpenApiIntegrationValue(integrationRequest, "integrationUri", integration, "uri");
+                            putOpenApiIntegrationValue(integrationRequest, "integrationMethod", integration,
+                                    "httpMethod");
+                            putOpenApiIntegrationValue(integrationRequest, "payloadFormatVersion", integration,
+                                    "payloadFormatVersion");
+                            Integration createdIntegration = apiGatewayV2Service.createIntegration(region, apiId,
+                                    integrationRequest);
+                            integrationIds.add(createdIntegration.getIntegrationId());
+                            routeRequest.put("target", "integrations/" + createdIntegration.getIntegrationId());
+                        }
+                    }
+                    Route createdRoute = apiGatewayV2Service.createRoute(region, apiId, routeRequest);
+                    routeIds.add(createdRoute.getRouteId());
                 }
-                Route createdRoute = apiGatewayV2Service.createRoute(region, apiId, routeRequest);
-                routeIds.add(createdRoute.getRouteId());
             }
+            return new ApiGatewayV2BodyResources(routeIds, integrationIds);
+        } catch (RuntimeException e) {
+            deleteApiGatewayV2BodyResources(region, apiId,
+                    new ApiGatewayV2BodyResources(routeIds, integrationIds));
+            throw e;
         }
-        return new ApiGatewayV2BodyResources(routeIds, integrationIds);
     }
 
     private void deleteApiGatewayV2BodyResources(StackResource r, String region, String apiId) {
-        for (String routeId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR)) {
-            deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
-        }
-        for (String integrationId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR)) {
-            deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
-        }
+        deleteApiGatewayV2BodyResources(region, apiId, new ApiGatewayV2BodyResources(
+                apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR),
+                apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR)));
         r.getAttributes().remove(APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR);
         r.getAttributes().remove(APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR);
+    }
+
+    private void deleteApiGatewayV2BodyResources(String region, String apiId,
+                                                 ApiGatewayV2BodyResources resources) {
+        for (String routeId : resources.routeIds()) {
+            deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
+        }
+        for (String integrationId : resources.integrationIds()) {
+            deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
+        }
     }
 
     private static List<String> apiGatewayV2BodyResourceIds(StackResource r, String attributeName) {
