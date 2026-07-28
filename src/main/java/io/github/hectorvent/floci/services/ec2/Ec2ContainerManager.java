@@ -167,8 +167,6 @@ public class Ec2ContainerManager {
                     return;
                 }
 
-                configureLinkLocalMetadataEndpoint(containerId, instanceId, flociHost, imdsPort);
-
                 // Set public-facing addresses
                 instance.setPublicIpAddress("127.0.0.1");
                 instance.setPublicDnsName("localhost");
@@ -176,6 +174,10 @@ public class Ec2ContainerManager {
                 instance.setState(InstanceState.running());
                 LOG.infov("EC2 instance {0} running in container {1} (SSH host port {2})",
                         instanceId, containerId, String.valueOf(sshHostPort));
+
+                // IMDS proxy setup is best effort and has its own bounded commands. The instance
+                // is already running once Docker has assigned its reachable network address.
+                configureLinkLocalMetadataEndpoint(containerId, instanceId, flociHost, imdsPort);
 
                 // Publish security-group TCP ingress ports on the host via socat sidecars.
                 if (appPorts != null && !appPorts.isEmpty()) {
