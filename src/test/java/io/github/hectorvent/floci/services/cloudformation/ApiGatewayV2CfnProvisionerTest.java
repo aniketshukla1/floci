@@ -115,6 +115,42 @@ class ApiGatewayV2CfnProvisionerTest {
         verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
     }
 
+    @Test
+    void restoresExistingRoutesWhenDefinitionRemovalFails() throws Exception {
+        Route oldOne = route("old-one", "GET /before-one");
+        Route oldTwo = route("old-two", "GET /before-two");
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            return switch ((String) request.get("routeKey")) {
+                case "GET /before-one" -> oldOne;
+                case "GET /before-two" -> oldTwo;
+                default -> throw new AssertionError("Unexpected route key: " + request.get("routeKey"));
+            };
+        });
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-one")).thenReturn(oldOne);
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-two")).thenReturn(oldTwo);
+        doAnswer(invocation -> {
+            if ("old-two".equals(invocation.getArgument(2))) {
+                throw new AwsException("InternalFailure", "simulated delete failure", 500);
+            }
+            return null;
+        }).when(apiGatewayV2Service).deleteRoute(eq(REGION), eq(API_ID), anyString());
+
+        StackResource original = provision(body("""
+                {"paths":{"/before-one":{"get":{}},"/before-two":{"get":{}}}}
+                """), null, Map.of());
+
+        StackResource removal = provision(propertiesWithoutBody(), original.getPhysicalId(),
+                original.getAttributes());
+
+        assertEquals("CREATE_COMPLETE", original.getStatus());
+        assertEquals("CREATE_FAILED", removal.getStatus());
+        assertEquals("old-one,old-two", removal.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
+    }
+
     private StackResource provision(JsonNode properties, String existingPhysicalId,
                                     Map<String, String> existingAttributes) {
         return provisioner.provision("HttpApi", "AWS::ApiGatewayV2::Api", properties, engine(), REGION,
@@ -125,6 +161,12 @@ class ApiGatewayV2CfnProvisionerTest {
         return mapper.readTree("""
                 {"Name":"test-api","ProtocolType":"HTTP","Body":%s}
                 """.formatted(body));
+    }
+
+    private JsonNode propertiesWithoutBody() throws Exception {
+        return mapper.readTree("""
+                {"Name":"test-api","ProtocolType":"HTTP"}
+                """);
     }
 
     private CloudFormationTemplateEngine engine() {
