@@ -115,6 +115,9 @@ public class CloudFormationResourceProvisioner {
     private static final int LAMBDA_DEFAULT_MEMORY_MB = 128;
     private static final int LAMBDA_DEFAULT_EPHEMERAL_STORAGE_MB = 512;
     private static final String LAMBDA_DEFAULT_TRACING_MODE = "PassThrough";
+    private static final String APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR = "__FlociApiGatewayV2BodyRouteIds";
+    private static final String APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR =
+            "__FlociApiGatewayV2BodyIntegrationIds";
 
     /** Reserved attribute keys used to carry custom-resource state to the later Delete invocation. */
     private static final String CR_SERVICE_TOKEN_ATTR = "__FlociServiceToken";
@@ -2722,17 +2725,67 @@ public class CloudFormationResourceProvisioner {
             req.put("corsConfiguration", cors);
         }
 
-        boolean creating = r.getPhysicalId() == null;
         Api api;
-        if (creating) {
+        if (r.getPhysicalId() == null) {
             api = apiGatewayV2Service.createApi(region, req);
         } else {
             api = apiGatewayV2Service.updateApi(region, r.getPhysicalId(), req);
         }
         r.setPhysicalId(api.getApiId());
         r.getAttributes().put("ApiEndpoint", api.getApiEndpoint());
-        if (creating) {
-            provisionApiGatewayV2BodyRoutes(region, api.getApiId(), props, engine);
+        reconcileApiGatewayV2BodyRoutes(r, region, api.getApiId(), props, engine);
+    }
+
+    /**
+     * Reconciles the routes and integrations materialized from an ApiGatewayV2 OpenAPI body.
+     * Only IDs stored on this CloudFormation resource are removed, so separately declared V2
+     * routes and integrations remain outside this generated-resource lifecycle.
+     */
+    private void reconcileApiGatewayV2BodyRoutes(StackResource r, String region, String apiId, JsonNode props,
+                                                 CloudFormationTemplateEngine engine) {
+        JsonNode body = resolveApiGatewayV2OpenApiBody(props, engine);
+        deleteApiGatewayV2BodyResources(r, region, apiId);
+        if (body == null) {
+            return;
+        }
+
+        ApiGatewayV2BodyResources created = materializeApiGatewayV2BodyRoutes(region, apiId, body);
+        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, created.routeIds());
+        storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR, created.integrationIds());
+    }
+
+    private JsonNode resolveApiGatewayV2OpenApiBody(JsonNode props, CloudFormationTemplateEngine engine) {
+        if (props == null) {
+            return null;
+        }
+        if (props.hasNonNull("Body")) {
+            return engine.resolveNode(props.get("Body"));
+        }
+        if (!props.hasNonNull("BodyS3Location")) {
+            return null;
+        }
+
+        JsonNode location = engine.resolveNode(props.get("BodyS3Location"));
+        String bucket = textOrNull(location, "Bucket");
+        String key = textOrNull(location, "Key");
+        String version = textOrNull(location, "Version");
+        if (bucket == null || bucket.isBlank() || key == null || key.isBlank()) {
+            throw new AwsException("ValidationException",
+                    "BodyS3Location must specify non-empty Bucket and Key values", 400);
+        }
+
+        try {
+            byte[] document = s3Service.getObject(bucket, key, version).getData();
+            String content = new String(document, StandardCharsets.UTF_8).trim();
+            if (content.startsWith("{") || content.startsWith("[")) {
+                return objectMapper.readTree(content);
+            }
+            return new CloudFormationYamlParser(objectMapper).parse(content);
+        } catch (AwsException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AwsException("ValidationException",
+                    "Unable to parse OpenAPI document from s3://" + bucket + "/" + key, 400);
         }
     }
 
@@ -2741,14 +2794,13 @@ public class CloudFormationResourceProvisioner {
      * declared HTTP operation as the route that API Gateway V2 serves, including a route target
      * when the operation declares an x-amazon-apigateway-integration extension.
      */
-    private void provisionApiGatewayV2BodyRoutes(String region, String apiId, JsonNode props,
-                                                 CloudFormationTemplateEngine engine) {
-        if (props == null || !props.hasNonNull("Body")) {
-            return;
-        }
-        JsonNode paths = engine.resolveNode(props.get("Body")).path("paths");
+    private ApiGatewayV2BodyResources materializeApiGatewayV2BodyRoutes(String region, String apiId,
+                                                                          JsonNode body) {
+        List<String> routeIds = new ArrayList<>();
+        List<String> integrationIds = new ArrayList<>();
+        JsonNode paths = body.path("paths");
         if (!paths.isObject()) {
-            return;
+            return new ApiGatewayV2BodyResources(routeIds, integrationIds);
         }
 
         Iterator<Map.Entry<String, JsonNode>> pathEntries = paths.fields();
@@ -2779,13 +2831,63 @@ public class CloudFormationResourceProvisioner {
                                 "payloadFormatVersion");
                         Integration createdIntegration = apiGatewayV2Service.createIntegration(region, apiId,
                                 integrationRequest);
+                        integrationIds.add(createdIntegration.getIntegrationId());
                         routeRequest.put("target", "integrations/" + createdIntegration.getIntegrationId());
                     }
                 }
-                apiGatewayV2Service.createRoute(region, apiId, routeRequest);
+                Route createdRoute = apiGatewayV2Service.createRoute(region, apiId, routeRequest);
+                routeIds.add(createdRoute.getRouteId());
+            }
+        }
+        return new ApiGatewayV2BodyResources(routeIds, integrationIds);
+    }
+
+    private void deleteApiGatewayV2BodyResources(StackResource r, String region, String apiId) {
+        for (String routeId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR)) {
+            deleteApiGatewayV2BodyRouteIfPresent(region, apiId, routeId);
+        }
+        for (String integrationId : apiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR)) {
+            deleteApiGatewayV2BodyIntegrationIfPresent(region, apiId, integrationId);
+        }
+        r.getAttributes().remove(APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR);
+        r.getAttributes().remove(APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR);
+    }
+
+    private static List<String> apiGatewayV2BodyResourceIds(StackResource r, String attributeName) {
+        String ids = r.getAttributes().get(attributeName);
+        return ids == null || ids.isBlank() ? List.of() : Arrays.asList(ids.split(","));
+    }
+
+    private static void storeApiGatewayV2BodyResourceIds(StackResource r, String attributeName,
+                                                          List<String> resourceIds) {
+        if (resourceIds.isEmpty()) {
+            r.getAttributes().remove(attributeName);
+        } else {
+            r.getAttributes().put(attributeName, String.join(",", resourceIds));
+        }
+    }
+
+    private void deleteApiGatewayV2BodyRouteIfPresent(String region, String apiId, String routeId) {
+        try {
+            apiGatewayV2Service.deleteRoute(region, apiId, routeId);
+        } catch (AwsException e) {
+            if (e.getHttpStatus() != 404) {
+                throw e;
             }
         }
     }
+
+    private void deleteApiGatewayV2BodyIntegrationIfPresent(String region, String apiId, String integrationId) {
+        try {
+            apiGatewayV2Service.deleteIntegration(region, apiId, integrationId);
+        } catch (AwsException e) {
+            if (e.getHttpStatus() != 404) {
+                throw e;
+            }
+        }
+    }
+
+    private record ApiGatewayV2BodyResources(List<String> routeIds, List<String> integrationIds) {}
 
     private static boolean isHttpApiOperation(String method) {
         return switch (method.toLowerCase(Locale.ROOT)) {

@@ -797,6 +797,28 @@ class SamTransformProcessorTest {
     }
 
     @Test
+    void expandSamTemplate_httpApiMapsDefinitionUriToBodyS3Location() throws Exception {
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": { "DefinitionUri": "s3://api-specs/openapi.yaml" }
+                }
+              }
+            }
+            """);
+
+        JsonNode properties = processor.expandSamTemplate(template)
+                .path("Resources").path("MyHttpApi").path("Properties");
+
+        assertTrue(properties.path("Body").isMissingNode(), "DefinitionUri must not become an inline Body");
+        assertEquals("api-specs", properties.path("BodyS3Location").path("Bucket").asText());
+        assertEquals("openapi.yaml", properties.path("BodyS3Location").path("Key").asText());
+    }
+
+    @Test
     void expandSamTemplate_httpApiDoesNotOverwriteUserDeclaredStageResource() throws Exception {
         // Regression for #1956: the synthesized "<id>Stage" must never clobber a resource the
         // user already declared under that logical id.
