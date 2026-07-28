@@ -132,53 +132,18 @@ public class Ec2ContainerManager {
         instance.setState(InstanceState.pending());
 
         executor.submit(() -> {
+            int sshHostPort = 0;
+            String containerId = null;
             try {
                 String instanceId = instance.getInstanceId();
-                String containerName = ContainerStorageHelper.resourceName(config, "ec2", null, instanceId);
-
-                // Allocate SSH host port
-                int sshHostPort = portAllocator.allocate(
-                        config.services().ec2().sshPortRangeStart(),
-                        config.services().ec2().sshPortRangeEnd());
-                instance.setSshHostPort(sshHostPort);
-
                 // IMDS endpoint that this container should use
                 String flociHost = dockerHostResolver.resolve();
                 int imdsPort = config.services().ec2().imdsPort();
-                String imdsEndpoint = "http://" + flociHost + ":" + imdsPort;
-                String serviceEndpoint = "http://" + flociHost + ":4566";
-
-                // Build container spec — minimal images keep the historic tail
-                // command, while cloud-image AMI guests can boot their init.
-                ContainerBuilder.Builder specBuilder = containerBuilder.newContainer(image.dockerImage())
-                        .withName(containerName)
-                        .withEmbeddedDns()
-                        .withDockerNetwork(Optional.empty())
-                        .withEnv(localAwsEnvironment(region, serviceEndpoint, imdsEndpoint))
-                        .withEnv("AWS_EC2_INSTANCE_ID", instanceId)
-                        .withPortBinding(22, sshHostPort)
-                        .withHostDockerInternalOnLinux()
-                        .withLogRotation()
-                        // EC2 instances expose IMDS on 169.254.169.254. Floci
-                        // needs network administration privileges in the local
-                        // container to attach that link-local address.
-                        .withPrivileged(true)
-                        .withCmd(image.systemd() ? List.of("/sbin/init") : List.of("tail", "-f", "/dev/null"));
-                if (image.systemd()) {
-                    specBuilder
-                            .withCgroupnsMode("host")
-                            .withMount(new Mount().withType(MountType.TMPFS).withTarget("/run"))
-                            .withMount(new Mount().withType(MountType.TMPFS).withTarget("/run/lock"))
-                            .withBind("/sys/fs/cgroup", "/sys/fs/cgroup");
-                }
-                ContainerSpec spec = specBuilder.build();
-
-                // Create container without starting it
-                String containerId = lifecycleManager.create(spec);
+                StartedContainer started = createAndStartContainer(instance, image, region, flociHost, imdsPort);
+                sshHostPort = started.sshHostPort();
+                containerId = started.containerId();
+                instance.setSshHostPort(sshHostPort);
                 instance.setDockerContainerId(containerId);
-
-                // Start the container
-                lifecycleManager.startCreated(containerId, spec);
 
                 // Poll until Docker confirms the container is running
                 boolean running = false;
@@ -191,7 +156,7 @@ public class Ec2ContainerManager {
 
                 if (!running) {
                     LOG.warnv("EC2 instance {0} container {1} did not reach running state", instanceId, containerId);
-                    instance.setState(InstanceState.terminated());
+                    failLaunch(instance, containerId, sshHostPort);
                     return;
                 }
 
@@ -208,7 +173,7 @@ public class Ec2ContainerManager {
                 else {
                     LOG.warnv("EC2 instance {0} container {1} did not receive a usable bridge IP for IMDS",
                             instanceId, containerId);
-                    instance.setState(InstanceState.terminated());
+                    failLaunch(instance, containerId, sshHostPort);
                     return;
                 }
 
@@ -251,12 +216,104 @@ public class Ec2ContainerManager {
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                instance.setState(InstanceState.terminated());
+                failLaunch(instance, containerId, sshHostPort);
             } catch (Exception e) {
                 LOG.warnv("Failed to launch EC2 instance {0}: {1}", instance.getInstanceId(), e.getMessage());
-                instance.setState(InstanceState.terminated());
+                failLaunch(instance, containerId, sshHostPort);
             }
         });
+    }
+
+    private StartedContainer createAndStartContainer(Instance instance, ResolvedAmiImage image, String region,
+                                                     String flociHost, int imdsPort) {
+        String instanceId = instance.getInstanceId();
+        String containerName = ContainerStorageHelper.resourceName(config, "ec2", null, instanceId);
+        String imdsEndpoint = "http://" + flociHost + ":" + imdsPort;
+        String serviceEndpoint = "http://" + flociHost + ":4566";
+
+        while (true) {
+            int sshHostPort = portAllocator.allocate(
+                    config.services().ec2().sshPortRangeStart(),
+                    config.services().ec2().sshPortRangeEnd());
+            ContainerSpec spec = buildContainerSpec(containerName, image, region, serviceEndpoint, imdsEndpoint,
+                    instanceId, sshHostPort);
+            String containerId = null;
+            try {
+                containerId = lifecycleManager.create(spec);
+                lifecycleManager.startCreated(containerId, spec);
+                return new StartedContainer(containerId, sshHostPort);
+            } catch (Exception e) {
+                if (containerId != null) {
+                    lifecycleManager.removeIfExists(containerId);
+                }
+                if (isHostPortCollision(e)) {
+                    // Docker Desktop can own a published port without exposing it to a host-side
+                    // ServerSocket probe. Keep it unavailable for this process and try the next port.
+                    portAllocator.markReserved(sshHostPort);
+                    LOG.warnv("EC2 instance {0} could not use SSH host port {1}; trying another port",
+                            instanceId, String.valueOf(sshHostPort));
+                    continue;
+                }
+                portAllocator.release(sshHostPort);
+                throw e;
+            }
+        }
+    }
+
+    private ContainerSpec buildContainerSpec(String containerName, ResolvedAmiImage image, String region,
+                                             String serviceEndpoint, String imdsEndpoint, String instanceId,
+                                             int sshHostPort) {
+        // Minimal images keep the historic tail command, while cloud-image AMI guests can boot their init.
+        ContainerBuilder.Builder specBuilder = containerBuilder.newContainer(image.dockerImage())
+                .withName(containerName)
+                .withEmbeddedDns()
+                .withDockerNetwork(Optional.empty())
+                .withEnv(localAwsEnvironment(region, serviceEndpoint, imdsEndpoint))
+                .withEnv("AWS_EC2_INSTANCE_ID", instanceId)
+                .withPortBinding(22, sshHostPort)
+                .withHostDockerInternalOnLinux()
+                .withLogRotation()
+                // EC2 instances expose IMDS on 169.254.169.254. Floci needs network administration
+                // privileges in the local container to attach that link-local address.
+                .withPrivileged(true)
+                .withCmd(image.systemd() ? List.of("/sbin/init") : List.of("tail", "-f", "/dev/null"));
+        if (image.systemd()) {
+            specBuilder
+                    .withCgroupnsMode("host")
+                    .withMount(new Mount().withType(MountType.TMPFS).withTarget("/run"))
+                    .withMount(new Mount().withType(MountType.TMPFS).withTarget("/run/lock"))
+                    .withBind("/sys/fs/cgroup", "/sys/fs/cgroup");
+        }
+        return specBuilder.build();
+    }
+
+    private void failLaunch(Instance instance, String containerId, int sshHostPort) {
+        portForwardManager.unpublishAll(instance);
+        if (containerId != null) {
+            lifecycleManager.removeIfExists(containerId);
+        }
+        if (sshHostPort > 0) {
+            portAllocator.release(sshHostPort);
+        }
+        String containerIp = instance.getContainerBridgeIp();
+        if (containerIp != null && !containerIp.isBlank()) {
+            metadataServer.unregisterContainer(containerIp, instance);
+        }
+        instance.setState(InstanceState.terminated());
+    }
+
+    private static boolean isHostPortCollision(Exception exception) {
+        for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message != null && (message.toLowerCase(Locale.ROOT).contains("port is already allocated")
+                    || message.toLowerCase(Locale.ROOT).contains("address already in use"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private record StartedContainer(String containerId, int sshHostPort) {
     }
 
     /**
