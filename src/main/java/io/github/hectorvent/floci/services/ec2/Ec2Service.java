@@ -1,7 +1,6 @@
 package io.github.hectorvent.floci.services.ec2;
 
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -2240,15 +2239,14 @@ public class Ec2Service implements ContainerTeardown {
      * Docker launch has already failed. Mock-mode instances do not launch containers.
      *
      * @param instance the instance returned by {@link #runInstances}
-     * @throws AwsException if the container terminates during launch or does not start in time
+     * @throws AwsException if the container terminates during launch
      */
     public void awaitContainerLaunch(Instance instance) {
         if (config.services().ec2().mock()) {
             return;
         }
 
-        long deadline = System.nanoTime() + CONTAINER_LAUNCH_TIMEOUT.toNanos();
-        while (System.nanoTime() < deadline) {
+        while (true) {
             String state = instance.getState() != null ? instance.getState().getName() : null;
             if ("running".equals(state)) {
                 return;
@@ -2265,9 +2263,6 @@ public class Ec2Service implements ContainerTeardown {
                         + instance.getInstanceId() + " to launch", 500);
             }
         }
-
-        throw new AwsException("InstanceLaunchFailure", "EC2 instance " + instance.getInstanceId()
-                + " did not start its container within " + CONTAINER_LAUNCH_TIMEOUT.toSeconds() + " seconds", 500);
     }
 
     /**

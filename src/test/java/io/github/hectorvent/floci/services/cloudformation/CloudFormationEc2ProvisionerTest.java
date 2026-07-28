@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -60,7 +61,26 @@ class CloudFormationEc2ProvisionerTest {
 
         assertEquals("CREATE_FAILED", resource.getStatus());
         assertEquals("i-launch-failed", resource.getPhysicalId());
+        assertEquals("true", resource.getAttributes().get(CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
         assertTrue(resource.getStatusReason().contains("terminated during container launch"));
+        verify(ec2Service).awaitContainerLaunch(instance);
+    }
+
+    @Test
+    void successfulContainerLaunchDoesNotKeepRollbackOwnershipMarker() throws Exception {
+        Instance instance = new Instance();
+        instance.setInstanceId("i-launch-succeeded");
+        instance.setState(InstanceState.running());
+        Reservation reservation = new Reservation();
+        reservation.getInstances().add(instance);
+        when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
+                any(), any(), anyList(), any(), any())).thenReturn(reservation);
+
+        StackResource resource = provisioner.provision("Server", "AWS::EC2::Instance", properties(), engine(),
+                "us-east-1", "000000000000", "test-stack");
+
+        assertEquals("CREATE_COMPLETE", resource.getStatus());
+        assertNull(resource.getAttributes().get(CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
         verify(ec2Service).awaitContainerLaunch(instance);
     }
 
