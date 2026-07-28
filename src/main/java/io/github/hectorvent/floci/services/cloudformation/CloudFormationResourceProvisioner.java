@@ -2745,7 +2745,15 @@ public class CloudFormationResourceProvisioner {
                                                  CloudFormationTemplateEngine engine) {
         JsonNode body = resolveApiGatewayV2OpenApiBody(props, engine);
         if (body == null) {
-            deleteApiGatewayV2BodyResources(r, region, apiId);
+            ApiGatewayV2BodyResourceState previous = null;
+            try {
+                previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
+                deleteApiGatewayV2BodyResources(r, region, apiId);
+            } catch (RuntimeException e) {
+                rollbackApiGatewayV2BodyReplacement(region, apiId,
+                        new ApiGatewayV2BodyResources(List.of(), List.of()), previous, e);
+                throw e;
+            }
             return;
         }
 
