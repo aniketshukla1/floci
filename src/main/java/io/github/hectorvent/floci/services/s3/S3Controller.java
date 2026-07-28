@@ -489,7 +489,7 @@ public class S3Controller {
             }
 
             // --- Website Hosting Redirection Logic ---
-            if (isWebsiteRequest(httpHeaders) && (uriInfo.getQueryParameters().isEmpty() || (uriInfo.getQueryParameters().size() == 1 && hasQueryParam(uriInfo, "list-type")))) {
+            if (isWebsiteRequest(httpHeaders, uriInfo) && (uriInfo.getQueryParameters().isEmpty() || (uriInfo.getQueryParameters().size() == 1 && hasQueryParam(uriInfo, "list-type")))) {
                 try {
                     WebsiteConfiguration webConfig = s3Service.getBucketWebsite(bucket);
                     if (webConfig.getIndexDocument() != null) {
@@ -806,7 +806,7 @@ public class S3Controller {
             return fullObjectResponse(bucket, key, versionId, obj, overrides, includeChecksum);
         } catch (AwsException e) {
             emitCloudTrailEvent("GetObject", bucket, key, 0L, 0L, e.getErrorCode(), e.getMessage());
-            if (isWebsiteErrorDocumentTrigger(e) && isWebsiteRequest(httpHeaders)) {
+            if (isWebsiteErrorDocumentTrigger(e) && isWebsiteRequest(httpHeaders, uriInfo)) {
                 try {
                     WebsiteConfiguration webConfig = s3Service.getBucketWebsite(bucket);
                     Response r = serveErrorDocument(bucket, webConfig, authorization, e.getHttpStatus());
@@ -2183,8 +2183,11 @@ public class S3Controller {
         }
     }
 
-    private static boolean isWebsiteRequest(HttpHeaders httpHeaders) {
-        String host = httpHeaders.getHeaderString("Host");
+    static boolean isWebsiteRequest(HttpHeaders httpHeaders, UriInfo uriInfo) {
+        // HTTP/2 (RFC 9113) carries no Host header, so fall back to the request URI authority —
+        // the same resolution S3VirtualHostFilter applies. Without this, a website bucket reached
+        // over HTTP/2 would be served as an API (XML) response instead of website HTML.
+        String host = S3VirtualHostFilter.resolveHost(httpHeaders.getHeaderString("Host"), uriInfo.getRequestUri());
         return host != null && host.contains("s3-website");
     }
 
