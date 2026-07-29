@@ -20,14 +20,13 @@ import java.util.Map;
 
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class EcsContainerManagerLifecycleTest {
 
     @Test
-    void retainsAllTaskLogStreamsWhenAnyContainerStopFails() {
+    void finalizesTaskLogStreamsAfterForceRemovingAContainerWhoseStopFails() {
         ContainerLifecycleManager lifecycleManager = mock(ContainerLifecycleManager.class);
         DockerClient dockerClient = mock(DockerClient.class);
         StopContainerCmd stop = mock(StopContainerCmd.class);
@@ -45,7 +44,8 @@ class EcsContainerManagerLifecycleTest {
 
         manager.stopTaskAndCollectExitCodes(handle);
 
-        verify(lifecycleManager, never()).closeLogStreamAfterContainerStop(logStream);
+        verify(remove).exec();
+        verify(lifecycleManager).closeLogStreamAfterContainerStop(logStream);
     }
 
     @Test

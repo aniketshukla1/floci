@@ -69,21 +69,27 @@ class ContainerLifecycleManagerVolumeTest {
 
         manager.stopAndRemove("container-id", () -> operations.add("logs"));
 
-        assertEquals(List.of("stop", "logs", "remove"), operations);
+        assertEquals(List.of("stop", "remove", "logs"), operations);
     }
 
     @Test
-    void stopAndRemoveKeepsLogStreamOpenWhenContainerStopFails() {
+    void stopAndRemoveForceRemovesAndFinalizesLogStreamWhenContainerStopFails() {
         StopContainerCmd stop = mock(StopContainerCmd.class);
+        RemoveContainerCmd remove = mock(RemoveContainerCmd.class);
         List<String> operations = new ArrayList<>();
         doThrow(new RuntimeException("Docker daemon unavailable")).when(stop).exec();
+        doAnswer(invocation -> {
+            operations.add("remove");
+            return null;
+        }).when(remove).exec();
         when(dockerClient.stopContainerCmd("container-id")).thenReturn(stop);
         when(stop.withTimeout(5)).thenReturn(stop);
+        when(dockerClient.removeContainerCmd("container-id")).thenReturn(remove);
+        when(remove.withForce(true)).thenReturn(remove);
 
         manager.stopAndRemove("container-id", () -> operations.add("logs"));
 
-        assertTrue(operations.isEmpty(), "a running container must retain its active log transport");
-        verify(dockerClient, never()).removeContainerCmd("container-id");
+        assertEquals(List.of("remove", "logs"), operations);
     }
 
     @Test

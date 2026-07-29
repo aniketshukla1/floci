@@ -294,19 +294,13 @@ public class EcsContainerManager {
         }
 
         // Phase 1: stop all containers (no-op for those already exited).
-        boolean allContainersStopped = true;
         for (String dockerId : handle.getContainerIds().values()) {
             try {
                 lifecycleManager.getDockerClient().stopContainerCmd(dockerId).withTimeout(5).exec();
             } catch (NotFoundException ignored) {
             } catch (Exception e) {
-                allContainersStopped = false;
                 LOG.warnv("Error stopping ECS container {0}: {1}", dockerId, e.getMessage());
             }
-        }
-
-        if (allContainersStopped) {
-            handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
         }
 
         // Phase 2: inspect exit codes, then remove.
@@ -321,6 +315,9 @@ public class EcsContainerManager {
                 LOG.warnv("Error removing ECS container {0}: {1}", dockerId, e.getMessage());
             }
         }
+        // A force removal terminates Docker's follow-log transport even when the preceding stop failed.
+        // Release every handle after those removal attempts so a partial stop cannot orphan its readers.
+        handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
         return exitCodes;
     }
 
