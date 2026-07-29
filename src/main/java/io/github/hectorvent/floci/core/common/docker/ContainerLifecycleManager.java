@@ -175,24 +175,22 @@ public class ContainerLifecycleManager {
             LOG.warnv("Error stopping container {0}: {1}", containerId, e.getMessage());
         }
 
-        if (logStream != null) {
-            if (stoppedOrMissing) {
-                closeLogStreamAfterContainerStop(logStream);
-            }
-        }
-
-        if (!stoppedOrMissing) {
-            return;
-        }
-
-        // Remove container
+        // Force removal is the recovery path when Docker could not stop the container cleanly. It also
+        // terminates the follow-log transport, allowing its terminal callback to drain the final tail.
+        boolean removedOrMissing = false;
         try {
             dockerClient.removeContainerCmd(containerId).withForce(true).exec();
+            removedOrMissing = true;
             LOG.debugv("Removed container {0}", containerId);
         } catch (NotFoundException e) {
             // Already gone
+            removedOrMissing = true;
         } catch (Exception e) {
             LOG.warnv("Error removing container {0}: {1}", containerId, e.getMessage());
+        }
+
+        if (logStream != null && (stoppedOrMissing || removedOrMissing)) {
+            closeLogStreamAfterContainerStop(logStream);
         }
     }
 
