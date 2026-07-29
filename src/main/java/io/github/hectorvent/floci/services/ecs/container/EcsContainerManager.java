@@ -35,10 +35,12 @@ import org.jboss.logging.Logger;
 import java.io.Closeable;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Manages Docker container lifecycle for ECS tasks.
@@ -89,7 +91,7 @@ public class EcsContainerManager {
         String taskId = extractTaskId(task.getTaskArn());
 
         Map<String, String> containerIds = new LinkedHashMap<>();
-        List<Closeable> logStreams = new ArrayList<>();
+        Map<String, Closeable> logStreamsByContainerId = new LinkedHashMap<>();
         List<Container> runtimeContainers = new ArrayList<>();
 
         // Task-level volumes consumed by per-container mountPoints: host volumes map their
@@ -249,7 +251,7 @@ public class EcsContainerManager {
                     dockerId, logGroup, logStream, region,
                     "ecs:" + taskDef.getFamily() + ":" + def.getName());
             if (logHandle != null) {
-                logStreams.add(logHandle);
+                logStreamsByContainerId.put(dockerId, logHandle);
             }
         }
 
@@ -258,7 +260,7 @@ public class EcsContainerManager {
         task.setDesiredStatus(TaskStatus.RUNNING.name());
         task.setStartedAt(Instant.now());
 
-        return new EcsTaskHandle(task.getTaskArn(), containerIds, logStreams);
+        return new EcsTaskHandle(task.getTaskArn(), containerIds, logStreamsByContainerId);
     }
 
     /**
@@ -279,7 +281,8 @@ public class EcsContainerManager {
         for (String dockerId : handle.getContainerIds().values()) {
             lifecycleManager.stopAndRemove(dockerId, null);
         }
-        handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
+        handle.getLogStreamsByContainerId().values()
+                .forEach(lifecycleManager::closeLogStreamAfterContainerStop);
     }
 
     /**
@@ -294,10 +297,13 @@ public class EcsContainerManager {
         }
 
         // Phase 1: stop all containers (no-op for those already exited).
+        Set<String> terminatedContainerIds = new HashSet<>();
         for (String dockerId : handle.getContainerIds().values()) {
             try {
                 lifecycleManager.getDockerClient().stopContainerCmd(dockerId).withTimeout(5).exec();
+                terminatedContainerIds.add(dockerId);
             } catch (NotFoundException ignored) {
+                terminatedContainerIds.add(dockerId);
             } catch (Exception e) {
                 LOG.warnv("Error stopping ECS container {0}: {1}", dockerId, e.getMessage());
             }
@@ -310,14 +316,19 @@ public class EcsContainerManager {
             exitCodes.put(name, getExitCodeIfStopped(dockerId));
             try {
                 lifecycleManager.getDockerClient().removeContainerCmd(dockerId).withForce(true).exec();
+                terminatedContainerIds.add(dockerId);
             } catch (NotFoundException ignored) {
+                terminatedContainerIds.add(dockerId);
             } catch (Exception e) {
                 LOG.warnv("Error removing ECS container {0}: {1}", dockerId, e.getMessage());
             }
         }
         // A force removal terminates Docker's follow-log transport even when the preceding stop failed.
-        // Release every handle after those removal attempts so a partial stop cannot orphan its readers.
-        handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
+        // Preserve handles for any container that still may be running after both operations failed.
+        terminatedContainerIds.stream()
+                .map(handle.getLogStreamsByContainerId()::get)
+                .filter(logStream -> logStream != null)
+                .forEach(lifecycleManager::closeLogStreamAfterContainerStop);
         return exitCodes;
     }
 
