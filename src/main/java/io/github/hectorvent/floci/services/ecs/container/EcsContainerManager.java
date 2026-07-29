@@ -276,15 +276,10 @@ public class EcsContainerManager {
         if (handle == null) {
             return;
         }
-        for (Closeable logStream : handle.getLogStreams()) {
-            try {
-                logStream.close();
-            } catch (Exception ignored) {
-            }
-        }
         for (String dockerId : handle.getContainerIds().values()) {
             lifecycleManager.stopAndRemove(dockerId, null);
         }
+        handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
     }
 
     /**
@@ -298,21 +293,20 @@ public class EcsContainerManager {
             return exitCodes;
         }
 
-        for (Closeable logStream : handle.getLogStreams()) {
-            try {
-                logStream.close();
-            } catch (Exception ignored) {
-            }
-        }
-
         // Phase 1: stop all containers (no-op for those already exited).
+        boolean allContainersStopped = true;
         for (String dockerId : handle.getContainerIds().values()) {
             try {
                 lifecycleManager.getDockerClient().stopContainerCmd(dockerId).withTimeout(5).exec();
             } catch (NotFoundException ignored) {
             } catch (Exception e) {
+                allContainersStopped = false;
                 LOG.warnv("Error stopping ECS container {0}: {1}", dockerId, e.getMessage());
             }
+        }
+
+        if (allContainersStopped) {
+            handle.getLogStreams().forEach(lifecycleManager::closeLogStreamAfterContainerStop);
         }
 
         // Phase 2: inspect exit codes, then remove.

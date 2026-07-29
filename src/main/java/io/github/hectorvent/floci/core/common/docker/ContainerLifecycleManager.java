@@ -164,23 +164,25 @@ public class ContainerLifecycleManager {
     public void stopAndRemove(String containerId, Closeable logStream) {
         LOG.infov("Stopping container {0}", containerId);
 
-        // Close log stream first
+        boolean stoppedOrMissing = false;
+        try {
+            dockerClient.stopContainerCmd(containerId).withTimeout(5).exec();
+            stoppedOrMissing = true;
+        } catch (NotFoundException e) {
+            LOG.debugv("Container {0} not found (already removed)", containerId);
+            stoppedOrMissing = true;
+        } catch (Exception e) {
+            LOG.warnv("Error stopping container {0}: {1}", containerId, e.getMessage());
+        }
+
         if (logStream != null) {
-            try {
-                logStream.close();
-            } catch (Exception e) {
-                LOG.debugv("Error closing log stream: {0}", e.getMessage());
+            if (stoppedOrMissing) {
+                closeLogStreamAfterContainerStop(logStream);
             }
         }
 
-        // Stop container
-        try {
-            dockerClient.stopContainerCmd(containerId).withTimeout(5).exec();
-        } catch (NotFoundException e) {
-            LOG.debugv("Container {0} not found (already removed)", containerId);
+        if (!stoppedOrMissing) {
             return;
-        } catch (Exception e) {
-            LOG.warnv("Error stopping container {0}: {1}", containerId, e.getMessage());
         }
 
         // Remove container
@@ -191,6 +193,18 @@ public class ContainerLifecycleManager {
             // Already gone
         } catch (Exception e) {
             LOG.warnv("Error removing container {0}: {1}", containerId, e.getMessage());
+        }
+    }
+
+    /**
+     * Releases lifecycle ownership of a log stream after its container has stopped. Docker's terminal
+     * callback normally flushes the final tail; a bounded fallback handles a broken transport.
+     */
+    public void closeLogStreamAfterContainerStop(Closeable logStream) {
+        try {
+            logStream.close();
+        } catch (Exception e) {
+            LOG.debugv("Error closing log stream: {0}", e.getMessage());
         }
     }
 
