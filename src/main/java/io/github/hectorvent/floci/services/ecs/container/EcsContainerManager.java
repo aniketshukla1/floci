@@ -281,8 +281,8 @@ public class EcsContainerManager {
         for (String dockerId : handle.getContainerIds().values()) {
             lifecycleManager.stopAndRemove(dockerId, null);
         }
-        handle.getLogStreamsByContainerId().values()
-                .forEach(lifecycleManager::closeLogStreamAfterContainerStop);
+        new ArrayList<>(handle.getLogStreamsByContainerId().keySet())
+                .forEach(dockerId -> finalizeLogStream(handle, dockerId));
     }
 
     /**
@@ -325,11 +325,15 @@ public class EcsContainerManager {
         }
         // A force removal terminates Docker's follow-log transport even when the preceding stop failed.
         // Preserve handles for any container that still may be running after both operations failed.
-        terminatedContainerIds.stream()
-                .map(handle.getLogStreamsByContainerId()::get)
-                .filter(logStream -> logStream != null)
-                .forEach(lifecycleManager::closeLogStreamAfterContainerStop);
+        terminatedContainerIds.forEach(dockerId -> finalizeLogStream(handle, dockerId));
         return exitCodes;
+    }
+
+    private void finalizeLogStream(EcsTaskHandle handle, String dockerId) {
+        Closeable logStream = handle.removeLogStream(dockerId);
+        if (logStream != null) {
+            lifecycleManager.closeLogStreamAfterContainerStop(logStream);
+        }
     }
 
     /**

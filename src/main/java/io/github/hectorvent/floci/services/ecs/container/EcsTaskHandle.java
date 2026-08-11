@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.ecs.container;
 
 import java.io.Closeable;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -16,11 +17,20 @@ public class EcsTaskHandle {
     public EcsTaskHandle(String taskArn, Map<String, String> containerIds,
                          Map<String, Closeable> logStreamsByContainerId) {
         this.taskArn = taskArn;
-        this.containerIds = containerIds;
-        this.logStreamsByContainerId = logStreamsByContainerId;
+        this.containerIds = new LinkedHashMap<>(containerIds);
+        this.logStreamsByContainerId = new LinkedHashMap<>(logStreamsByContainerId);
     }
 
     public String getTaskArn() { return taskArn; }
     public Map<String, String> getContainerIds() { return containerIds; }
     public Map<String, Closeable> getLogStreamsByContainerId() { return logStreamsByContainerId; }
+
+    /** Removes and returns the log stream that no longer needs task-level ownership. */
+    public Closeable removeLogStream(String containerId) {
+        return logStreamsByContainerId.remove(containerId);
+    }
+
+    public boolean hasOpenLogStreams() {
+        return !logStreamsByContainerId.isEmpty();
+    }
 }

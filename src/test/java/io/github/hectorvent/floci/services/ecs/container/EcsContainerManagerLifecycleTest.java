@@ -18,6 +18,9 @@ import java.io.Closeable;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -104,6 +107,9 @@ class EcsContainerManagerLifecycleTest {
 
         verify(lifecycleManager, never()).closeLogStreamAfterContainerStop(retainedLogStream);
         verify(lifecycleManager).closeLogStreamAfterContainerStop(finalizedLogStream);
+        assertTrue(handle.hasOpenLogStreams());
+        assertSame(retainedLogStream, handle.getLogStreamsByContainerId().get("running-id"));
+        assertFalse(handle.getLogStreamsByContainerId().containsKey("stopped-id"));
     }
 
     private static EcsContainerManager manager(ContainerLifecycleManager lifecycleManager) {
