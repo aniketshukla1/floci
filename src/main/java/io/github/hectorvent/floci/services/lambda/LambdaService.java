@@ -1467,7 +1467,7 @@ public class LambdaService {
                 .toList();
         if (statements.isEmpty()) {
             throw new AwsException("ResourceNotFoundException",
-                    "Function not found: " + functionName, 404);
+                    "The resource you requested does not exist.", 404);
         }
         Map<String, Object> policy = new java.util.LinkedHashMap<>();
         policy.put("Version", "2012-10-17");

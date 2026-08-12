@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -140,7 +141,9 @@ class LambdaPermissionQualifierIntegrationTest {
         .when()
             .get(BASE + "/functions/" + FN + "/policy")
         .then()
-            .statusCode(404);
+            .statusCode(404)
+            .body("__type", equalTo("ResourceNotFoundException"))
+            .body("message", equalTo("The resource you requested does not exist."));
     }
 
     // ── the qualified and unqualified policies are independent ────────────────
