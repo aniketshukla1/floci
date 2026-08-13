@@ -145,8 +145,6 @@ public class Ec2ContainerManager {
                 }
                 sshHostPort = started.sshHostPort();
                 containerId = started.containerId();
-                instance.setSshHostPort(sshHostPort);
-                instance.setDockerContainerId(containerId);
 
                 if (isLaunchCancelled(instance)) {
                     failLaunch(instance, containerId, sshHostPort);
@@ -266,6 +264,11 @@ public class Ec2ContainerManager {
             String containerId = null;
             try {
                 containerId = lifecycleManager.create(spec);
+                if (!recordCreatedContainer(instance, containerId, sshHostPort)) {
+                    lifecycleManager.removeIfExists(containerId);
+                    portAllocator.release(sshHostPort);
+                    return null;
+                }
                 lifecycleManager.startCreated(containerId, spec);
                 return new StartedContainer(containerId, sshHostPort);
             } catch (Exception e) {
@@ -363,19 +366,34 @@ public class Ec2ContainerManager {
 
     private static boolean isLaunchCancelled(Instance instance) {
         synchronized (instance) {
-            String state = instance.getState() != null ? instance.getState().getName() : null;
-            return "shutting-down".equals(state) || "terminated".equals(state);
+            return isLaunchCancelledState(instance);
         }
     }
 
     private static boolean markRunning(Instance instance) {
         synchronized (instance) {
-            if (isLaunchCancelled(instance)) {
+            if (isLaunchCancelledState(instance)) {
                 return false;
             }
             instance.setState(InstanceState.running());
             return true;
         }
+    }
+
+    private static boolean recordCreatedContainer(Instance instance, String containerId, int sshHostPort) {
+        synchronized (instance) {
+            if (isLaunchCancelledState(instance)) {
+                return false;
+            }
+            instance.setSshHostPort(sshHostPort);
+            instance.setDockerContainerId(containerId);
+            return true;
+        }
+    }
+
+    private static boolean isLaunchCancelledState(Instance instance) {
+        String state = instance.getState() != null ? instance.getState().getName() : null;
+        return "shutting-down".equals(state) || "terminated".equals(state);
     }
 
     private static boolean isHostPortCollision(Exception exception) {

@@ -467,11 +467,11 @@ class Ec2ContainerManagerTest {
 
         assertTrue(startEntered.await(2, TimeUnit.SECONDS), "container startup should begin");
         assertTrue(harness.manager.cancelLaunch(instance));
-        allowStart.countDown();
-
-        awaitUntil(() -> "terminated".equals(instance.getState().getName()), Duration.ofSeconds(2));
         verify(harness.lifecycleManager).removeIfExists(TEST_CONTAINER_ID);
         verify(harness.portAllocator).release(2201);
+
+        allowStart.countDown();
+        awaitUntil(() -> "terminated".equals(instance.getState().getName()), Duration.ofSeconds(2));
     }
 
     @Test
