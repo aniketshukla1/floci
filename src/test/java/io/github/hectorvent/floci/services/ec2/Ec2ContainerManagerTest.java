@@ -452,6 +452,29 @@ class Ec2ContainerManagerTest {
     }
 
     @Test
+    void cancelledLaunchRemovesContainerThatStartsAfterCancellation() throws Exception {
+        LaunchHarness harness = launchHarness();
+        CountDownLatch startEntered = new CountDownLatch(1);
+        CountDownLatch allowStart = new CountDownLatch(1);
+        when(harness.lifecycleManager.startCreated(eq(TEST_CONTAINER_ID), any(ContainerSpec.class))).thenAnswer(invocation -> {
+            startEntered.countDown();
+            assertTrue(allowStart.await(2, TimeUnit.SECONDS));
+            return null;
+        });
+
+        Instance instance = instance("i-cancelled-launch");
+        harness.manager.launch(instance, "ubuntu:24.04", null, "us-west-2");
+
+        assertTrue(startEntered.await(2, TimeUnit.SECONDS), "container startup should begin");
+        assertTrue(harness.manager.cancelLaunch(instance));
+        allowStart.countDown();
+
+        awaitUntil(() -> "terminated".equals(instance.getState().getName()), Duration.ofSeconds(2));
+        verify(harness.lifecycleManager).removeIfExists(TEST_CONTAINER_ID);
+        verify(harness.portAllocator).release(2201);
+    }
+
+    @Test
     void launchMarksInstanceRunningBeforeUserDataCompletes() throws Exception {
         Ec2ContainerManager.containerBridgeIpAttempts = 2;
         Ec2ContainerManager.containerBridgeIpPollMillis = 1;

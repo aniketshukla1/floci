@@ -140,14 +140,26 @@ public class Ec2ContainerManager {
                 String flociHost = dockerHostResolver.resolve();
                 int imdsPort = config.services().ec2().imdsPort();
                 StartedContainer started = createAndStartContainer(instance, image, region, flociHost, imdsPort);
+                if (started == null) {
+                    return;
+                }
                 sshHostPort = started.sshHostPort();
                 containerId = started.containerId();
                 instance.setSshHostPort(sshHostPort);
                 instance.setDockerContainerId(containerId);
 
+                if (isLaunchCancelled(instance)) {
+                    failLaunch(instance, containerId, sshHostPort);
+                    return;
+                }
+
                 // Poll until Docker confirms the container is running
                 boolean running = false;
                 for (int i = 0; i < 30 && !running; i++) {
+                    if (isLaunchCancelled(instance)) {
+                        failLaunch(instance, containerId, sshHostPort);
+                        return;
+                    }
                     running = lifecycleManager.isContainerRunning(containerId);
                     if (!running) {
                         Thread.sleep(500);
@@ -160,11 +172,16 @@ public class Ec2ContainerManager {
                     return;
                 }
 
+                if (isLaunchCancelled(instance)) {
+                    failLaunch(instance, containerId, sshHostPort);
+                    return;
+                }
+
                 // Discover the container's bridge IP for IMDS registration.
                 // Docker can report the container as running before network
                 // settings are populated; wait here so IMDS is registered
                 // before link-local metadata validation and UserData run.
-                String containerIp = waitForContainerBridgeIp(containerId, instanceId);
+                String containerIp = waitForContainerBridgeIp(containerId, instanceId, instance);
                 if (containerIp != null && !containerIp.isBlank()) {
                     instance.setContainerBridgeIp(containerIp);
                     exposeReachablePrivateAddress(instance, containerIp, config.services().ec2().awsFaithfulPrivateIp());
@@ -173,6 +190,11 @@ public class Ec2ContainerManager {
                 else {
                     LOG.warnv("EC2 instance {0} container {1} did not receive a usable bridge IP for IMDS",
                             instanceId, containerId);
+                    failLaunch(instance, containerId, sshHostPort);
+                    return;
+                }
+
+                if (!markRunning(instance)) {
                     failLaunch(instance, containerId, sshHostPort);
                     return;
                 }
@@ -186,7 +208,6 @@ public class Ec2ContainerManager {
                     instance.setPublicDnsName("localhost");
                 }
 
-                instance.setState(InstanceState.running());
                 LOG.infov("EC2 instance {0} running in container {1} (SSH host port {2})",
                         instanceId, containerId, String.valueOf(sshHostPort));
 
@@ -234,6 +255,9 @@ public class Ec2ContainerManager {
         String serviceEndpoint = "http://" + flociHost + ":4566";
 
         while (true) {
+            if (isLaunchCancelled(instance)) {
+                return null;
+            }
             int sshHostPort = portAllocator.allocate(
                     config.services().ec2().sshPortRangeStart(),
                     config.services().ec2().sshPortRangeEnd());
@@ -291,16 +315,66 @@ public class Ec2ContainerManager {
 
     private void failLaunch(Instance instance, String containerId, int sshHostPort) {
         instance.setState(InstanceState.terminated());
-        portForwardManager.unpublishAll(instance);
+        try {
+            portForwardManager.unpublishAll(instance);
+        } catch (Exception e) {
+            LOG.warnv("Error removing EC2 port forwards during failed launch of {0}: {1}",
+                    instance.getInstanceId(), e.getMessage());
+        }
         if (containerId != null) {
-            lifecycleManager.removeIfExists(containerId);
+            try {
+                lifecycleManager.removeIfExists(containerId);
+            } catch (Exception e) {
+                LOG.warnv("Error removing failed EC2 container {0}: {1}", containerId, e.getMessage());
+            }
         }
         if (sshHostPort > 0) {
             portAllocator.release(sshHostPort);
         }
         String containerIp = instance.getContainerBridgeIp();
         if (containerIp != null && !containerIp.isBlank()) {
-            metadataServer.unregisterContainer(containerIp, instance);
+            try {
+                metadataServer.unregisterContainer(containerIp, instance);
+            } catch (Exception e) {
+                LOG.warnv("Error unregistering failed EC2 instance {0}: {1}", instance.getInstanceId(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Cancels a pending asynchronous launch. Returns {@code false} only when the instance reached
+     * running state while the caller was waiting, in which case it must not be torn down as a timeout.
+     */
+    boolean cancelLaunch(Instance instance) {
+        String containerId;
+        int sshHostPort;
+        synchronized (instance) {
+            String state = instance.getState() != null ? instance.getState().getName() : null;
+            if ("running".equals(state)) {
+                return false;
+            }
+            instance.setState(InstanceState.terminated());
+            containerId = instance.getDockerContainerId();
+            sshHostPort = instance.getSshHostPort();
+        }
+        failLaunch(instance, containerId, sshHostPort);
+        return true;
+    }
+
+    private static boolean isLaunchCancelled(Instance instance) {
+        synchronized (instance) {
+            String state = instance.getState() != null ? instance.getState().getName() : null;
+            return "shutting-down".equals(state) || "terminated".equals(state);
+        }
+    }
+
+    private static boolean markRunning(Instance instance) {
+        synchronized (instance) {
+            if (isLaunchCancelled(instance)) {
+                return false;
+            }
+            instance.setState(InstanceState.running());
+            return true;
         }
     }
 
@@ -471,10 +545,15 @@ public class Ec2ContainerManager {
      * Sets terminatedAt for TTL pruning.
      */
     public void terminate(Instance instance) {
-        String containerId = instance.getDockerContainerId();
-        String containerIp = instance.getContainerBridgeIp();
-        int sshHostPort = instance.getSshHostPort();
-        instance.setState(InstanceState.shuttingDown());
+        String containerId;
+        String containerIp;
+        int sshHostPort;
+        synchronized (instance) {
+            containerId = instance.getDockerContainerId();
+            containerIp = instance.getContainerBridgeIp();
+            sshHostPort = instance.getSshHostPort();
+            instance.setState(InstanceState.shuttingDown());
+        }
         executor.submit(() -> {
             portForwardManager.unpublishAll(instance);
             if (containerId != null) {
@@ -892,7 +971,15 @@ public class Ec2ContainerManager {
     }
 
     private String waitForContainerBridgeIp(String containerId, String instanceId) throws InterruptedException {
+        return waitForContainerBridgeIp(containerId, instanceId, null);
+    }
+
+    private String waitForContainerBridgeIp(String containerId, String instanceId, Instance instance)
+            throws InterruptedException {
         for (int i = 0; i < containerBridgeIpAttempts; i++) {
+            if (instance != null && isLaunchCancelled(instance)) {
+                return null;
+            }
             String containerIp = getContainerBridgeIp(containerId);
             if (containerIp != null && !containerIp.isBlank()) {
                 return containerIp;

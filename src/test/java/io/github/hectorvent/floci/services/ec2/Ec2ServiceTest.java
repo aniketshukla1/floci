@@ -98,18 +98,21 @@ class Ec2ServiceTest {
 
     @Test
     void awaitContainerLaunchTimesOutWhileInstanceIsPending() {
-        Ec2Service service = new Ec2Service(mockConfig(false), mock(Ec2ContainerManager.class),
+        Ec2ContainerManager containerManager = mock(Ec2ContainerManager.class);
+        Ec2Service service = new Ec2Service(mockConfig(false), containerManager,
                 mock(Ec2PortForwardManager.class), mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class),
                 new Ec2InstanceTypeCatalog(), new InMemoryStorageFactory());
         Instance instance = new Instance();
         instance.setInstanceId("i-pending");
         instance.setState(InstanceState.pending());
+        when(containerManager.cancelLaunch(instance)).thenReturn(true);
 
         AwsException error = assertThrows(AwsException.class,
                 () -> service.awaitContainerLaunch(instance, Duration.ZERO));
 
         assertEquals("InternalError", error.getErrorCode());
         assertTrue(error.getMessage().contains("did not reach running state before the launch timeout"));
+        verify(containerManager).cancelLaunch(instance);
     }
 
     @Test
