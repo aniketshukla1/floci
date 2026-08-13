@@ -1446,9 +1446,9 @@ public class CloudFormationResourceProvisioner {
         var instance = reservation.getInstances().get(0);
         r.setPhysicalId(instance.getInstanceId());
         r.getAttributes().put("InstanceId", instance.getInstanceId());
-        r.getAttributes().put(ROLLBACK_OWNED_ATTR, "true");
+        r.getAttributes().put(CfnRollback.ROLLBACK_OWNED_ATTR, "true");
         ec2Service.awaitContainerLaunch(instance);
-        r.getAttributes().remove(ROLLBACK_OWNED_ATTR);
+        r.getAttributes().remove(CfnRollback.ROLLBACK_OWNED_ATTR);
         if (instance.getPrivateIpAddress() != null) {
             r.getAttributes().put("PrivateIp", instance.getPrivateIpAddress());
         }

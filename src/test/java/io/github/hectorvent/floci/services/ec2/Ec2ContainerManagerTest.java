@@ -49,6 +49,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Answers.RETURNS_SELF;
 import static org.mockito.Answers.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -436,6 +437,21 @@ class Ec2ContainerManagerTest {
     }
 
     @Test
+    void launchTerminatesBeforeCleanupFailure() throws Exception {
+        LaunchHarness harness = launchHarness();
+        when(harness.lifecycleManager.startCreated(eq(TEST_CONTAINER_ID), any(ContainerSpec.class)))
+                .thenThrow(new RuntimeException("Docker daemon unavailable"));
+        doThrow(new RuntimeException("port-forward cleanup failed"))
+                .when(harness.portForwardManager).unpublishAll(any(Instance.class));
+
+        Instance instance = instance("i-cleanup-failure");
+        harness.manager.launch(instance, "ubuntu:24.04", null, "us-west-2");
+
+        awaitUntil(() -> "terminated".equals(instance.getState().getName()), Duration.ofSeconds(2));
+        verify(harness.portForwardManager).unpublishAll(instance);
+    }
+
+    @Test
     void launchMarksInstanceRunningBeforeUserDataCompletes() throws Exception {
         Ec2ContainerManager.containerBridgeIpAttempts = 2;
         Ec2ContainerManager.containerBridgeIpPollMillis = 1;
@@ -635,6 +651,7 @@ class Ec2ContainerManagerTest {
         DockerClient dockerClient = mock(DockerClient.class);
         Ec2MetadataServer metadataServer = mock(Ec2MetadataServer.class);
         ContainerLogStreamer logStreamer = mock(ContainerLogStreamer.class);
+        Ec2PortForwardManager portForwardManager = mock(Ec2PortForwardManager.class);
         Ec2ContainerManager manager = new Ec2ContainerManager(
                 containerBuilder,
                 lifecycleManager,
@@ -645,9 +662,9 @@ class Ec2ContainerManagerTest {
                 portAllocator,
                 config,
                 metadataServer,
-                mock(Ec2PortForwardManager.class));
+                portForwardManager);
         return new LaunchHarness(manager, lifecycleManager, dockerClient, metadataServer, logStreamer, builder,
-                portAllocator, new CopyOnWriteArrayList<>());
+                portAllocator, portForwardManager, new CopyOnWriteArrayList<>());
     }
 
     /**
@@ -697,6 +714,7 @@ class Ec2ContainerManagerTest {
                                  ContainerLogStreamer logStreamer,
                                  ContainerBuilder.Builder builder,
                                  PortAllocator portAllocator,
+                                 Ec2PortForwardManager portForwardManager,
                                  List<String[]> executedCommands) {
         void stubSuccessfulExecs(CountDownLatch userDataStarted, CountDownLatch finishUserData) throws Exception {
             AtomicReference<String[]> currentCommand = new AtomicReference<>();

@@ -290,6 +290,7 @@ public class Ec2ContainerManager {
     }
 
     private void failLaunch(Instance instance, String containerId, int sshHostPort) {
+        instance.setState(InstanceState.terminated());
         portForwardManager.unpublishAll(instance);
         if (containerId != null) {
             lifecycleManager.removeIfExists(containerId);
@@ -301,7 +302,6 @@ public class Ec2ContainerManager {
         if (containerIp != null && !containerIp.isBlank()) {
             metadataServer.unregisterContainer(containerIp, instance);
         }
-        instance.setState(InstanceState.terminated());
     }
 
     private static boolean isHostPortCollision(Exception exception) {

@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.ec2;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -2239,21 +2240,28 @@ public class Ec2Service implements ContainerTeardown {
      * Docker launch has already failed. Mock-mode instances do not launch containers.
      *
      * @param instance the instance returned by {@link #runInstances}
-     * @throws AwsException if the container terminates during launch
+     * @throws AwsException if the container terminates or does not launch before the timeout
      */
     public void awaitContainerLaunch(Instance instance) {
+        awaitContainerLaunch(instance, CONTAINER_LAUNCH_TIMEOUT);
+    }
+
+    void awaitContainerLaunch(Instance instance, Duration timeout) {
         if (config.services().ec2().mock()) {
             return;
         }
 
+        long deadline = System.nanoTime() + timeout.toNanos();
         while (true) {
             String state = instance.getState() != null ? instance.getState().getName() : null;
             if ("running".equals(state)) {
                 return;
             }
             if ("terminated".equals(state)) {
-                throw new AwsException("InstanceLaunchFailure",
-                        "EC2 instance " + instance.getInstanceId() + " terminated during container launch", 500);
+                throw launchFailure(instance, "its container terminated during launch");
+            }
+            if (System.nanoTime() >= deadline) {
+                throw launchFailure(instance, "it did not reach running state before the launch timeout");
             }
             try {
                 Thread.sleep(CONTAINER_LAUNCH_POLL_MILLIS);
@@ -2263,6 +2271,11 @@ public class Ec2Service implements ContainerTeardown {
                         + instance.getInstanceId() + " to launch", 500);
             }
         }
+    }
+
+    private static AwsException launchFailure(Instance instance, String reason) {
+        return new AwsException("InternalError", "EC2 instance " + instance.getInstanceId() + " failed to launch because "
+                + reason, 500);
     }
 
     /**

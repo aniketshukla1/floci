@@ -42,6 +42,7 @@ import io.github.hectorvent.floci.services.ec2.model.Volume;
 import io.github.hectorvent.floci.services.ec2.model.VolumeAttachment;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -91,8 +92,24 @@ class Ec2ServiceTest {
 
         AwsException error = assertThrows(AwsException.class, () -> service.awaitContainerLaunch(instance));
 
-        assertEquals("InstanceLaunchFailure", error.getErrorCode());
-        assertTrue(error.getMessage().contains("terminated during container launch"));
+        assertEquals("InternalError", error.getErrorCode());
+        assertTrue(error.getMessage().contains("container terminated during launch"));
+    }
+
+    @Test
+    void awaitContainerLaunchTimesOutWhileInstanceIsPending() {
+        Ec2Service service = new Ec2Service(mockConfig(false), mock(Ec2ContainerManager.class),
+                mock(Ec2PortForwardManager.class), mock(AmiImageResolver.class), mock(Ec2ImageCatalog.class),
+                new Ec2InstanceTypeCatalog(), new InMemoryStorageFactory());
+        Instance instance = new Instance();
+        instance.setInstanceId("i-pending");
+        instance.setState(InstanceState.pending());
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.awaitContainerLaunch(instance, Duration.ZERO));
+
+        assertEquals("InternalError", error.getErrorCode());
+        assertTrue(error.getMessage().contains("did not reach running state before the launch timeout"));
     }
 
     @Test

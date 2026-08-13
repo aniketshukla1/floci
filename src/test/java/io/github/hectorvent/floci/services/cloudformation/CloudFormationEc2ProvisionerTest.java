@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
+import io.github.hectorvent.floci.services.cloudformation.provisioners.CfnRollback;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CloudFormationResourceRegistry;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.Instance;
@@ -41,7 +42,7 @@ class CloudFormationEc2ProvisionerTest {
                 null, null, null, null, null, null, null, null, null, null,
                 null, null, null, null, null, null, mapper, null, null, null, null, null, null,
                 ec2Service, null, null, null, null, null, null, null,
-                new CloudFormationResourceRegistry(List.of()));
+                null, null, new CloudFormationResourceRegistry(List.of()));
     }
 
     @Test
@@ -53,7 +54,7 @@ class CloudFormationEc2ProvisionerTest {
         reservation.getInstances().add(instance);
         when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
                 any(), any(), anyList(), any(), any())).thenReturn(reservation);
-        doThrow(new AwsException("InstanceLaunchFailure", "EC2 instance i-launch-failed terminated during container launch", 500))
+        doThrow(new AwsException("InternalError", "EC2 instance i-launch-failed failed to launch because its container terminated during launch", 500))
                 .when(ec2Service).awaitContainerLaunch(instance);
 
         StackResource resource = provisioner.provision("Server", "AWS::EC2::Instance", properties(), engine(),
@@ -61,8 +62,31 @@ class CloudFormationEc2ProvisionerTest {
 
         assertEquals("CREATE_FAILED", resource.getStatus());
         assertEquals("i-launch-failed", resource.getPhysicalId());
-        assertEquals("true", resource.getAttributes().get(CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
-        assertTrue(resource.getStatusReason().contains("terminated during container launch"));
+        assertEquals("true", resource.getAttributes().get(CfnRollback.ROLLBACK_OWNED_ATTR));
+        assertTrue(resource.getStatusReason().contains("container terminated during launch"));
+        verify(ec2Service).awaitContainerLaunch(instance);
+    }
+
+    @Test
+    void timedOutContainerLaunchMarksEc2ResourceCreateFailed() throws Exception {
+        Instance instance = new Instance();
+        instance.setInstanceId("i-launch-timed-out");
+        instance.setState(InstanceState.pending());
+        Reservation reservation = new Reservation();
+        reservation.getInstances().add(instance);
+        when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
+                any(), any(), anyList(), any(), any())).thenReturn(reservation);
+        doThrow(new AwsException("InternalError",
+                "EC2 instance i-launch-timed-out failed to launch because it did not reach running state before the launch timeout",
+                500)).when(ec2Service).awaitContainerLaunch(instance);
+
+        StackResource resource = provisioner.provision("Server", "AWS::EC2::Instance", properties(), engine(),
+                "us-east-1", "000000000000", "test-stack");
+
+        assertEquals("CREATE_FAILED", resource.getStatus());
+        assertEquals("i-launch-timed-out", resource.getPhysicalId());
+        assertEquals("true", resource.getAttributes().get(CfnRollback.ROLLBACK_OWNED_ATTR));
+        assertTrue(resource.getStatusReason().contains("launch timeout"));
         verify(ec2Service).awaitContainerLaunch(instance);
     }
 
@@ -80,7 +104,7 @@ class CloudFormationEc2ProvisionerTest {
                 "us-east-1", "000000000000", "test-stack");
 
         assertEquals("CREATE_COMPLETE", resource.getStatus());
-        assertNull(resource.getAttributes().get(CloudFormationResourceProvisioner.ROLLBACK_OWNED_ATTR));
+        assertNull(resource.getAttributes().get(CfnRollback.ROLLBACK_OWNED_ATTR));
         verify(ec2Service).awaitContainerLaunch(instance);
     }
 
