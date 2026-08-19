@@ -2144,9 +2144,37 @@ public class CloudFormationResourceProvisioner {
             }
             table = dynamoDbService.describeTable(tableName, region);
         }
+
+        // A template that declares StreamSpecification wants a stream. Unlike the DynamoDB API,
+        // the CloudFormation property carries no StreamEnabled flag — declaring the block IS the
+        // request — so its presence alone turns the stream on. Without this the table is created
+        // streamless and an event source mapping polls its ARN forever.
+        //
+        // Removing the block on an update is the inverse request: the stream is reconciled off,
+        // or a table updated out of streaming would keep emitting records to whatever still holds
+        // its ARN.
+        JsonNode streamSpec = props != null ? props.path("StreamSpecification") : null;
+        if (streamSpec != null && streamSpec.isObject()) {
+            String viewType = streamSpec.has("StreamViewType")
+                    ? engine.resolve(streamSpec.get("StreamViewType"))
+                    : null;
+            table = dynamoDbService.enableStream(tableName, viewType, region);
+        } else if (table.isStreamEnabled()) {
+            table = dynamoDbService.disableStream(tableName, region);
+        }
+
         r.setPhysicalId(tableName);
         r.getAttributes().put("Arn", table.getTableArn());
-        r.getAttributes().put("StreamArn", table.getTableArn() + "/stream/2024-01-01T00:00:00.000");
+        // Only a live stream has an ARN worth handing to Fn::GetAtt. Publishing one unconditionally
+        // resolved to nothing on a streamless table; publishing the retained ARN of a stream that
+        // has since been switched off would resolve to something no longer running. An update
+        // starts from the previous attributes, so the stale entry has to be removed rather than
+        // merely left unwritten.
+        if (table.isStreamEnabled() && table.getStreamArn() != null) {
+            r.getAttributes().put("StreamArn", table.getStreamArn());
+        } else {
+            r.getAttributes().remove("StreamArn");
+        }
     }
 
     // ── Lambda ────────────────────────────────────────────────────────────────
