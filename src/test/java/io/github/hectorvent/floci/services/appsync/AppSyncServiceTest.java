@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class AppSyncServiceTest {
 
@@ -201,6 +202,38 @@ class AppSyncServiceTest {
     }
 
     @Test
+    void graphqlApiUrisUseConfiguredBaseUrlAndPersist() {
+        AppSyncService configuredService = newService(
+                Clock.fixed(NOW, ZoneOffset.UTC), "http://floci.example:4577/");
+
+        GraphqlApi api = configuredService.createGraphqlApi(
+                Map.of("name", "configured-url", "authenticationType", "API_KEY"), "us-east-1");
+        Map<String, String> expectedUris = Map.of(
+                "GRAPHQL", "http://floci.example:4577/v1/apis/" + api.getApiId() + "/graphql",
+                "REALTIME", "ws://floci.example:4577/v1/apis/" + api.getApiId() + "/graphql/realtime");
+
+        assertEquals(expectedUris, api.getUris());
+        assertEquals(expectedUris, configuredService.getGraphqlApi(api.getApiId()).getUris());
+        assertEquals(expectedUris, configuredService.listGraphqlApis(null, null).items().getFirst().getUris());
+    }
+
+    @Test
+    void graphqlApiRealtimeUriUsesSecureWebSocketForHttpsBaseUrl() {
+        AppSyncService configuredService = newService(
+                Clock.fixed(NOW, ZoneOffset.UTC), "https://floci.example:8443");
+
+        GraphqlApi api = configuredService.createGraphqlApi(
+                Map.of("name", "secure-url", "authenticationType", "API_KEY"), "us-east-1");
+
+        assertEquals(
+                "https://floci.example:8443/v1/apis/" + api.getApiId() + "/graphql",
+                api.getUris().get("GRAPHQL"));
+        assertEquals(
+                "wss://floci.example:8443/v1/apis/" + api.getApiId() + "/graphql/realtime",
+                api.getUris().get("REALTIME"));
+    }
+
+    @Test
     void createResolverDoesNotReregisterSchema() {
         GraphqlApi api = service.createGraphqlApi(Map.of("name", "r", "authenticationType", "API_KEY"), "us-east-1");
         service.createDataSource(api.getApiId(), Map.of("name", "none", "type", "NONE"), "us-east-1");
@@ -216,6 +249,11 @@ class AppSyncServiceTest {
 
     @SuppressWarnings("unchecked")
     private AppSyncService newService(Clock clock) {
+        return newService(clock, "http://localhost:4566");
+    }
+
+    @SuppressWarnings("unchecked")
+    private AppSyncService newService(Clock clock, String baseUrl) {
         StorageFactory storageFactory = new StorageFactory(null, null) {
             @Override
             public <V> AccountAwareStorageBackend<V> create(String serviceName, String fileName,
@@ -225,9 +263,11 @@ class AppSyncServiceTest {
         };
         Instance<RequestContext> requestContext = mock(Instance.class);
         schemaRegistry = mock(SchemaRegistry.class);
+        EmulatorConfig config = mock(EmulatorConfig.class);
+        when(config.effectiveBaseUrl()).thenReturn(baseUrl);
         return new AppSyncService(
                 storageFactory,
-                mock(EmulatorConfig.class),
+                config,
                 new RegionResolver("us-east-1", "000000000000"),
                 schemaRegistry,
                 mock(SchemaCreationWorker.class),

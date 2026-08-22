@@ -44,6 +44,7 @@ public class AppSyncService {
     private final Instance<RequestContext> requestContextInstance;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final String baseUrl;
 
     @Inject
     public AppSyncService(StorageFactory storageFactory, EmulatorConfig config, RegionResolver regionResolver,
@@ -70,6 +71,7 @@ public class AppSyncService {
         this.requestContextInstance = requestContextInstance;
         this.objectMapper = objectMapper;
         this.clock = clock;
+        this.baseUrl = trimTrailingSlash(config.effectiveBaseUrl());
     }
 
     // ──────────────────────────── GraphQL API ────────────────────────────
@@ -124,10 +126,10 @@ public class AppSyncService {
 
         api.setArn(buildApiArn(apiId, region));
 
+        String graphqlPath = "/v1/apis/" + apiId + "/graphql";
         Map<String, String> uris = new HashMap<>();
-        String baseUri = "http://localhost:4566";
-        uris.put("GRAPHQL", baseUri + "/v1/apis/" + apiId + "/graphql");
-        uris.put("REALTIME", "ws://localhost:4566/v1/apis/" + apiId + "/graphql/realtime");
+        uris.put("GRAPHQL", baseUrl + graphqlPath);
+        uris.put("REALTIME", toWebSocketBaseUrl(baseUrl) + graphqlPath + "/realtime");
         api.setUris(uris);
 
         Map<String, Object> tags = castMap(request.get("tags"));
@@ -1126,6 +1128,14 @@ public class AppSyncService {
     private String coerceString(Object value, String defaultValue) {
         String result = coerceString(value);
         return result != null ? result : defaultValue;
+    }
+
+    private static String trimTrailingSlash(String value) {
+        return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+    }
+
+    private static String toWebSocketBaseUrl(String value) {
+        return value.replaceFirst("^http", "ws");
     }
 
     private Integer castInt(Object value) {
