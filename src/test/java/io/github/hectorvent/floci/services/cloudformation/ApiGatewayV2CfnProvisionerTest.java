@@ -12,11 +12,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -50,17 +52,19 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
-    void keepsExistingRoutesAndCleansPartialReplacementWhenRouteCreationFails() throws Exception {
+    void restoresExistingRoutesAndCleansPartialReplacementWhenRouteCreationFails() throws Exception {
+        Route oldRoute = route("old-route", "GET /before");
         when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             Map<String, Object> request = invocation.getArgument(2);
             return switch ((String) request.get("routeKey")) {
-                case "GET /before" -> route("old-route", "GET /before");
+                case "GET /before" -> oldRoute;
                 case "GET /first" -> route("partial-route", "GET /first");
                 case "GET /second" -> throw new AwsException("InternalFailure", "simulated route failure", 500);
                 default -> throw new AssertionError("Unexpected route key: " + request.get("routeKey"));
             };
         });
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-route")).thenReturn(oldRoute);
 
         StackResource original = provision(body("""
                 {"paths":{"/before":{"get":{}}}}
@@ -73,8 +77,9 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("CREATE_COMPLETE", original.getStatus());
         assertEquals("CREATE_FAILED", replacement.getStatus());
         assertEquals("old-route", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
-        verify(apiGatewayV2Service, never()).deleteRoute(REGION, API_ID, "old-route");
+        verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "old-route");
         verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "partial-route");
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
     }
 
     @Test
@@ -98,6 +103,42 @@ class ApiGatewayV2CfnProvisionerTest {
 
         assertEquals("CREATE_FAILED", failed.getStatus());
         assertEquals("partial-route", failed.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+    }
+
+    @Test
+    void restoresExistingRouteWhenReplacementCleanupKeepsAConflictingRoute() throws Exception {
+        Route oldRoute = route("old-route", "GET /same");
+        Route replacementRoute = route("replacement-route", "GET /same");
+        AtomicInteger sameRouteCreations = new AtomicInteger();
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            return switch ((String) request.get("routeKey")) {
+                case "GET /same" -> sameRouteCreations.getAndIncrement() == 0 ? oldRoute : replacementRoute;
+                case "GET /second" -> throw new AwsException("InternalFailure", "simulated route failure", 500);
+                default -> throw new AssertionError("Unexpected route key: " + request.get("routeKey"));
+            };
+        });
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-route")).thenReturn(oldRoute);
+        doAnswer(invocation -> {
+            if ("replacement-route".equals(invocation.getArgument(2))) {
+                throw new AwsException("InternalFailure", "simulated cleanup failure", 500);
+            }
+            return null;
+        }).when(apiGatewayV2Service).deleteRoute(eq(REGION), eq(API_ID), anyString());
+
+        StackResource original = provision(body("""
+                {"paths":{"/same":{"get":{}}}}
+                """), null, Map.of());
+        StackResource replacement = provision(body("""
+                {"paths":{"/same":{"get":{}},"/second":{"get":{}}}}
+                """), original.getPhysicalId(), original.getAttributes());
+
+        assertEquals("CREATE_COMPLETE", original.getStatus());
+        assertEquals("CREATE_FAILED", replacement.getStatus());
+        assertEquals("old-route,replacement-route",
+                replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
     }
 
     @Test
@@ -134,7 +175,8 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("CREATE_COMPLETE", original.getStatus());
         assertEquals("CREATE_FAILED", replacement.getStatus());
         assertEquals("old-one,old-two", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
-        verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "replacement-route");
+        verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID),
+                argThat(request -> "GET /after".equals(request.get("routeKey"))));
         verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne);
         verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
     }

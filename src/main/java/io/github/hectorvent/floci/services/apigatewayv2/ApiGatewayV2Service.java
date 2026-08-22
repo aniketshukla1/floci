@@ -356,9 +356,11 @@ public class ApiGatewayV2Service {
 
     public Route createRoute(String region, String apiId, Map<String, Object> request) {
         getApi(region, apiId);
+        String requestedRouteKey = (String) request.get("routeKey");
+        ensureRouteKeyAvailable(region, apiId, requestedRouteKey, null);
         Route route = new Route();
         route.setRouteId(shortId(8));
-        route.setRouteKey((String) request.get("routeKey"));
+        route.setRouteKey(requestedRouteKey);
         route.setAuthorizationType((String) request.getOrDefault("authorizationType", "NONE"));
         route.setAuthorizerId((String) request.get("authorizerId"));
         route.setAuthorizationScopes(toStringList(request.get("authorizationScopes")));
@@ -388,11 +390,21 @@ public class ApiGatewayV2Service {
     /** Restores a route with its original ID for a higher-level transactional rollback. */
     public void restoreRoute(String region, String apiId, Route route) {
         getApi(region, apiId);
+        // A failed cleanup can leave a replacement route behind. Remove that conflicting
+        // route directly from storage so restoring the snapshot cannot leave two active
+        // routes with the same route key.
+        for (Route existing : getRoutes(region, apiId)) {
+            if (!java.util.Objects.equals(existing.getRouteId(), route.getRouteId())
+                    && java.util.Objects.equals(existing.getRouteKey(), route.getRouteKey())) {
+                routeStore.delete(routeKey(region, apiId, existing.getRouteId()));
+            }
+        }
         Route restored = new Route();
         restored.setRouteId(route.getRouteId());
         restored.setRouteKey(route.getRouteKey());
         restored.setAuthorizationType(route.getAuthorizationType());
         restored.setAuthorizerId(route.getAuthorizerId());
+        restored.setAuthorizationScopes(route.getAuthorizationScopes());
         restored.setTarget(route.getTarget());
         restored.setRouteResponseSelectionExpression(route.getRouteResponseSelectionExpression());
         routeStore.put(routeKey(region, apiId, restored.getRouteId()), restored);
@@ -402,7 +414,9 @@ public class ApiGatewayV2Service {
         Route route = getRoute(region, apiId, routeId);
 
         if (request.containsKey("routeKey") && request.get("routeKey") != null) {
-            route.setRouteKey((String) request.get("routeKey"));
+            String requestedRouteKey = (String) request.get("routeKey");
+            ensureRouteKeyAvailable(region, apiId, requestedRouteKey, routeId);
+            route.setRouteKey(requestedRouteKey);
         }
         if (request.containsKey("authorizationType") && request.get("authorizationType") != null) {
             route.setAuthorizationType((String) request.get("authorizationType"));
@@ -422,6 +436,20 @@ public class ApiGatewayV2Service {
 
         routeStore.put(routeKey(region, apiId, routeId), route);
         return route;
+    }
+
+    private void ensureRouteKeyAvailable(String region, String apiId, String requestedRouteKey,
+                                         String currentRouteId) {
+        if (requestedRouteKey == null) {
+            return;
+        }
+        boolean duplicate = getRoutes(region, apiId).stream()
+                .anyMatch(existing -> !java.util.Objects.equals(existing.getRouteId(), currentRouteId)
+                        && requestedRouteKey.equals(existing.getRouteKey()));
+        if (duplicate) {
+            throw new AwsException("BadRequestException",
+                    "Route with key '" + requestedRouteKey + "' already exists", 400);
+        }
     }
 
     // JSON bodies can carry non-string elements (numbers, booleans); downstream code

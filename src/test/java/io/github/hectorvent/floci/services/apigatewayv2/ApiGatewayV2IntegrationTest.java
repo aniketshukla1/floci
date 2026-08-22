@@ -1,5 +1,8 @@
 package io.github.hectorvent.floci.services.apigatewayv2;
 
+import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.services.apigatewayv2.model.Route;
+import jakarta.inject.Inject;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import org.junit.jupiter.api.MethodOrderer;
@@ -7,12 +10,19 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
+import java.util.List;
+
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 @QuarkusTest
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ApiGatewayV2IntegrationTest {
+
+    @Inject
+    ApiGatewayV2Service apiGatewayV2Service;
 
     private static String apiId;
     private static String routeId;
@@ -152,6 +162,42 @@ class ApiGatewayV2IntegrationTest {
                 .then()
                 .statusCode(200)
                 .body("items.routeId", hasItem(routeId));
+    }
+
+    @Test @Order(23)
+    void duplicateRouteKeyIsRejected() {
+        given()
+                .contentType(ContentType.JSON)
+                .body("""
+                        {"routeKey":"GET /users","target":"integrations/%s"}
+                        """.formatted(integrationId))
+                .when().post("/v2/apis/" + apiId + "/routes")
+                .then()
+                .statusCode(400);
+    }
+
+    @Test @Order(24)
+    void restoringRouteRemovesAConflictingReplacement() {
+        Route oldRoute = new Route();
+        oldRoute.setRouteId("restored-route");
+        oldRoute.setRouteKey("GET /users");
+        oldRoute.setAuthorizationType("NONE");
+        oldRoute.setAuthorizationScopes(List.of("read:users"));
+        oldRoute.setTarget("integrations/" + integrationId);
+
+        String replacementRouteId = routeId;
+        apiGatewayV2Service.restoreRoute("us-east-1", apiId, oldRoute);
+
+        assertEquals(1, apiGatewayV2Service.getRoutes("us-east-1", apiId).stream()
+                .filter(route -> "GET /users".equals(route.getRouteKey()))
+                .count());
+        assertEquals("restored-route",
+                apiGatewayV2Service.findRouteByKey("us-east-1", apiId, "GET /users").getRouteId());
+        assertEquals(List.of("read:users"),
+                apiGatewayV2Service.getRoute("us-east-1", apiId, "restored-route").getAuthorizationScopes());
+        assertThrows(AwsException.class,
+                () -> apiGatewayV2Service.getRoute("us-east-1", apiId, replacementRouteId));
+        routeId = oldRoute.getRouteId();
     }
 
     // ──────────────────────────── Authorizers ────────────────────────────

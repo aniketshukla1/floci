@@ -5202,34 +5202,32 @@ public class CloudFormationResourceProvisioner {
     private void reconcileApiGatewayV2BodyRoutes(StackResource r, String region, String apiId, JsonNode props,
                                                  CloudFormationTemplateEngine engine) {
         JsonNode body = resolveApiGatewayV2OpenApiBody(props, engine);
+        ApiGatewayV2BodyResourceState previous = null;
+        try {
+            previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
+            // API Gateway requires route keys to be unique. Remove only the tracked body-generated
+            // resources before creating their replacements; rollback restores this snapshot.
+            deleteApiGatewayV2BodyResources(r, region, apiId);
+        } catch (RuntimeException e) {
+            rollbackApiGatewayV2BodyReplacement(r, region, apiId,
+                    new ApiGatewayV2BodyResources(List.of(), List.of()), previous, e);
+            throw e;
+        }
+
         if (body == null) {
-            ApiGatewayV2BodyResourceState previous = null;
-            try {
-                previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
-                deleteApiGatewayV2BodyResources(r, region, apiId);
-            } catch (RuntimeException e) {
-                rollbackApiGatewayV2BodyReplacement(r, region, apiId,
-                        new ApiGatewayV2BodyResources(List.of(), List.of()), previous, e);
-                throw e;
-            }
             return;
         }
 
-        // Keep the currently-serving body resources in place until the replacement has been
-        // fully created. A failed replacement therefore cannot leave the API with no routes.
         ApiGatewayV2BodyResources replacement;
         try {
             replacement = materializeApiGatewayV2BodyRoutes(region, apiId, body);
         } catch (ApiGatewayV2BodyMaterializationException e) {
-            retainApiGatewayV2BodyResourceIds(r, e.resources());
+            rollbackApiGatewayV2BodyReplacement(r, region, apiId, e.resources(), previous, e);
             throw e;
-        }
-        ApiGatewayV2BodyResourceState previous = null;
-        try {
-            previous = snapshotApiGatewayV2BodyResources(r, region, apiId);
-            deleteApiGatewayV2BodyResources(r, region, apiId);
         } catch (RuntimeException e) {
-            rollbackApiGatewayV2BodyReplacement(r, region, apiId, replacement, previous, e);
+            // materializeApiGatewayV2BodyRoutes already removed its partial replacement.
+            rollbackApiGatewayV2BodyReplacement(r, region, apiId,
+                    new ApiGatewayV2BodyResources(List.of(), List.of()), previous, e);
             throw e;
         }
         storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR, replacement.routeIds());
@@ -5403,6 +5401,13 @@ public class CloudFormationResourceProvisioner {
                                                       ApiGatewayV2BodyResourceState previous,
                                                       RuntimeException failure) {
         List<RuntimeException> cleanupFailures = cleanupApiGatewayV2BodyResources(region, apiId, replacement);
+
+        if (previous != null) {
+            storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR,
+                    previous.routes().stream().map(Route::getRouteId).toList());
+            storeApiGatewayV2BodyResourceIds(r, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
+                    previous.integrations().stream().map(Integration::getIntegrationId).toList());
+        }
         if (!cleanupFailures.isEmpty()) {
             cleanupFailures.forEach(failure::addSuppressed);
             retainApiGatewayV2BodyResourceIds(r, replacement);
