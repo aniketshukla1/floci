@@ -1444,15 +1444,6 @@ public class CloudFormationService {
                     && awsException.getErrorCode().endsWith("NotFoundException")))) {
                 return true;
             }
-
-            String message = current.getMessage();
-            if (message != null) {
-                String normalized = message.toLowerCase(Locale.ROOT);
-                if (normalized.contains("not found") || normalized.contains("does not exist")
-                        || normalized.contains("not exist")) {
-                    return true;
-                }
-            }
         }
         return false;
     }

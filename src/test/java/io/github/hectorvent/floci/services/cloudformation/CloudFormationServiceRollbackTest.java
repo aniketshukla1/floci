@@ -76,6 +76,33 @@ class CloudFormationServiceRollbackTest {
         verify(provisioner).delete(created, REGION);
     }
 
+    @Test
+    void createRollback_withDependencyNotFoundMessage_reachesRollbackFailed() {
+        Stack stack = new Stack();
+        stack.setStackName("rollback-delete-failure");
+        stack.setStackId("stack-id");
+        stack.setRegion(REGION);
+
+        StackResource created = resource("ListenerRule", "rule-id", "AWS::ElasticLoadBalancingV2::ListenerRule",
+                "CREATE_COMPLETE");
+        StackResource failed = resource("FailingResource", null, "AWS::Test::Failure", "CREATE_FAILED");
+        failed.setStatusReason("simulated create failure");
+        stack.getResources().put(created.getLogicalId(), created);
+        stack.getResources().put(failed.getLogicalId(), failed);
+
+        doThrow(new IllegalStateException("Cannot delete listener rule: target group floci-tg-1 not found"))
+                .when(provisioner).delete(eq(created), eq(REGION));
+
+        service.rollbackFailedExecution(stack, REGION, true, failed, null, Set.of());
+
+        assertEquals("ROLLBACK_FAILED", stack.getStatus());
+        assertEquals("DELETE_FAILED", created.getStatus());
+        assertEquals(
+                "Cannot delete listener rule: target group floci-tg-1 not found",
+                created.getStatusReason());
+        verify(provisioner).delete(created, REGION);
+    }
+
     private static StackResource resource(String logicalId, String physicalId, String resourceType, String status) {
         StackResource resource = new StackResource();
         resource.setLogicalId(logicalId);
