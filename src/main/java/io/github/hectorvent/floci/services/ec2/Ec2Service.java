@@ -112,7 +112,9 @@ public class Ec2Service implements ContainerTeardown {
             Pattern.compile("^tgw-rtb-[0-9a-f]{8}([0-9a-f]{9})?$");
     private static final Pattern TRANSIT_GATEWAY_ATTACHMENT_ID_PATTERN =
             Pattern.compile("^tgw-attach-[0-9a-f]{8}([0-9a-f]{9})?$");
-    private static final Duration CONTAINER_LAUNCH_TIMEOUT = Duration.ofSeconds(60);
+    // A first launch may need to pull a large AMI-backed image. Keep a finite CloudFormation
+    // bound, but allow enough time for that legitimate cold-start path before cancellation.
+    private static final Duration CONTAINER_LAUNCH_TIMEOUT = Duration.ofMinutes(5);
     private static final long CONTAINER_LAUNCH_POLL_MILLIS = 50;
 
     private final String accountId;
