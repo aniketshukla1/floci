@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
@@ -187,7 +189,7 @@ class ApiGatewayV2IntegrationTest {
         oldRoute.setTarget("integrations/" + integrationId);
 
         String replacementRouteId = routeId;
-        apiGatewayV2Service.restoreRoute("us-east-1", apiId, oldRoute);
+        apiGatewayV2Service.restoreRoute("us-east-1", apiId, oldRoute, Set.of(replacementRouteId));
 
         assertEquals(1, apiGatewayV2Service.getRoutes("us-east-1", apiId).stream()
                 .filter(route -> "GET /users".equals(route.getRouteKey()))
@@ -199,6 +201,24 @@ class ApiGatewayV2IntegrationTest {
         assertThrows(AwsException.class,
                 () -> apiGatewayV2Service.getRoute("us-east-1", apiId, replacementRouteId));
         routeId = oldRoute.getRouteId();
+    }
+
+    @Test @Order(25)
+    void restoringRouteDoesNotDeleteAnIndependentConflict() {
+        Route independent = apiGatewayV2Service.createRoute("us-east-1", apiId,
+                Map.of("routeKey", "GET /independent"));
+        Route snapshot = new Route();
+        snapshot.setRouteId("rollback-snapshot");
+        snapshot.setRouteKey("GET /independent");
+
+        assertThrows(AwsException.class,
+                () -> apiGatewayV2Service.restoreRoute("us-east-1", apiId, snapshot, Set.of("other-route")));
+        assertEquals(independent.getRouteId(), apiGatewayV2Service
+                .findRouteByKey("us-east-1", apiId, "GET /independent").getRouteId());
+        assertThrows(AwsException.class,
+                () -> apiGatewayV2Service.getRoute("us-east-1", apiId, snapshot.getRouteId()));
+
+        apiGatewayV2Service.deleteRoute("us-east-1", apiId, independent.getRouteId());
     }
 
     // ──────────────────────────── Authorizers ────────────────────────────

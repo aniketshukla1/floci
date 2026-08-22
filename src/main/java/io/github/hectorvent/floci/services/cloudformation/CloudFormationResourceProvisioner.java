@@ -5462,6 +5462,10 @@ public class CloudFormationResourceProvisioner {
                         "HTTP API routes do not support AND security requirements with multiple schemes");
             }
         }
+        if (security.size() > 1) {
+            throw invalidOpenApiV2Security(
+                    "HTTP API routes do not support OR security requirements with multiple alternatives");
+        }
 
         for (JsonNode requirement : security) {
             Iterator<Map.Entry<String, JsonNode>> schemes = requirement.fields();
@@ -5629,7 +5633,7 @@ public class CloudFormationResourceProvisioner {
                 apiGatewayV2Service.restoreIntegration(region, apiId, integration);
             }
             for (Route route : previous.routes()) {
-                apiGatewayV2Service.restoreRoute(region, apiId, route);
+                apiGatewayV2Service.restoreRoute(region, apiId, route, replacement.routeIds());
             }
         } catch (RuntimeException restoreFailure) {
             failure.addSuppressed(restoreFailure);

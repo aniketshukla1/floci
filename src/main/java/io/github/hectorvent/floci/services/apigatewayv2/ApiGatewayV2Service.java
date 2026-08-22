@@ -403,16 +403,32 @@ public class ApiGatewayV2Service {
         routeStore.delete(routeKey(region, apiId, routeId));
     }
 
-    /** Restores a route with its original ID for a higher-level transactional rollback. */
+    /** Restores a route without treating any conflicting route as rollback-owned. */
     public void restoreRoute(String region, String apiId, Route route) {
+        restoreRoute(region, apiId, route, java.util.Set.of());
+    }
+
+    /**
+     * Restores a route with its original ID for a higher-level transactional rollback.
+     * Only conflicts explicitly identified as part of the failed replacement may be removed;
+     * independently managed routes must never be deleted as a rollback side effect.
+     */
+    public void restoreRoute(String region, String apiId, Route route,
+                             java.util.Collection<String> replaceableRouteIds) {
         getApi(region, apiId);
         // A failed cleanup can leave a replacement route behind. Remove that conflicting
-        // route directly from storage so restoring the snapshot cannot leave two active
-        // routes with the same route key.
+        // route only when the caller proves it belongs to that failed replacement.
         for (Route existing : getRoutes(region, apiId)) {
             if (!java.util.Objects.equals(existing.getRouteId(), route.getRouteId())
                     && java.util.Objects.equals(existing.getRouteKey(), route.getRouteKey())) {
-                routeStore.delete(routeKey(region, apiId, existing.getRouteId()));
+                if (replaceableRouteIds.contains(existing.getRouteId())) {
+                    routeStore.delete(routeKey(region, apiId, existing.getRouteId()));
+                } else {
+                    throw new AwsException("ConflictException",
+                            "Cannot restore route with key '" + route.getRouteKey()
+                                    + "' because an independently managed route already exists",
+                            409);
+                }
             }
         }
         Route restored = new Route();

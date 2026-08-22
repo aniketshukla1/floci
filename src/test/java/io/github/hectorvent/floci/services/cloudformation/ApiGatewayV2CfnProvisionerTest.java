@@ -80,7 +80,7 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("old-route", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
         verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "old-route");
         verify(apiGatewayV2Service).deleteRoute(REGION, API_ID, "partial-route");
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute, java.util.List.of());
     }
 
     @Test
@@ -139,7 +139,8 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("CREATE_FAILED", replacement.getStatus());
         assertEquals("old-route,replacement-route",
                 replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute,
+                java.util.List.of("replacement-route"));
     }
 
     @Test
@@ -264,6 +265,19 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
+    void rejectsUnrepresentableSecurityOrAlternativesInsteadOfChoosingOne() throws Exception {
+        StackResource resource = provision(body("""
+                {
+                  "security":[{"First":[]},{"Second":[]}],
+                  "paths":{"/protected":{"get":{}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_FAILED", resource.getStatus());
+        verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID), anyMap());
+    }
+
+    @Test
     void honorsAnonymousAlternativeInSecurityOrList() throws Exception {
         Authorizer authorizer = new Authorizer();
         authorizer.setAuthorizerId("optional-authorizer");
@@ -365,7 +379,7 @@ class ApiGatewayV2CfnProvisionerTest {
         verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "old-authorizer");
         verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "replacement-authorizer");
         verify(apiGatewayV2Service).restoreAuthorizer(REGION, API_ID, oldAuthorizer);
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute, java.util.List.of());
     }
 
     @Test
@@ -422,8 +436,8 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("old-one,old-two", replacement.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
         verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID),
                 argThat(request -> "GET /after".equals(request.get("routeKey"))));
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne);
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne, java.util.List.of());
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo, java.util.List.of());
     }
 
     @Test
@@ -458,8 +472,8 @@ class ApiGatewayV2CfnProvisionerTest {
         assertEquals("CREATE_COMPLETE", original.getStatus());
         assertEquals("CREATE_FAILED", removal.getStatus());
         assertEquals("old-one,old-two", removal.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne);
-        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldOne, java.util.List.of());
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldTwo, java.util.List.of());
     }
 
     private StackResource provision(JsonNode properties, String existingPhysicalId,
