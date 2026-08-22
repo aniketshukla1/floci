@@ -5454,6 +5454,22 @@ public class CloudFormationResourceProvisioner {
                 resources.integrationIds());
     }
 
+    /**
+     * Carries ownership discovered by a failed update onto the last known-good resource metadata
+     * that CloudFormation restores. Only additive cleanup tracking belongs here; normal attempted
+     * attributes must not overwrite the committed resource state.
+     */
+    void mergeFailedUpdateResourceTracking(StackResource previous, StackResource attempted) {
+        if (!"AWS::ApiGatewayV2::Api".equals(previous.getResourceType())
+                || !Objects.equals(previous.getResourceType(), attempted.getResourceType())) {
+            return;
+        }
+        retainApiGatewayV2BodyResourceIds(previous, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR,
+                apiGatewayV2BodyResourceIds(attempted, APIGATEWAY_V2_BODY_ROUTE_IDS_ATTR));
+        retainApiGatewayV2BodyResourceIds(previous, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR,
+                apiGatewayV2BodyResourceIds(attempted, APIGATEWAY_V2_BODY_INTEGRATION_IDS_ATTR));
+    }
+
     private static void retainApiGatewayV2BodyResourceIds(StackResource r, String attributeName,
                                                            List<String> resourceIds) {
         LinkedHashSet<String> retained = new LinkedHashSet<>(apiGatewayV2BodyResourceIds(r, attributeName));

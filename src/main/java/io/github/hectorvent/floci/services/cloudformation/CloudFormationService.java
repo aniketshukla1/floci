@@ -735,6 +735,9 @@ public class CloudFormationService {
                             // Provisioners work on a copy of the stored resource metadata. Keep the
                             // last known-good identity and status when an update attempt fails so a
                             // later retry or stack deletion still manages the original resource.
+                            // Preserve any additional resources that the failed attempt could not
+                            // clean up, otherwise restoring this object would orphan them.
+                            provisioner.mergeFailedUpdateResourceTracking(previousResource, resource);
                             // The rollback walker must also know this resource is already restored;
                             // otherwise an earlier UPDATE_COMPLETE status looks like an unhandled
                             // mutation and incorrectly turns a safe rollback into ROLLBACK_FAILED.

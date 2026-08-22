@@ -142,6 +142,28 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
+    void mergesFailedUpdateRouteAndIntegrationOwnershipIntoCommittedMetadata() {
+        StackResource previous = new StackResource();
+        previous.setResourceType("AWS::ApiGatewayV2::Api");
+        previous.getAttributes().put("__FlociApiGatewayV2BodyRouteIds", "old-route");
+        previous.getAttributes().put("__FlociApiGatewayV2BodyIntegrationIds", "old-integration");
+
+        StackResource attempted = new StackResource();
+        attempted.setResourceType("AWS::ApiGatewayV2::Api");
+        attempted.getAttributes().put("__FlociApiGatewayV2BodyRouteIds",
+                "old-route,surviving-route");
+        attempted.getAttributes().put("__FlociApiGatewayV2BodyIntegrationIds",
+                "old-integration,surviving-integration");
+
+        provisioner.mergeFailedUpdateResourceTracking(previous, attempted);
+
+        assertEquals("old-route,surviving-route",
+                previous.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
+        assertEquals("old-integration,surviving-integration",
+                previous.getAttributes().get("__FlociApiGatewayV2BodyIntegrationIds"));
+    }
+
+    @Test
     void restoresExistingRoutesWhenOldRouteDeletionFails() throws Exception {
         Route oldOne = route("old-one", "GET /before-one");
         Route oldTwo = route("old-two", "GET /before-two");
