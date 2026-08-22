@@ -31,8 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -234,6 +237,43 @@ class AppSyncServiceTest {
     }
 
     @Test
+    void persistedGraphqlApiUrisAreRepairedOnGetListAndUpdate() {
+        AccountAwareStorageBackend<GraphqlApi> apiStore = spy(
+                AccountAwareStorageBackend.inMemory("000000000000"));
+        AppSyncService legacyService = newService(
+                Clock.fixed(NOW, ZoneOffset.UTC), "http://localhost:4566", apiStore);
+        GraphqlApi api = legacyService.createGraphqlApi(
+                Map.of("name", "persisted-api", "authenticationType", "API_KEY"), "us-east-1");
+        String apiId = api.getApiId();
+        Map<String, String> staleUris = api.getUris();
+
+        AppSyncService configuredService = newService(
+                Clock.fixed(NOW, ZoneOffset.UTC), "https://floci.example:8443/", apiStore);
+        Map<String, String> expectedUris = Map.of(
+                "GRAPHQL", "https://floci.example:8443/v1/apis/" + apiId + "/graphql",
+                "REALTIME", "wss://floci.example:8443/v1/apis/" + apiId + "/graphql/realtime");
+
+        clearInvocations(apiStore);
+        assertEquals(expectedUris, configuredService.getGraphqlApi(apiId).getUris());
+        verify(apiStore).put(apiId, api);
+
+        api.setUris(staleUris);
+        apiStore.put(apiId, api);
+        clearInvocations(apiStore);
+        assertEquals(expectedUris, configuredService.listGraphqlApis(null, null).items().getFirst().getUris());
+        verify(apiStore).put(apiId, api);
+
+        api.setUris(staleUris);
+        apiStore.put(apiId, api);
+        clearInvocations(apiStore);
+        GraphqlApi updated = configuredService.updateGraphqlApi(
+                apiId, Map.of("name", "updated-api"), "us-east-1");
+        assertEquals("updated-api", updated.getName());
+        assertEquals(expectedUris, updated.getUris());
+        verify(apiStore, times(2)).put(apiId, api);
+    }
+
+    @Test
     void createResolverDoesNotReregisterSchema() {
         GraphqlApi api = service.createGraphqlApi(Map.of("name", "r", "authenticationType", "API_KEY"), "us-east-1");
         service.createDataSource(api.getApiId(), Map.of("name", "none", "type", "NONE"), "us-east-1");
@@ -254,10 +294,19 @@ class AppSyncServiceTest {
 
     @SuppressWarnings("unchecked")
     private AppSyncService newService(Clock clock, String baseUrl) {
+        return newService(clock, baseUrl, AccountAwareStorageBackend.inMemory("000000000000"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private AppSyncService newService(Clock clock, String baseUrl,
+            AccountAwareStorageBackend<GraphqlApi> apiStore) {
         StorageFactory storageFactory = new StorageFactory(null, null) {
             @Override
             public <V> AccountAwareStorageBackend<V> create(String serviceName, String fileName,
                     TypeReference<Map<String, V>> typeReference) {
+                if ("appsync-apis.json".equals(fileName)) {
+                    return (AccountAwareStorageBackend<V>) apiStore;
+                }
                 return AccountAwareStorageBackend.inMemory("000000000000");
             }
         };

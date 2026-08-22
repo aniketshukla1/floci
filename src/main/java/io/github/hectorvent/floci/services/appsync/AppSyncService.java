@@ -126,11 +126,7 @@ public class AppSyncService {
 
         api.setArn(buildApiArn(apiId, region));
 
-        String graphqlPath = "/v1/apis/" + apiId + "/graphql";
-        Map<String, String> uris = new HashMap<>();
-        uris.put("GRAPHQL", baseUrl + graphqlPath);
-        uris.put("REALTIME", toWebSocketBaseUrl(baseUrl) + graphqlPath + "/realtime");
-        api.setUris(uris);
+        api.setUris(graphqlApiUris(apiId));
 
         Map<String, Object> tags = castMap(request.get("tags"));
         if (tags != null) {
@@ -146,11 +142,14 @@ public class AppSyncService {
 
     public GraphqlApi getGraphqlApi(String apiId) {
         return apiStore.get(apiId)
+                .map(this::refreshGraphqlApiUris)
                 .orElseThrow(() -> new AwsException("NotFoundException", "GraphQL API not found: " + apiId, 404));
     }
 
     public Page<GraphqlApi> listGraphqlApis(Integer maxResults, String nextToken) {
-        return paginate(apiStore.scan(k -> true), nextToken, maxResults);
+        List<GraphqlApi> apis = apiStore.scan(k -> true);
+        apis.forEach(this::refreshGraphqlApiUris);
+        return paginate(apis, nextToken, maxResults);
     }
 
     @SuppressWarnings("unchecked")
@@ -1136,6 +1135,23 @@ public class AppSyncService {
 
     private static String toWebSocketBaseUrl(String value) {
         return value.replaceFirst("^http", "ws");
+    }
+
+    private Map<String, String> graphqlApiUris(String apiId) {
+        String graphqlPath = "/v1/apis/" + apiId + "/graphql";
+        Map<String, String> uris = new HashMap<>();
+        uris.put("GRAPHQL", baseUrl + graphqlPath);
+        uris.put("REALTIME", toWebSocketBaseUrl(baseUrl) + graphqlPath + "/realtime");
+        return uris;
+    }
+
+    private GraphqlApi refreshGraphqlApiUris(GraphqlApi api) {
+        Map<String, String> expectedUris = graphqlApiUris(api.getApiId());
+        if (!expectedUris.equals(api.getUris())) {
+            api.setUris(expectedUris);
+            apiStore.put(api.getApiId(), api);
+        }
+        return api;
     }
 
     private Integer castInt(Object value) {
