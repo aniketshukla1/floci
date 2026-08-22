@@ -137,6 +137,7 @@ public class CloudFormationResourceProvisioner {
     private static final String LAMBDA_NAME_MODE_ATTR = "FlociLambdaFunctionNameMode";
     private static final String LAMBDA_PACKAGE_TYPE_ATTR = "FlociLambdaPackageType";
     static final String UPDATE_ROLLBACK_RESTORED_ATTR = "__FlociUpdateRollbackRestored";
+    static final String UPDATE_ROLLBACK_FAILURE_ATTR = "__FlociUpdateRollbackFailure";
     private static final String INLINE_CLEANUP_POLICY_NAME_ATTR = "__FlociInlineCleanupPolicyName";
     private static final String INLINE_CLEANUP_ROLE_TARGETS_ATTR = "__FlociInlineCleanupRoleTargets";
     private static final String INLINE_CLEANUP_USER_TARGETS_ATTR = "__FlociInlineCleanupUserTargets";
@@ -5637,6 +5638,10 @@ public class CloudFormationResourceProvisioner {
             }
         } catch (RuntimeException restoreFailure) {
             failure.addSuppressed(restoreFailure);
+            String reason = restoreFailure.getMessage() != null
+                    ? restoreFailure.getMessage()
+                    : restoreFailure.getClass().getSimpleName();
+            r.getAttributes().put(UPDATE_ROLLBACK_FAILURE_ATTR, reason);
         }
     }
 

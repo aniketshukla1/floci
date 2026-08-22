@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.restassured.RestAssured.given;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -99,6 +100,39 @@ class CloudFormationApiGatewayV2CleanupIntegrationTest {
         assertEquals("CREATE_COMPLETE", persisted.getStatus());
         assertTrue(Arrays.asList(persisted.getAttributes().get(ROUTE_IDS_ATTR).split(","))
                 .containsAll(List.of(oldRouteId, survivingRouteId.get())));
+    }
+
+    @Test
+    void failedSnapshotRestorationMarksUpdateRollbackFailed() {
+        String suffix = Long.toString(System.nanoTime(), 36);
+        stackName = "http-api-restore-failure-" + suffix;
+        String apiName = "http-api-restore-failure-" + suffix;
+
+        createStack(httpApiTemplate(apiName, List.of("/before")));
+        waitForStackStatus("CREATE_COMPLETE");
+        String apiId = apiIdForName(apiName);
+        String oldRouteId = apiGatewayV2Service.findRouteByKey(REGION, apiId, "GET /before").getRouteId();
+
+        AtomicReference<String> independentRouteId = new AtomicReference<>();
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            if ("GET /fail".equals(request.get("routeKey"))) {
+                Route independent = apiGatewayV2Service.createRoute(
+                        REGION, apiId, Map.of("routeKey", "GET /before"));
+                independentRouteId.set(independent.getRouteId());
+                throw new AwsException("InternalFailure", "simulated route failure", 500);
+            }
+            return invocation.callRealMethod();
+        }).when(apiGatewayV2Service).createRoute(eq(REGION), eq(apiId), anyMap());
+
+        updateStack(httpApiTemplate(apiName, List.of("/fail")));
+        waitForStackStatus("UPDATE_ROLLBACK_FAILED");
+
+        Route independent = apiGatewayV2Service.findRouteByKey(REGION, apiId, "GET /before");
+        assertEquals(independentRouteId.get(), independent.getRouteId());
+        assertThrows(AwsException.class,
+                () -> apiGatewayV2Service.getRoute(REGION, apiId, oldRouteId));
     }
 
     private void createStack(String template) {
