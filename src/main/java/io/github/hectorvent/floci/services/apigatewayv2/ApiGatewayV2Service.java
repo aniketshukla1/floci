@@ -307,6 +307,22 @@ public class ApiGatewayV2Service {
         authorizerStore.delete(authorizerKey(region, apiId, authorizerId));
     }
 
+    /** Restores an authorizer with its original ID for a higher-level transactional rollback. */
+    public void restoreAuthorizer(String region, String apiId, Authorizer authorizer) {
+        getApi(region, apiId);
+        Authorizer restored = new Authorizer();
+        restored.setAuthorizerId(authorizer.getAuthorizerId());
+        restored.setAuthorizerType(authorizer.getAuthorizerType());
+        restored.setName(authorizer.getName());
+        restored.setJwtConfiguration(authorizer.getJwtConfiguration());
+        restored.setIdentitySource(authorizer.getIdentitySource());
+        restored.setAuthorizerUri(authorizer.getAuthorizerUri());
+        restored.setAuthorizerPayloadFormatVersion(authorizer.getAuthorizerPayloadFormatVersion());
+        restored.setAuthorizerResultTtlInSeconds(authorizer.getAuthorizerResultTtlInSeconds());
+        restored.setEnableSimpleResponses(authorizer.getEnableSimpleResponses());
+        authorizerStore.put(authorizerKey(region, apiId, restored.getAuthorizerId()), restored);
+    }
+
     public Authorizer updateAuthorizer(String region, String apiId, String authorizerId,
                                        Map<String, Object> request) {
         Authorizer auth = getAuthorizer(region, apiId, authorizerId);

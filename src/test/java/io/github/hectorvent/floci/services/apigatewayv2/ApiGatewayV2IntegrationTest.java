@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.apigatewayv2;
 
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.services.apigatewayv2.model.Authorizer;
 import io.github.hectorvent.floci.services.apigatewayv2.model.Route;
 import jakarta.inject.Inject;
 import io.quarkus.test.junit.QuarkusTest;
@@ -242,6 +243,19 @@ class ApiGatewayV2IntegrationTest {
                 .then()
                 .statusCode(200)
                 .body("items.authorizerId", hasItem(authorizerId));
+    }
+
+    @Test @Order(33)
+    void restoreAuthorizerPreservesEnforcementConfiguration() {
+        Authorizer snapshot = apiGatewayV2Service.getAuthorizer("us-east-1", apiId, authorizerId);
+        apiGatewayV2Service.deleteAuthorizer("us-east-1", apiId, authorizerId);
+        apiGatewayV2Service.restoreAuthorizer("us-east-1", apiId, snapshot);
+
+        Authorizer restored = apiGatewayV2Service.getAuthorizer("us-east-1", apiId, authorizerId);
+        assertEquals("JWT", restored.getAuthorizerType());
+        assertEquals(List.of("$request.header.Authorization"), restored.getIdentitySource());
+        assertEquals("https://example.com", restored.getJwtConfiguration().issuer());
+        assertEquals(List.of("api"), restored.getJwtConfiguration().audience());
     }
 
     // ──────────────────────────── Deployments ────────────────────────────

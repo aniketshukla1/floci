@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.apigatewayv2.ApiGatewayV2Service;
 import io.github.hectorvent.floci.services.apigatewayv2.model.Api;
+import io.github.hectorvent.floci.services.apigatewayv2.model.Authorizer;
 import io.github.hectorvent.floci.services.apigatewayv2.model.Route;
 import io.github.hectorvent.floci.services.cloudformation.model.StackResource;
 import io.github.hectorvent.floci.services.cloudformation.provisioners.CloudFormationResourceRegistry;
@@ -147,6 +148,7 @@ class ApiGatewayV2CfnProvisionerTest {
         previous.setResourceType("AWS::ApiGatewayV2::Api");
         previous.getAttributes().put("__FlociApiGatewayV2BodyRouteIds", "old-route");
         previous.getAttributes().put("__FlociApiGatewayV2BodyIntegrationIds", "old-integration");
+        previous.getAttributes().put("__FlociApiGatewayV2BodyAuthorizerIds", "old-authorizer");
 
         StackResource attempted = new StackResource();
         attempted.setResourceType("AWS::ApiGatewayV2::Api");
@@ -154,6 +156,8 @@ class ApiGatewayV2CfnProvisionerTest {
                 "old-route,surviving-route");
         attempted.getAttributes().put("__FlociApiGatewayV2BodyIntegrationIds",
                 "old-integration,surviving-integration");
+        attempted.getAttributes().put("__FlociApiGatewayV2BodyAuthorizerIds",
+                "old-authorizer,surviving-authorizer");
 
         provisioner.mergeFailedUpdateResourceTracking(previous, attempted);
 
@@ -161,6 +165,168 @@ class ApiGatewayV2CfnProvisionerTest {
                 previous.getAttributes().get("__FlociApiGatewayV2BodyRouteIds"));
         assertEquals("old-integration,surviving-integration",
                 previous.getAttributes().get("__FlociApiGatewayV2BodyIntegrationIds"));
+        assertEquals("old-authorizer,surviving-authorizer",
+                previous.getAttributes().get("__FlociApiGatewayV2BodyAuthorizerIds"));
+    }
+
+    @Test
+    void materializesInheritedJwtSecurityAndHonorsOperationOptOut() throws Exception {
+        Authorizer authorizer = new Authorizer();
+        authorizer.setAuthorizerId("body-authorizer");
+        when(apiGatewayV2Service.createAuthorizer(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(authorizer);
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> request = invocation.getArgument(2);
+            return route("route-" + request.get("routeKey"), (String) request.get("routeKey"));
+        });
+
+        StackResource resource = provision(body("""
+                {
+                  "components":{"securitySchemes":{"JwtAuth":{
+                    "type":"oauth2",
+                    "x-amazon-apigateway-authorizer":{
+                      "type":"jwt",
+                      "identitySource":"$request.header.Authorization",
+                      "jwtConfiguration":{
+                        "issuer":"https://issuer.example.com",
+                        "audience":["client-id"]
+                      }
+                    }
+                  }}},
+                  "security":[{"JwtAuth":["orders/read"]}],
+                  "paths":{
+                    "/protected":{"get":{}},
+                    "/public":{"get":{"security":[]}}
+                  }
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_COMPLETE", resource.getStatus());
+        assertEquals("body-authorizer",
+                resource.getAttributes().get("__FlociApiGatewayV2BodyAuthorizerIds"));
+        verify(apiGatewayV2Service).createAuthorizer(eq(REGION), eq(API_ID), argThat(request ->
+                "JwtAuth".equals(request.get("name"))
+                        && "JWT".equals(request.get("authorizerType"))
+                        && "$request.header.Authorization".equals(request.get("identitySource"))));
+        verify(apiGatewayV2Service).createRoute(eq(REGION), eq(API_ID), argThat(request ->
+                "GET /protected".equals(request.get("routeKey"))
+                        && "JWT".equals(request.get("authorizationType"))
+                        && "body-authorizer".equals(request.get("authorizerId"))
+                        && java.util.List.of("orders/read").equals(request.get("authorizationScopes"))));
+        verify(apiGatewayV2Service).createRoute(eq(REGION), eq(API_ID), argThat(request ->
+                "GET /public".equals(request.get("routeKey"))
+                        && "NONE".equals(request.get("authorizationType"))
+                        && !request.containsKey("authorizerId")));
+    }
+
+    @Test
+    void rejectsProtectedOperationWhenSecuritySchemeCannotBeResolved() throws Exception {
+        StackResource resource = provision(body("""
+                {
+                  "security":[{"MissingAuthorizer":[]}],
+                  "paths":{"/protected":{"get":{}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_FAILED", resource.getStatus());
+        verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID), anyMap());
+    }
+
+    @Test
+    void materializesRequestAuthorizerSecurityAsCustomAuthorization() throws Exception {
+        Authorizer authorizer = new Authorizer();
+        authorizer.setAuthorizerId("request-authorizer");
+        when(apiGatewayV2Service.createAuthorizer(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(authorizer);
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(route("protected-route", "POST /protected"));
+
+        StackResource resource = provision(body("""
+                {
+                  "components":{"securitySchemes":{"RequestAuth":{
+                    "type":"apiKey",
+                    "x-amazon-apigateway-authorizer":{
+                      "type":"request",
+                      "identitySource":["$request.header.Authorization"],
+                      "authorizerUri":"arn:aws:apigateway:us-east-1:lambda:path/functions/auth/invocations",
+                      "authorizerPayloadFormatVersion":"2.0",
+                      "enableSimpleResponses":true
+                    }
+                  }}},
+                  "paths":{"/protected":{"post":{"security":[{"RequestAuth":[]}]}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_COMPLETE", resource.getStatus());
+        verify(apiGatewayV2Service).createAuthorizer(eq(REGION), eq(API_ID), argThat(request ->
+                "REQUEST".equals(request.get("authorizerType"))
+                        && Boolean.TRUE.equals(request.get("enableSimpleResponses"))));
+        verify(apiGatewayV2Service).createRoute(eq(REGION), eq(API_ID), argThat(request ->
+                "POST /protected".equals(request.get("routeKey"))
+                        && "CUSTOM".equals(request.get("authorizationType"))
+                        && "request-authorizer".equals(request.get("authorizerId"))));
+    }
+
+    @Test
+    void restoresBodyAuthorizerWhenSecuredRouteReplacementFails() throws Exception {
+        Authorizer oldAuthorizer = new Authorizer();
+        oldAuthorizer.setAuthorizerId("old-authorizer");
+        Authorizer replacementAuthorizer = new Authorizer();
+        replacementAuthorizer.setAuthorizerId("replacement-authorizer");
+        when(apiGatewayV2Service.createAuthorizer(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(oldAuthorizer, replacementAuthorizer);
+
+        Route oldRoute = route("old-route", "GET /protected");
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(oldRoute)
+                .thenThrow(new AwsException("InternalFailure", "simulated route failure", 500));
+        when(apiGatewayV2Service.getRoute(REGION, API_ID, "old-route")).thenReturn(oldRoute);
+        when(apiGatewayV2Service.getAuthorizer(REGION, API_ID, "old-authorizer"))
+                .thenReturn(oldAuthorizer);
+
+        String securedBody = """
+                {
+                  "components":{"securitySchemes":{"JwtAuth":{
+                    "x-amazon-apigateway-authorizer":{
+                      "type":"jwt",
+                      "jwtConfiguration":{"issuer":"https://issuer.example.com"}
+                    }
+                  }}},
+                  "security":[{"JwtAuth":[]}],
+                  "paths":{"/protected":{"get":{}}}
+                }
+                """;
+        StackResource original = provision(body(securedBody), null, Map.of());
+        StackResource replacement = provision(body(securedBody), original.getPhysicalId(),
+                original.getAttributes());
+
+        assertEquals("CREATE_COMPLETE", original.getStatus());
+        assertEquals("CREATE_FAILED", replacement.getStatus());
+        assertEquals("old-authorizer",
+                replacement.getAttributes().get("__FlociApiGatewayV2BodyAuthorizerIds"));
+        verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "old-authorizer");
+        verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "replacement-authorizer");
+        verify(apiGatewayV2Service).restoreAuthorizer(REGION, API_ID, oldAuthorizer);
+        verify(apiGatewayV2Service).restoreRoute(REGION, API_ID, oldRoute);
+    }
+
+    @Test
+    void rejectsSigV4SecurityUntilHttpApiIamEnforcementIsSupported() throws Exception {
+        StackResource resource = provision(body("""
+                {
+                  "components":{"securitySchemes":{"SigV4":{
+                    "type":"apiKey",
+                    "x-amazon-apigateway-authtype":"awsSigv4"
+                  }}},
+                  "security":[{"SigV4":[]}],
+                  "paths":{"/iam":{"get":{}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_FAILED", resource.getStatus());
+        verify(apiGatewayV2Service, never()).createAuthorizer(eq(REGION), eq(API_ID), anyMap());
+        verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID), anyMap());
     }
 
     @Test
