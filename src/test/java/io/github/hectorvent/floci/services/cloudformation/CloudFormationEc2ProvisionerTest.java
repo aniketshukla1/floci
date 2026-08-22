@@ -53,7 +53,7 @@ class CloudFormationEc2ProvisionerTest {
         Reservation reservation = new Reservation();
         reservation.getInstances().add(instance);
         when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
-                any(), any(), anyList(), any(), any())).thenReturn(reservation);
+                any(), any(), anyList(), any(), any(), any())).thenReturn(reservation);
         doThrow(new AwsException("InternalError", "EC2 instance i-launch-failed failed to launch because its container terminated during launch", 500))
                 .when(ec2Service).awaitContainerLaunch(instance);
 
@@ -75,7 +75,7 @@ class CloudFormationEc2ProvisionerTest {
         Reservation reservation = new Reservation();
         reservation.getInstances().add(instance);
         when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
-                any(), any(), anyList(), any(), any())).thenReturn(reservation);
+                any(), any(), anyList(), any(), any(), any())).thenReturn(reservation);
         doThrow(new AwsException("InternalError",
                 "EC2 instance i-launch-timed-out failed to launch because it did not reach running state before the launch timeout",
                 500)).when(ec2Service).awaitContainerLaunch(instance);
@@ -98,7 +98,7 @@ class CloudFormationEc2ProvisionerTest {
         Reservation reservation = new Reservation();
         reservation.getInstances().add(instance);
         when(ec2Service.runInstances(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyList(),
-                any(), any(), anyList(), any(), any())).thenReturn(reservation);
+                any(), any(), anyList(), any(), any(), any())).thenReturn(reservation);
 
         StackResource resource = provisioner.provision("Server", "AWS::EC2::Instance", properties(), engine(),
                 "us-east-1", "000000000000", "test-stack");
