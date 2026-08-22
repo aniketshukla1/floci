@@ -2238,6 +2238,8 @@ public class Ec2Service implements ContainerTeardown {
      * Waits for a container-backed EC2 instance to reach a terminal launch state.
      * CloudFormation uses this to avoid reporting a stack success when the asynchronous
      * Docker launch has already failed. Mock-mode instances do not launch containers.
+     * On timeout, cancellation marks the launch terminal and the container manager prevents any
+     * in-flight Docker phase from later publishing a running instance.
      *
      * @param instance the instance returned by {@link #runInstances}
      * @throws AwsException if the container terminates or does not launch before the timeout

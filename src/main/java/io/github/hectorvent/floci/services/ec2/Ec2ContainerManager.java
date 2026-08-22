@@ -347,6 +347,12 @@ public class Ec2ContainerManager {
     /**
      * Cancels a pending asynchronous launch. Returns {@code false} only when the instance reached
      * running state while the caller was waiting, in which case it must not be torn down as a timeout.
+     *
+     * <p>The terminal state is established atomically before cleanup. The launch worker checks that
+     * state between phases, and {@link #recordCreatedContainer(Instance, String, int)} rejects and
+     * removes a container whose blocking Docker create call returns after cancellation. A timed-out
+     * CloudFormation waiter therefore cannot leave a late worker able to transition the instance to
+     * running.</p>
      */
     boolean cancelLaunch(Instance instance) {
         String containerId;
