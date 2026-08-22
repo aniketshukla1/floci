@@ -234,6 +234,63 @@ class ApiGatewayV2CfnProvisionerTest {
     }
 
     @Test
+    void rejectsAndSecurityRequirementInsteadOfApplyingOnlyOneScheme() throws Exception {
+        Authorizer first = new Authorizer();
+        first.setAuthorizerId("first-authorizer");
+        Authorizer second = new Authorizer();
+        second.setAuthorizerId("second-authorizer");
+        when(apiGatewayV2Service.createAuthorizer(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(first, second);
+
+        StackResource resource = provision(body("""
+                {
+                  "components":{"securitySchemes":{
+                    "First":{"x-amazon-apigateway-authorizer":{
+                      "type":"jwt","jwtConfiguration":{"issuer":"https://first.example.com"}
+                    }},
+                    "Second":{"x-amazon-apigateway-authorizer":{
+                      "type":"jwt","jwtConfiguration":{"issuer":"https://second.example.com"}
+                    }}
+                  }},
+                  "security":[{"First":[],"Second":[]}],
+                  "paths":{"/protected":{"get":{}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_FAILED", resource.getStatus());
+        verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID), anyMap());
+        verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "first-authorizer");
+        verify(apiGatewayV2Service).deleteAuthorizer(REGION, API_ID, "second-authorizer");
+    }
+
+    @Test
+    void honorsAnonymousAlternativeInSecurityOrList() throws Exception {
+        Authorizer authorizer = new Authorizer();
+        authorizer.setAuthorizerId("optional-authorizer");
+        when(apiGatewayV2Service.createAuthorizer(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(authorizer);
+        when(apiGatewayV2Service.createRoute(eq(REGION), eq(API_ID), anyMap()))
+                .thenReturn(route("optional-route", "GET /optional"));
+
+        StackResource resource = provision(body("""
+                {
+                  "components":{"securitySchemes":{"JwtAuth":{
+                    "x-amazon-apigateway-authorizer":{
+                      "type":"jwt","jwtConfiguration":{"issuer":"https://issuer.example.com"}
+                    }
+                  }}},
+                  "security":[{"JwtAuth":[]},{}],
+                  "paths":{"/optional":{"get":{}}}
+                }
+                """), null, Map.of());
+
+        assertEquals("CREATE_COMPLETE", resource.getStatus());
+        verify(apiGatewayV2Service).createRoute(eq(REGION), eq(API_ID), argThat(request ->
+                "GET /optional".equals(request.get("routeKey"))
+                        && "NONE".equals(request.get("authorizationType"))));
+    }
+
+    @Test
     void materializesRequestAuthorizerSecurityAsCustomAuthorization() throws Exception {
         Authorizer authorizer = new Authorizer();
         authorizer.setAuthorizerId("request-authorizer");

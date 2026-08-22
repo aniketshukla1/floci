@@ -5445,7 +5445,10 @@ public class CloudFormationResourceProvisioner {
             return; // An operation-level empty array explicitly overrides inherited security.
         }
 
-        boolean protectedOperation = false;
+        // Each object is one alternative in the outer OR-list, but names inside one object are
+        // an AND requirement. A V2 route can attach only one authorizer, so accepting a multi-name
+        // object would silently weaken its authentication contract. Validate every alternative
+        // before selecting a representable one.
         for (JsonNode requirement : security) {
             if (!requirement.isObject()) {
                 throw invalidOpenApiV2Security("security requirements must be objects");
@@ -5454,7 +5457,13 @@ public class CloudFormationResourceProvisioner {
                 routeRequest.put("authorizationType", "NONE");
                 return; // An empty requirement allows anonymous access by OpenAPI definition.
             }
-            protectedOperation = true;
+            if (requirement.size() > 1) {
+                throw invalidOpenApiV2Security(
+                        "HTTP API routes do not support AND security requirements with multiple schemes");
+            }
+        }
+
+        for (JsonNode requirement : security) {
             Iterator<Map.Entry<String, JsonNode>> schemes = requirement.fields();
             while (schemes.hasNext()) {
                 Map.Entry<String, JsonNode> scheme = schemes.next();
@@ -5476,10 +5485,8 @@ public class CloudFormationResourceProvisioner {
                 return;
             }
         }
-        if (protectedOperation) {
-            throw invalidOpenApiV2Security(
-                    "Protected operation references no supported security scheme");
-        }
+        throw invalidOpenApiV2Security(
+                "Protected operation references no supported security scheme");
     }
 
     private static void putOpenApiAuthorizerIdentitySource(Map<String, Object> request, JsonNode definition) {
