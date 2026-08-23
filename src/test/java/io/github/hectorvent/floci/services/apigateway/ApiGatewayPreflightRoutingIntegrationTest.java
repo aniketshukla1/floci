@@ -16,8 +16,8 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.notNullValue;
 
 /**
- * End-to-end coverage for CORS preflight (OPTIONS) routing to deployed API Gateway
- * integrations (#1928).
+ * End-to-end coverage for CORS preflight (OPTIONS) handling on deployed API Gateway
+ * REST and HTTP APIs (#1928).
  *
  * <p>{@code GlobalCorsFilterTest} unit-tests {@link io.github.hectorvent.floci.core.common.GlobalCorsFilter#isDeployedApiPath}
  * in isolation, and {@code GlobalCorsFilterIntegrationTest} verifies the filter still
@@ -40,6 +40,7 @@ class ApiGatewayPreflightRoutingIntegrationTest {
     private static String optionsResourceId;
     private static String anyResourceId;
     private static String deploymentId;
+    private static String httpApiId;
 
     @Test @Order(1)
     void createRestApi() {
@@ -187,11 +188,63 @@ class ApiGatewayPreflightRoutingIntegrationTest {
     }
 
     /**
+     * HTTP APIs differ from REST APIs: API Gateway itself answers preflight from the API's
+     * CorsConfiguration, even when no OPTIONS route exists.
+     */
+    @Test @Order(7)
+    void setupHttpApiWithCorsConfiguration() {
+        httpApiId = given()
+                .contentType(ContentType.JSON)
+                .body("""
+                    {
+                      "name":"preflight-routing-http-api",
+                      "protocolType":"HTTP",
+                      "corsConfiguration":{
+                        "allowOrigins":["%s"],
+                        "allowMethods":["GET","POST"],
+                        "allowHeaders":["content-type"],
+                        "exposeHeaders":["x-request-id"],
+                        "maxAge":600,
+                        "allowCredentials":true
+                      }
+                    }
+                    """.formatted(ORIGIN))
+                .when().post("/v2/apis")
+                .then()
+                .statusCode(201)
+                .extract().path("apiId");
+
+        given()
+                .contentType(ContentType.JSON)
+                .body("{\"routeKey\":\"GET /items\"}")
+                .when().post("/v2/apis/" + httpApiId + "/routes")
+                .then()
+                .statusCode(201);
+    }
+
+    @Test @Order(8)
+    void httpApiPreflightUsesApiCorsConfigurationWithoutOptionsRoute() {
+        given()
+                .header("Origin", ORIGIN)
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "content-type")
+                .when().options("/execute-api/" + httpApiId + "/$default/items")
+                .then()
+                .statusCode(204)
+                .header("Access-Control-Allow-Origin", equalTo(ORIGIN))
+                .header("Access-Control-Allow-Methods", equalTo("GET, POST"))
+                .header("Access-Control-Allow-Headers", equalTo("content-type"))
+                .header("Access-Control-Expose-Headers", equalTo("x-request-id"))
+                .header("Access-Control-Max-Age", equalTo("600"))
+                .header("Access-Control-Allow-Credentials", equalTo("true"));
+    }
+
+    /**
      * The discriminator: a preflight to a non-deployed management path ({@code /restapis}) is
      * still owned by the global CORS filter — short-circuited with 204 and CORS headers, never
      * routed to an integration. Proves the deployed-path exclusion is scoped, not blanket.
      */
-    @Test @Order(7)
+    @Test @Order(9)
     void preflightToManagementPathIsShortCircuitedByFilter() {
         given()
                 .header("Origin", ORIGIN)
@@ -203,9 +256,10 @@ class ApiGatewayPreflightRoutingIntegrationTest {
                 .body(equalTo(""));
     }
 
-    @Test @Order(8)
+    @Test @Order(10)
     void cleanup() {
         given().when().delete("/restapis/" + apiId).then().statusCode(202);
+        given().when().delete("/v2/apis/" + httpApiId).then().statusCode(204);
     }
 
     public static final class CorsEnabledProfile implements QuarkusTestProfile {

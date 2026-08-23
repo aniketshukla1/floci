@@ -88,9 +88,9 @@ public class GlobalCorsFilter implements ContainerRequestFilter, ContainerRespon
             return;
         }
 
-        // Deployed API Gateway routes own their CORS: the integration (a Lambda with
-        // CORS handling, or a configured OPTIONS method) must receive the request —
-        // including the preflight — instead of Floci short-circuiting it here (#1928).
+        // The API Gateway data plane owns CORS for deployed routes. REST APIs dispatch
+        // OPTIONS to an integration, while HTTP APIs answer from CorsConfiguration in
+        // ApiGatewayExecuteController; neither should be short-circuited here (#1928).
         if (isDeployedApiPath(requestContext.getUriInfo().getPath())) {
             return;
         }
@@ -130,8 +130,8 @@ public class GlobalCorsFilter implements ContainerRequestFilter, ContainerRespon
             return;
         }
 
-        // See filter(request): a deployed API Gateway response carries the integration's
-        // own CORS headers; Floci must not overwrite or duplicate them.
+        // See filter(request): deployed API Gateway responses carry either integration-owned
+        // REST CORS headers or API-owned HTTP API CORS headers.
         if (isDeployedApiPath(requestContext.getUriInfo().getPath())) {
             return;
         }
@@ -162,9 +162,10 @@ public class GlobalCorsFilter implements ContainerRequestFilter, ContainerRespon
     /**
      * True for requests to a <em>deployed</em> API Gateway stage — the {@code execute-api}
      * paths and the LocalStack-compatible {@code _user_request_} form. Floci's global CORS
-     * must not intercept these: the deployed integration owns CORS, and short-circuiting the
-     * preflight prevents it from ever reaching that integration (#1928). Management endpoints
-     * such as {@code /restapis/{id}/resources/...} are unaffected.
+     * must not intercept these: the API Gateway data plane owns their CORS behavior, and
+     * short-circuiting here prevents REST integrations or HTTP API configuration from handling
+     * the preflight (#1928). Management endpoints such as {@code /restapis/{id}/resources/...}
+     * are unaffected.
      */
     static boolean isDeployedApiPath(String path) {
         if (path == null) {
