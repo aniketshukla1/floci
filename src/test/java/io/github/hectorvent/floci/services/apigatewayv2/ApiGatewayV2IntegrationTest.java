@@ -176,7 +176,7 @@ class ApiGatewayV2IntegrationTest {
                         """.formatted(integrationId))
                 .when().post("/v2/apis/" + apiId + "/routes")
                 .then()
-                .statusCode(400);
+                .statusCode(409);
     }
 
     @Test @Order(24)

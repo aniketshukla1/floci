@@ -259,8 +259,40 @@ class SamTransformProcessor {
             if (!logicalId.equals(route.apiLogicalId())) {
                 continue;
             }
+            if (mergeHttpApiRouteIntoDefinitionBody(apiProps.path("Body"), route)) {
+                expandHttpApiPermission(logicalId, route, resources);
+                continue;
+            }
             expandHttpApiRoute(logicalId, route, defaultAuthorizerLogicalId, resources);
         }
+    }
+
+    /**
+     * SAM merges a Function HttpApi event into an existing OpenAPI operation instead of emitting a
+     * second route with the same key. Preserve the operation's documentation while adding the
+     * Lambda integration only when the body does not already provide one.
+     */
+    private boolean mergeHttpApiRouteIntoDefinitionBody(JsonNode definitionBody, HttpApiRoute route) {
+        JsonNode pathItem = definitionBody.path("paths").path(route.path());
+        if (!pathItem.isObject()) {
+            return false;
+        }
+        String operationName = "ANY".equalsIgnoreCase(route.httpMethod())
+                ? "x-amazon-apigateway-any-method" : route.httpMethod();
+        JsonNode operation = fieldIgnoreCase(pathItem, operationName);
+        if (!operation.isObject()) {
+            return false;
+        }
+        ObjectNode operationObject = (ObjectNode) operation;
+        if (!operationObject.path("x-amazon-apigateway-integration").isObject()) {
+            ObjectNode integration = objectMapper.createObjectNode();
+            integration.put("type", "aws_proxy");
+            integration.put("httpMethod", "POST");
+            integration.put("payloadFormatVersion", "2.0");
+            integration.set("uri", lambdaInvokeUri(route.functionLogicalId()));
+            operationObject.set("x-amazon-apigateway-integration", integration);
+        }
+        return true;
     }
 
     private ObjectNode buildHttpApiAuthorizer(String apiLogicalId, String authorizerName, JsonNode samAuthorizer) {
@@ -374,6 +406,10 @@ class SamTransformProcessor {
         routeDef.set("Properties", routeProps);
         resources.set(routeLogicalId, routeDef);
 
+        expandHttpApiPermission(apiLogicalId, route, resources);
+    }
+
+    private void expandHttpApiPermission(String apiLogicalId, HttpApiRoute route, ObjectNode resources) {
         String permissionLogicalId = uniqueId(
                 route.functionLogicalId() + "HttpApiPermission" + sanitize(apiLogicalId), resources);
         ObjectNode perm = objectMapper.createObjectNode();

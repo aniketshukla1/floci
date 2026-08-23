@@ -523,6 +523,76 @@ class SamTransformIntegrationTest {
     }
 
     @Test
+    void samHttpApi_matchingDefinitionBodyAndFunctionEventCreateOneIntegratedRoute() {
+        String suffix = Long.toString(System.nanoTime(), 36);
+        String stackName = "sam-http-api-overlap-" + suffix;
+        String apiName = "sam-http-api-overlap-" + suffix;
+        String functionName = "sam-http-overlap-fn-" + suffix;
+        stacksToDelete.add(stackName);
+
+        String template = """
+            AWSTemplateFormatVersion: '2010-09-09'
+            Transform: AWS::Serverless-2016-10-31
+            Resources:
+              HttpApi:
+                Type: AWS::Serverless::HttpApi
+                Properties:
+                  Name: %s
+                  DefinitionBody:
+                    openapi: 3.0.1
+                    info: {title: overlap, version: '1.0'}
+                    paths:
+                      /items:
+                        get:
+                          responses: {'200': {description: ok}}
+              Handler:
+                Type: AWS::Serverless::Function
+                Properties:
+                  FunctionName: %s
+                  Runtime: python3.12
+                  Handler: index.handler
+                  InlineCode: 'def handler(e,c): return {}'
+                  Events:
+                    Api:
+                      Type: HttpApi
+                      Properties:
+                        ApiId: {Ref: HttpApi}
+                        Path: /items
+                        Method: GET
+            """.formatted(apiName, functionName);
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateStack")
+            .formParam("StackName", stackName)
+            .formParam("TemplateBody", template)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        waitForStackStatus(stackName, "CREATE_COMPLETE");
+        String apiId = apiIdForName(apiName);
+
+        given()
+        .when()
+            .get("/v2/apis/" + apiId + "/routes")
+        .then()
+            .statusCode(200)
+            .body("items.size()", equalTo(1))
+            .body("items[0].routeKey", equalTo("GET /items"))
+            .body("items[0].target", containsString("integrations/"));
+
+        given()
+        .when()
+            .get("/v2/apis/" + apiId + "/integrations")
+        .then()
+            .statusCode(200)
+            .body("items.size()", equalTo(1))
+            .body("items[0].integrationUri", containsString(functionName));
+    }
+
+    @Test
     void samHttpApi_intrinsicDefinitionUriCreatesApiGatewayV2Routes() {
         String suffix = Long.toString(System.nanoTime(), 36);
         String stackName = "sam-http-api-uri-" + suffix;

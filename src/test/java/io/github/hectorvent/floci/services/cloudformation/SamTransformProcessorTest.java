@@ -932,6 +932,72 @@ class SamTransformProcessorTest {
     }
 
     @Test
+    void expandSamTemplate_httpApiEventMergesIntoMatchingDefinitionBodyOperation() throws Exception {
+        JsonNode template = objectMapper.readTree("""
+            {
+              "Transform": "AWS::Serverless-2016-10-31",
+              "Resources": {
+                "MyHttpApi": {
+                  "Type": "AWS::Serverless::HttpApi",
+                  "Properties": {
+                    "DefinitionBody": {
+                      "openapi": "3.0.1",
+                      "paths": {
+                        "/items": { "get": { "responses": { "200": { "description": "ok" } } } }
+                      }
+                    }
+                  }
+                },
+                "MyFunction": {
+                  "Type": "AWS::Serverless::Function",
+                  "Properties": {
+                    "Runtime": "python3.12",
+                    "Handler": "index.handler",
+                    "InlineCode": "def handler(e,c): return {}",
+                    "Events": {
+                      "Api": {
+                        "Type": "HttpApi",
+                        "Properties": {
+                          "ApiId": { "Ref": "MyHttpApi" },
+                          "Path": "/items",
+                          "Method": "GET"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """);
+
+        JsonNode resources = processor.expandSamTemplate(template).path("Resources");
+        JsonNode operation = resources.path("MyHttpApi").path("Properties").path("Body")
+                .path("paths").path("/items").path("get");
+        JsonNode integration = operation.path("x-amazon-apigateway-integration");
+
+        assertEquals("ok", operation.path("responses").path("200").path("description").asText());
+        assertEquals("aws_proxy", integration.path("type").asText());
+        assertEquals("POST", integration.path("httpMethod").asText());
+        assertEquals("2.0", integration.path("payloadFormatVersion").asText());
+        assertEquals("MyFunction", integration.path("uri").path("Fn::Sub").path(1)
+                .path("FnArn").path("Fn::GetAtt").path(0).asText());
+
+        int routeResources = 0;
+        int integrationResources = 0;
+        int permissionResources = 0;
+        Iterator<JsonNode> definitions = resources.elements();
+        while (definitions.hasNext()) {
+            String type = definitions.next().path("Type").asText();
+            routeResources += "AWS::ApiGatewayV2::Route".equals(type) ? 1 : 0;
+            integrationResources += "AWS::ApiGatewayV2::Integration".equals(type) ? 1 : 0;
+            permissionResources += "AWS::Lambda::Permission".equals(type) ? 1 : 0;
+        }
+        assertEquals(0, routeResources, "matching body operations must not emit a duplicate route resource");
+        assertEquals(0, integrationResources, "the body owns the merged integration");
+        assertEquals(1, permissionResources, "API Gateway still needs permission to invoke the function");
+    }
+
+    @Test
     void expandSamTemplate_httpApiMapsDefinitionUriToBodyS3Location() throws Exception {
         JsonNode template = objectMapper.readTree("""
             {

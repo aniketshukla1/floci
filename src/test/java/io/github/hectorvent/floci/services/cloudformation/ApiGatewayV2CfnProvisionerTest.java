@@ -231,6 +231,8 @@ class ApiGatewayV2CfnProvisionerTest {
                 """), null, Map.of());
 
         assertEquals("CREATE_FAILED", resource.getStatus());
+        assertEquals("Protected operation GET /protected references unsupported security scheme 'MissingAuthorizer'",
+                resource.getStatusReason());
         verify(apiGatewayV2Service, never()).createRoute(eq(REGION), eq(API_ID), anyMap());
     }
 

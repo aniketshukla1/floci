@@ -5327,7 +5327,8 @@ public class CloudFormationResourceProvisioner {
 
                     Map<String, Object> routeRequest = new HashMap<>();
                     routeRequest.put("routeKey", openApiRouteKey(method, pathEntry.getKey()));
-                    applyOpenApiRouteSecurity(body, operation.getValue(), authorizers, routeRequest);
+                    applyOpenApiRouteSecurity(body, operation.getValue(), pathEntry.getKey(), method,
+                            authorizers, routeRequest);
                     JsonNode integration = operation.getValue().path("x-amazon-apigateway-integration");
                     if (integration.isObject()) {
                         String integrationType = textOrNull(integration, "type");
@@ -5431,7 +5432,7 @@ public class CloudFormationResourceProvisioner {
         return bindings;
     }
 
-    private void applyOpenApiRouteSecurity(JsonNode body, JsonNode operation,
+    private void applyOpenApiRouteSecurity(JsonNode body, JsonNode operation, String path, String method,
                                            Map<String, OpenApiAuthorizerBinding> authorizers,
                                            Map<String, Object> routeRequest) {
         JsonNode security = operation.has("security") ? operation.get("security") : body.get("security");
@@ -5448,8 +5449,10 @@ public class CloudFormationResourceProvisioner {
 
         // Each object is one alternative in the outer OR-list, but names inside one object are
         // an AND requirement. A V2 route can attach only one authorizer, so accepting a multi-name
-        // object would silently weaken its authentication contract. Validate every alternative
-        // before selecting a representable one.
+        // object would silently weaken its authentication contract. AWS classifies multiple
+        // security requirements as an HTTP API import error:
+        // https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-open-api.html
+        // Validate every alternative before selecting a representable one.
         for (JsonNode requirement : security) {
             if (!requirement.isObject()) {
                 throw invalidOpenApiV2Security("security requirements must be objects");
@@ -5468,12 +5471,14 @@ public class CloudFormationResourceProvisioner {
                     "HTTP API routes do not support OR security requirements with multiple alternatives");
         }
 
+        String unsupportedScheme = null;
         for (JsonNode requirement : security) {
             Iterator<Map.Entry<String, JsonNode>> schemes = requirement.fields();
             while (schemes.hasNext()) {
                 Map.Entry<String, JsonNode> scheme = schemes.next();
                 OpenApiAuthorizerBinding binding = authorizers.get(scheme.getKey());
                 if (binding == null) {
+                    unsupportedScheme = scheme.getKey();
                     continue;
                 }
                 routeRequest.put("authorizationType", binding.authorizationType());
@@ -5491,7 +5496,8 @@ public class CloudFormationResourceProvisioner {
             }
         }
         throw invalidOpenApiV2Security(
-                "Protected operation references no supported security scheme");
+                "Protected operation " + openApiRouteKey(method, path)
+                        + " references unsupported security scheme '" + unsupportedScheme + "'");
     }
 
     private static void putOpenApiAuthorizerIdentitySource(Map<String, Object> request, JsonNode definition) {

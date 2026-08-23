@@ -479,8 +479,8 @@ public class ApiGatewayV2Service {
                 .anyMatch(existing -> !java.util.Objects.equals(existing.getRouteId(), currentRouteId)
                         && requestedRouteKey.equals(existing.getRouteKey()));
         if (duplicate) {
-            throw new AwsException("BadRequestException",
-                    "Route with key '" + requestedRouteKey + "' already exists", 400);
+            throw new AwsException("ConflictException",
+                    "Route with key '" + requestedRouteKey + "' already exists", 409);
         }
     }
 
