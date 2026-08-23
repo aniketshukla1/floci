@@ -2264,7 +2264,7 @@ public class Ec2Service implements ContainerTeardown {
             if ("terminated".equals(state)) {
                 throw launchFailure(instance, "its container terminated during launch");
             }
-            if (System.nanoTime() >= deadline) {
+            if (System.nanoTime() - deadline >= 0) {
                 if (containerManager.cancelLaunch(instance)) {
                     throw launchFailure(instance, "it did not reach running state before the launch timeout");
                 }
