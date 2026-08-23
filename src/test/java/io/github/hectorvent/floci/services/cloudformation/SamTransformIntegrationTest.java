@@ -16,6 +16,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 @QuarkusTest
@@ -538,9 +539,19 @@ class SamTransformIntegrationTest {
                 Type: AWS::Serverless::HttpApi
                 Properties:
                   Name: %s
+                  Auth:
+                    DefaultAuthorizer: JwtAuth
+                    Authorizers:
+                      JwtAuth:
+                        IdentitySource: '$request.header.Authorization'
+                        AuthorizationScopes: [read:items]
+                        JwtConfiguration:
+                          issuer: https://issuer.example.com
+                          audience: [items-client]
                   DefinitionBody:
                     openapi: 3.0.1
                     info: {title: overlap, version: '1.0'}
+                    components: {}
                     paths:
                       /items:
                         get:
@@ -581,6 +592,9 @@ class SamTransformIntegrationTest {
             .statusCode(200)
             .body("items.size()", equalTo(1))
             .body("items[0].routeKey", equalTo("GET /items"))
+            .body("items[0].authorizationType", equalTo("JWT"))
+            .body("items[0].authorizationScopes", hasItem("read:items"))
+            .body("items[0].authorizerId", notNullValue())
             .body("items[0].target", containsString("integrations/"));
 
         given()

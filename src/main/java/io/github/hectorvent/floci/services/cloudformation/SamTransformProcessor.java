@@ -259,7 +259,10 @@ class SamTransformProcessor {
             if (!logicalId.equals(route.apiLogicalId())) {
                 continue;
             }
-            if (mergeHttpApiRouteIntoDefinitionBody(apiProps.path("Body"), route)) {
+            JsonNode defaultAuthorizer = defaultAuthorizerName == null
+                    ? objectMapper.missingNode() : authorizers.path(defaultAuthorizerName);
+            if (mergeHttpApiRouteIntoDefinitionBody(apiProps.path("Body"), route,
+                    defaultAuthorizerName, defaultAuthorizer)) {
                 expandHttpApiPermission(logicalId, route, resources);
                 continue;
             }
@@ -272,7 +275,9 @@ class SamTransformProcessor {
      * second route with the same key. Preserve the operation's documentation while adding the
      * Lambda integration only when the body does not already provide one.
      */
-    private boolean mergeHttpApiRouteIntoDefinitionBody(JsonNode definitionBody, HttpApiRoute route) {
+    private boolean mergeHttpApiRouteIntoDefinitionBody(JsonNode definitionBody, HttpApiRoute route,
+                                                         String defaultAuthorizerName,
+                                                         JsonNode defaultAuthorizer) {
         JsonNode pathItem = definitionBody.path("paths").path(route.path());
         if (!pathItem.isObject()) {
             return false;
@@ -292,7 +297,90 @@ class SamTransformProcessor {
             integration.set("uri", lambdaInvokeUri(route.functionLogicalId()));
             operationObject.set("x-amazon-apigateway-integration", integration);
         }
+        applyMergedHttpApiRouteAuthorization(definitionBody, operationObject, route,
+                defaultAuthorizerName, defaultAuthorizer);
         return true;
+    }
+
+    /**
+     * The SAM translator mutates matching DefinitionBody operations with both the Function event's
+     * integration and its effective authorization. Without the latter, merging an authenticated
+     * event would silently expose the route because the API Gateway V2 body importer defaults the
+     * operation to {@code NONE}.
+     */
+    private void applyMergedHttpApiRouteAuthorization(JsonNode definitionBody, ObjectNode operation,
+                                                       HttpApiRoute route, String defaultAuthorizerName,
+                                                       JsonNode defaultAuthorizer) {
+        if (route.noAuthorizer()) {
+            // SAM represents this opt-out with a synthetic NONE requirement. An empty operation-level
+            // OpenAPI security array is the standard equivalent and is understood by our body importer.
+            operation.set("security", objectMapper.createArrayNode());
+            return;
+        }
+        if (defaultAuthorizerName == null || !defaultAuthorizer.isObject()
+                || hasNonEmptySecurity(operation.get("security"))) {
+            return;
+        }
+
+        addOpenApiJwtAuthorizer(definitionBody, defaultAuthorizerName, defaultAuthorizer);
+        ObjectNode requirement = objectMapper.createObjectNode();
+        JsonNode configuredScopes = defaultAuthorizer.path("AuthorizationScopes");
+        requirement.set(defaultAuthorizerName, configuredScopes.isArray()
+                ? configuredScopes.deepCopy() : objectMapper.createArrayNode());
+        ArrayNode security = objectMapper.createArrayNode();
+        security.add(requirement);
+        operation.set("security", security);
+    }
+
+    private static boolean hasNonEmptySecurity(JsonNode security) {
+        return security != null && !security.isNull()
+                && (!security.isContainerNode() || security.size() > 0);
+    }
+
+    /**
+     * Emits the same JWT security-scheme shape as
+     * {@code ApiGatewayV2Authorizer.generate_openapi} in AWS SAM. The ApiGatewayV2 body provisioner
+     * materializes this scheme first, then binds the operation's security requirement to it.
+     */
+    private void addOpenApiJwtAuthorizer(JsonNode definitionBody, String authorizerName,
+                                         JsonNode samAuthorizer) {
+        ObjectNode body = (ObjectNode) definitionBody;
+        ObjectNode components = objectChild(body, "components", "DefinitionBody.components");
+        ObjectNode schemes = objectChild(components, "securitySchemes",
+                "DefinitionBody.components.securitySchemes");
+
+        ObjectNode scheme = objectMapper.createObjectNode();
+        scheme.put("type", "oauth2");
+        ObjectNode extension = objectMapper.createObjectNode();
+        extension.set("identitySource", resolveIdentitySource(authorizerName, samAuthorizer));
+        extension.put("type", "jwt");
+
+        JsonNode samJwt = samAuthorizer.path("JwtConfiguration");
+        ObjectNode jwt = objectMapper.createObjectNode();
+        JsonNode issuer = fieldIgnoreCase(samJwt, "issuer");
+        if (!issuer.isMissingNode()) {
+            jwt.set("issuer", issuer.deepCopy());
+        }
+        JsonNode audience = fieldIgnoreCase(samJwt, "audience");
+        if (audience.isArray()) {
+            jwt.set("audience", audience.deepCopy());
+        }
+        extension.set("jwtConfiguration", jwt);
+        scheme.set("x-amazon-apigateway-authorizer", extension);
+        schemes.set(authorizerName, scheme);
+    }
+
+    private ObjectNode objectChild(ObjectNode parent, String fieldName, String fieldPath) {
+        JsonNode existing = parent.get(fieldName);
+        if (existing == null || existing.isNull()) {
+            ObjectNode created = objectMapper.createObjectNode();
+            parent.set(fieldName, created);
+            return created;
+        }
+        if (!existing.isObject()) {
+            throw new AwsException("ValidationError", fieldPath + " must be an object", 400);
+        }
+        return (ObjectNode) existing;
     }
 
     private ObjectNode buildHttpApiAuthorizer(String apiLogicalId, String authorizerName, JsonNode samAuthorizer) {
