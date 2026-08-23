@@ -322,6 +322,11 @@ class SamTransformProcessor {
             return;
         }
 
+        // AWS SAM deliberately treats an absent, null, or empty operation security value as unset
+        // when applying DefaultAuthorizer. A public per-event override is represented separately by
+        // Authorizer: NONE and is handled above. Keep this truthiness rule aligned with
+        // OpenApiEditor.set_path_default_authorizer:
+        // https://github.com/aws/serverless-application-model/blob/develop/samtranslator/open_api/open_api.py
         addOpenApiJwtAuthorizer(definitionBody, defaultAuthorizerName, defaultAuthorizer);
         ObjectNode requirement = objectMapper.createObjectNode();
         JsonNode configuredScopes = defaultAuthorizer.path("AuthorizationScopes");

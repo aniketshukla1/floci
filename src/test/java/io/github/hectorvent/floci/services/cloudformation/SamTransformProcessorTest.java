@@ -956,7 +956,12 @@ class SamTransformProcessorTest {
                     "DefinitionBody": {
                       "openapi": "3.0.1",
                       "paths": {
-                        "/items": { "get": { "responses": { "200": { "description": "ok" } } } }
+                        "/items": {
+                          "get": {
+                            "security": [],
+                            "responses": { "200": { "description": "ok" } }
+                          }
+                        }
                       }
                     }
                   }
