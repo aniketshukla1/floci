@@ -46,6 +46,7 @@ public class CloudWatchLogsHandler {
             case "PutRetentionPolicy" -> handlePutRetentionPolicy(request, region);
             case "DeleteRetentionPolicy" -> handleDeleteRetentionPolicy(request, region);
             case "PutLogGroupDeletionProtection" -> handlePutLogGroupDeletionProtection(request, region);
+            case "AssociateKmsKey" -> handleAssociateKmsKey(request, region);
             case "TagLogGroup" -> handleTagLogGroup(request, region);
             case "UntagLogGroup" -> handleUntagLogGroup(request, region);
             case "ListTagsLogGroup" -> handleListTagsLogGroup(request, region);
@@ -95,6 +96,19 @@ public class CloudWatchLogsHandler {
         return Response.ok(objectMapper.createObjectNode()).build();
     }
 
+    private Response handleAssociateKmsKey(JsonNode request, String region) {
+        String groupName = request.path("logGroupName").asText(null);
+        if (groupName == null || groupName.isBlank()) {
+            throw new AwsException("InvalidParameterException", "logGroupName is required.", 400);
+        }
+        String kmsKeyId = request.path("kmsKeyId").asText(null);
+        if (kmsKeyId == null || kmsKeyId.isBlank()) {
+            throw new AwsException("InvalidParameterException", "kmsKeyId is required.", 400);
+        }
+        logsService.associateKmsKey(groupName, kmsKeyId, region);
+        return Response.ok(objectMapper.createObjectNode()).build();
+    }
+
     private Response handleDescribeLogGroups(JsonNode request, String region) {
         String prefix = request.path("logGroupNamePrefix").asText(null);
         List<LogGroup> groups = logsService.describeLogGroups(prefix, region);
@@ -108,6 +122,9 @@ public class CloudWatchLogsHandler {
             node.put("arn", logsService.buildArn(g.getLogGroupName(), region));
             if (g.getRetentionInDays() != null) {
                 node.put("retentionInDays", g.getRetentionInDays());
+            }
+            if (g.getKmsKeyId() != null) {
+                node.put("kmsKeyId", g.getKmsKeyId());
             }
             node.put("deletionProtectionEnabled", g.isDeletionProtectionEnabled());
             node.put("storedBytes", 0);

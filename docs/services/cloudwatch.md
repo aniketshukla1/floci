@@ -17,6 +17,7 @@ Floci supports both CloudWatch Logs and CloudWatch Metrics.
 | `DeleteLogGroup` | Delete a log group |
 | `PutLogGroupDeletionProtection` | Enable or disable deletion protection for a log group by name or ARN |
 | `DescribeLogGroups` | List log groups |
+| `AssociateKmsKey` | Associate a KMS key with a log group |
 | `CreateLogStream` | Create a log stream inside a log group |
 | `DeleteLogStream` | Delete a log stream |
 | `DescribeLogStreams` | List log streams in a group |

@@ -232,6 +232,15 @@ public class CloudWatchLogsService {
         groupStore.put(key, group);
     }
 
+    public void associateKmsKey(String groupName, String kmsKeyId, String region) {
+        String key = groupKey(region, groupName);
+        LogGroup group = groupStore.get(key)
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "The specified log group does not exist: " + groupName, 400));
+        group.setKmsKeyId(kmsKeyId);
+        groupStore.put(key, group);
+    }
+
     public void putRetentionPolicy(String groupName, int days, String region) {
         String key = groupKey(region, groupName);
         LogGroup group = groupStore.get(key)

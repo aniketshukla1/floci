@@ -146,6 +146,23 @@ class CloudWatchLogsHandlerTest {
     }
 
     @Test
+    void associateKmsKeyIsReturnedByDescribeLogGroups() {
+        String kmsKeyArn = "arn:aws:kms:" + REGION + ":" + ACCOUNT + ":key/test-key";
+        ObjectNode associate = MAPPER.createObjectNode();
+        associate.put("logGroupName", GROUP);
+        associate.put("kmsKeyId", kmsKeyArn);
+
+        Response response = handler.handle("AssociateKmsKey", associate, REGION);
+
+        assertEquals(200, response.getStatus());
+        ObjectNode describe = MAPPER.createObjectNode();
+        describe.put("logGroupNamePrefix", GROUP);
+        JsonNode group = ((JsonNode) handler.handle("DescribeLogGroups", describe, REGION).getEntity())
+                .path("logGroups").get(0);
+        assertEquals(kmsKeyArn, group.path("kmsKeyId").asText());
+    }
+
+    @Test
     void putLogGroupDeletionProtectionPersistsByName() {
         ObjectNode request = MAPPER.createObjectNode();
         request.put("logGroupIdentifier", GROUP);
