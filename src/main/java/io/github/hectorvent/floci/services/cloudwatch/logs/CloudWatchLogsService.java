@@ -4,11 +4,13 @@ import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
+import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.cloudwatch.logs.model.LogEvent;
 import io.github.hectorvent.floci.services.cloudwatch.logs.model.LogGroup;
 import io.github.hectorvent.floci.services.cloudwatch.logs.model.LogStream;
+import io.github.hectorvent.floci.services.cloudwatch.logs.model.ResourcePolicy;
 import io.github.hectorvent.floci.services.cloudwatch.logs.model.SubscriptionFilter;
 import com.fasterxml.jackson.core.type.TypeReference;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -50,6 +52,7 @@ public class CloudWatchLogsService {
     private final StorageBackend<String, LogStream> streamStore;
     private final StorageBackend<String, LogEvent> eventStore;
     private final StorageBackend<String, SubscriptionFilter> subscriptionFilterStore;
+    private final StorageBackend<String, ResourcePolicy> resourcePolicyStore;
     private final RegionResolver regionResolver;
     private final int maxEventsPerQuery;
     /**
@@ -94,6 +97,8 @@ public class CloudWatchLogsService {
                         new TypeReference<>() {}),
                 storageFactory.create("cloudwatchlogs", "cwlogs-subscription-filters.json",
                         new TypeReference<>() {}),
+                storageFactory.create("cloudwatchlogs", "cwlogs-resource-policies.json",
+                        new TypeReference<>() {}),
                 config.services().cloudwatchlogs().maxEventsPerQuery(),
                 regionResolver,
                 config.services().cloudwatchlogs().queryCompletionDelayMs(),
@@ -107,7 +112,7 @@ public class CloudWatchLogsService {
                            StorageBackend<String, SubscriptionFilter> subscriptionFilterStore,
                            int maxEventsPerQuery,
                            RegionResolver regionResolver) {
-        this(groupStore, streamStore, eventStore, subscriptionFilterStore,
+        this(groupStore, streamStore, eventStore, subscriptionFilterStore, new InMemoryStorage<>(),
                 maxEventsPerQuery, regionResolver, 0L, System::currentTimeMillis);
     }
 
@@ -119,10 +124,24 @@ public class CloudWatchLogsService {
                            RegionResolver regionResolver,
                            long queryCompletionDelayMs,
                            LongSupplier clock) {
+        this(groupStore, streamStore, eventStore, subscriptionFilterStore, new InMemoryStorage<>(),
+                maxEventsPerQuery, regionResolver, queryCompletionDelayMs, clock);
+    }
+
+    CloudWatchLogsService(StorageBackend<String, LogGroup> groupStore,
+                           StorageBackend<String, LogStream> streamStore,
+                           StorageBackend<String, LogEvent> eventStore,
+                           StorageBackend<String, SubscriptionFilter> subscriptionFilterStore,
+                           StorageBackend<String, ResourcePolicy> resourcePolicyStore,
+                           int maxEventsPerQuery,
+                           RegionResolver regionResolver,
+                           long queryCompletionDelayMs,
+                           LongSupplier clock) {
         this.groupStore = groupStore;
         this.streamStore = streamStore;
         this.eventStore = eventStore;
         this.subscriptionFilterStore = subscriptionFilterStore;
+        this.resourcePolicyStore = resourcePolicyStore;
         this.maxEventsPerQuery = maxEventsPerQuery;
         this.regionResolver = regionResolver;
         long maxSequence = eventStore.scan(k -> true).stream()
@@ -891,6 +910,24 @@ public class CloudWatchLogsService {
         LOG.infov("Deleted subscription filter: {0} on log group: {1}", filterName, logGroupName);
     }
 
+    // ──────────────────────────── Resource Policies ────────────────────────────
+
+    public ResourcePolicy putResourcePolicy(String policyName, String policyDocument, String region) {
+        ResourcePolicy policy = new ResourcePolicy();
+        policy.setPolicyName(policyName);
+        policy.setPolicyDocument(policyDocument);
+        policy.setLastUpdatedTime(System.currentTimeMillis());
+        resourcePolicyStore.put(resourcePolicyKey(region, policyName), policy);
+        return policy;
+    }
+
+    public List<ResourcePolicy> describeResourcePolicies(String region) {
+        List<ResourcePolicy> policies = resourcePolicyStore.scan(
+                key -> key.startsWith(resourcePolicyKeyPrefix(region)));
+        policies.sort(Comparator.comparing(ResourcePolicy::getPolicyName));
+        return policies;
+    }
+
     // ──────────────────────────── Helpers ────────────────────────────
 
     private void deleteEventsForStream(String region, String groupName, String streamName) {
@@ -952,6 +989,14 @@ public class CloudWatchLogsService {
 
     private static String subscriptionFilterKey(String region, String logGroupName, String filterName) {
         return region + "::" + logGroupName + "::filter::" + filterName;
+    }
+
+    private static String resourcePolicyKeyPrefix(String region) {
+        return region + "::policy::";
+    }
+
+    private static String resourcePolicyKey(String region, String policyName) {
+        return resourcePolicyKeyPrefix(region) + policyName;
     }
 
     private static long toLong(Object value, long defaultValue) {
