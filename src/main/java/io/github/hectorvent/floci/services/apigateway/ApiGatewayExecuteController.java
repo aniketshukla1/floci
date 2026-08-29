@@ -1678,7 +1678,8 @@ public class ApiGatewayExecuteController {
             new ConcurrentHashMap<>();
 
     /** Extracts parameter names from a route template; the pattern itself is constant. */
-    private static final Pattern ROUTE_PARAM_NAMES = Pattern.compile("\\{([a-zA-Z_]+)\\+?\\}");
+    private static final Pattern ROUTE_PARAM_NAMES =
+            Pattern.compile("\\{([a-zA-Z_][a-zA-Z0-9_]*)\\+?\\}");
 
     private static CompiledRouteTemplate compileRouteTemplate(String template) {
         List<String> parameterNames = new ArrayList<>();

@@ -72,10 +72,10 @@ class BuildV2ProxyEventPathParametersTest {
     void underscoredParamNameIsPreservedInPathParameters() throws Exception {
         when(uriInfo.getRequestUri()).thenReturn(new URI("http://localhost:4566/api/stage/key-ids/key-42"));
         String json = controller.buildV2ProxyEvent(
-                "GET", "/key-ids/key-42", "GET /key-ids/{key_id}",
+                "GET", "/key-ids/key-42", "GET /key-ids/{key_id1}",
                 "abc123", "us-east-2", "$default", headers, uriInfo, null, "req-underscore");
         JsonNode event = new ObjectMapper().readTree(json);
-        assertEquals("key-42", event.get("pathParameters").get("key_id").asText());
+        assertEquals("key-42", event.get("pathParameters").get("key_id1").asText());
     }
 
     @Test
