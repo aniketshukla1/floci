@@ -1859,7 +1859,14 @@ public class S3Service implements Resettable, ResourceProvider {
                 .orElseThrow(() -> new AwsException("NoSuchKey",
                         "The specified key does not exist.", 404));
 
-        // COMPLIANCE mode: retainUntil cannot be shortened
+        // COMPLIANCE mode cannot be changed or removed, even when the retention date
+        // is unchanged or extended.
+        if ("COMPLIANCE".equals(obj.getObjectLockMode()) && !"COMPLIANCE".equals(mode)) {
+            throw new AwsException("AccessDenied",
+                    "COMPLIANCE retention mode cannot be changed", 403);
+        }
+
+        // COMPLIANCE mode: retainUntil cannot be shortened.
         if ("COMPLIANCE".equals(obj.getObjectLockMode())
                 && obj.getRetainUntilDate() != null
                 && retainUntil != null

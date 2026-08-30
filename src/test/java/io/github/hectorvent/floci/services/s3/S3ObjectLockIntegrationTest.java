@@ -143,7 +143,7 @@ class S3ObjectLockIntegrationTest {
         String body = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-                  <Mode>GOVERNANCE</Mode>
+                  <Mode>COMPLIANCE</Mode>
                   <RetainUntilDate>2030-01-01T00:00:00Z</RetainUntilDate>
                 </Retention>
                 """;
@@ -199,6 +199,70 @@ class S3ObjectLockIntegrationTest {
 
     @Test
     @Order(14)
+    void putGovernanceObjectForRetentionUpgrade() {
+        given()
+            .header("x-amz-object-lock-mode", "GOVERNANCE")
+            .header("x-amz-object-lock-retain-until-date", "2030-01-01T00:00:00Z")
+            .body("governance object")
+        .when()
+            .put("/" + LOCK_BUCKET + "/governance-object.txt")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(15)
+    void governanceRetentionCanBeUpgradedToCompliance() {
+        String body = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                  <Mode>COMPLIANCE</Mode>
+                  <RetainUntilDate>2030-01-01T00:00:00Z</RetainUntilDate>
+                </Retention>
+                """;
+        given()
+            .body(body)
+        .when()
+            .put("/" + LOCK_BUCKET + "/governance-object.txt?retention")
+        .then()
+            .statusCode(200);
+
+        given()
+        .when()
+            .get("/" + LOCK_BUCKET + "/governance-object.txt?retention")
+        .then()
+            .statusCode(200)
+            .body(containsString("<Mode>COMPLIANCE</Mode>"));
+    }
+
+    @Test
+    @Order(16)
+    void complianceRetentionCannotBeDowngradedToGovernance() {
+        String body = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                  <Mode>GOVERNANCE</Mode>
+                  <RetainUntilDate>2030-01-01T00:00:00Z</RetainUntilDate>
+                </Retention>
+                """;
+        given()
+            .body(body)
+        .when()
+            .put("/" + LOCK_BUCKET + "/" + RETENTION_KEY + "?retention")
+        .then()
+            .statusCode(403)
+            .body(containsString("AccessDenied"));
+
+        given()
+        .when()
+            .get("/" + LOCK_BUCKET + "/" + RETENTION_KEY + "?retention")
+        .then()
+            .statusCode(200)
+            .body(containsString("<Mode>COMPLIANCE</Mode>"));
+    }
+
+    @Test
+    @Order(17)
     void nonExistentBucketReturnsNoSuchBucket() {
         given()
         .when()
