@@ -263,6 +263,44 @@ class S3ObjectLockIntegrationTest {
 
     @Test
     @Order(17)
+    void putObjectWithExpiredComplianceRetention() {
+        given()
+            .header("x-amz-object-lock-mode", "COMPLIANCE")
+            .header("x-amz-object-lock-retain-until-date", "2020-01-01T00:00:00Z")
+            .body("expired compliance object")
+        .when()
+            .put("/" + LOCK_BUCKET + "/expired-compliance-object.txt")
+        .then()
+            .statusCode(200);
+    }
+
+    @Test
+    @Order(18)
+    void expiredComplianceRetentionCanChangeMode() {
+        String body = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <Retention xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                  <Mode>GOVERNANCE</Mode>
+                  <RetainUntilDate>2030-01-01T00:00:00Z</RetainUntilDate>
+                </Retention>
+                """;
+        given()
+            .body(body)
+        .when()
+            .put("/" + LOCK_BUCKET + "/expired-compliance-object.txt?retention")
+        .then()
+            .statusCode(200);
+
+        given()
+        .when()
+            .get("/" + LOCK_BUCKET + "/expired-compliance-object.txt?retention")
+        .then()
+            .statusCode(200)
+            .body(containsString("<Mode>GOVERNANCE</Mode>"));
+    }
+
+    @Test
+    @Order(19)
     void nonExistentBucketReturnsNoSuchBucket() {
         given()
         .when()
