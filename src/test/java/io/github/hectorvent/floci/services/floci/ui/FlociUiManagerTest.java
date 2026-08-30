@@ -50,7 +50,6 @@ class FlociUiManagerTest {
     private final EmulatorConfig.TlsConfig tls = mock(EmulatorConfig.TlsConfig.class);
     private final EmulatorConfig.ServicesConfig services = mock(EmulatorConfig.ServicesConfig.class);
     private final EmulatorConfig.UiServiceConfig ui = mock(EmulatorConfig.UiServiceConfig.class);
-    private final RegionResolver regionResolver = mock(RegionResolver.class);
 
     /** Wires config.services().ui() with the defaults every UI test starts from. */
     private void withUiConfig() {
@@ -608,6 +607,7 @@ class FlociUiManagerTest {
         when(ui.enabled()).thenReturn(true);
         when(ui.containerName()).thenReturn("floci-ui");
         when(ui.port()).thenReturn(port);
+        when(ui.endpoint()).thenReturn(Optional.of("http://custom:4566"));
 
         Container existing = mock(Container.class);
         when(existing.getId()).thenReturn("ui-container");

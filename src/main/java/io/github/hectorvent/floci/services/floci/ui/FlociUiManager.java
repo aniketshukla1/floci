@@ -492,6 +492,7 @@ public class FlociUiManager {
             }
             return new RuntimeProbe(false, null);
         } catch (Exception e) {
+            LOG.debugv(e, "Failed to probe floci-ui runtime at {0}", url);
             return new RuntimeProbe(false, null);
         } finally {
             if (conn != null) {
