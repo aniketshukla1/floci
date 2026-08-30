@@ -1301,6 +1301,31 @@ class StepFunctionsJsonataIntegrationTest {
     }
 
     @Test
+    void failedOutputExpressionCauseNamesExpressionAndField() throws Exception {
+        String definition = """
+                {
+                    "QueryLanguage": "JSONata",
+                    "StartAt": "Transform",
+                    "States": {
+                        "Transform": {
+                            "Type": "Pass",
+                            "Output": {"v": "{% $abs(\\\"x\\\") %}"},
+                            "End": true
+                        }
+                    }
+                }
+                """;
+
+        String smArn = createStateMachine("jsonata-output-evaluation-error-cause", definition);
+        Response failure = waitForExecutionFailure(startExecution(smArn, "{}"));
+
+        assertEquals("States.QueryEvaluationError", failure.jsonPath().getString("error"));
+        assertEquals("The JSONata expression '$abs(\"x\")' specified for the field 'Output/v' "
+                + "threw an error during evaluation. T0410: Argument 1 of function \"abs\" "
+                + "does not match function signature", failure.jsonPath().getString("cause"));
+    }
+
+    @Test
     void assignExpressionReturningNothingFailsTheState() throws Exception {
         // Real AWS names 'Assign/x' for this definition; before this guard the variable was never
         // bound and the next state read it as missing.

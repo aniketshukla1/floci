@@ -31,6 +31,7 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
 
 import static io.github.hectorvent.floci.services.stepfunctions.AslExecutor.FailStateException;
 
@@ -49,6 +50,7 @@ import static com.dashjoin.jsonata.Jsonata.jsonata;
 public class JsonataEvaluator {
 
     private static final Set<String> HASH_ALGORITHMS = Set.of("MD5", "SHA-1", "SHA-256", "SHA-384", "SHA-512");
+    private static final Pattern JSONATA_ERROR_CODE_PREFIX = Pattern.compile("^[A-Z]\\d{4}:");
 
     /**
      * The largest magnitude a {@code double} can still hold as an exact integer count of longs.
@@ -195,10 +197,10 @@ public class JsonataEvaluator {
     }
 
     /**
-     * The cause AWS reports for a failed JSONata expression: the error code, then the message
-     * jsonata-js renders for it, as in {@code T0412: Argument 1 of function "sum" must be an array
-     * of "numbers"}. AWS puts a sentence naming the expression and the field in front of that,
-     * which needs the field path {@link #resolveTemplate} does not thread today (#2665).
+     * The reusable tail of the cause AWS reports for a failed JSONata expression: the error code,
+     * then the message jsonata-js renders for it, as in {@code T0412: Argument 1 of function "sum"
+     * must be an array of "numbers"}. {@link #evaluateField} adds the sentence naming the
+     * expression and field because this lower-level method intentionally has no field context.
      *
      * <p>The dashjoin port renders the message itself, and three things go wrong on the way. Its
      * copy of the catalog has the word "function" replaced by "Object" throughout; its substituter
@@ -264,10 +266,24 @@ public class JsonataEvaluator {
      * {@code Choices[1]/Condition}, {@code Output/a/b}.
      */
     JsonNode evaluateField(String expression, String field, JsonNode statesVar, JsonNode variables) {
-        JsonNode value = evaluate(expression, statesVar, variables);
+        String expr = isExpression(expression) ? unwrap(expression) : expression;
+        JsonNode value;
+        try {
+            value = evaluate(expression, statesVar, variables);
+        } catch (FailStateException failure) {
+            if (!"States.QueryEvaluationError".equals(failure.error)) {
+                throw failure;
+            }
+            String separator = failure.cause != null
+                    && JSONATA_ERROR_CODE_PREFIX.matcher(failure.cause).find()
+                    ? ". " : ": ";
+            throw new FailStateException(failure.error,
+                    "The JSONata expression '" + expr + "' specified for the field '" + field
+                            + "' threw an error during evaluation" + separator + failure.cause);
+        }
         if (value.isMissingNode()) {
             throw new FailStateException("States.QueryEvaluationError",
-                    "The JSONata expression '" + (isExpression(expression) ? unwrap(expression) : expression)
+                    "The JSONata expression '" + expr
                             + "' specified for the field '" + field + "' returned nothing (undefined).");
         }
         return value;

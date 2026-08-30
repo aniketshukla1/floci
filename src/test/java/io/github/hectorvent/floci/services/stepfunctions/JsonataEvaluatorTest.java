@@ -921,6 +921,21 @@ class JsonataEvaluatorTest {
     }
 
     @Test
+    void failedExpressionNamesTheExpressionAndNestedFieldPath() {
+        JsonNode statesVar = objectMapper.createObjectNode();
+        JsonNode template = objectMapper.createObjectNode()
+                .set("v", objectMapper.getNodeFactory().textNode("{% $abs(\"x\") %}"));
+
+        AslExecutor.FailStateException failure = assertThrows(AslExecutor.FailStateException.class,
+                () -> evaluator.resolveTemplate(template, "Output", statesVar));
+
+        assertEquals("States.QueryEvaluationError", failure.error);
+        assertEquals("The JSONata expression '$abs(\"x\")' specified for the field 'Output/v' "
+                + "threw an error during evaluation. T0410: Argument 1 of function \"abs\" "
+                + "does not match function signature", failure.cause);
+    }
+
+    @Test
     void anExplicitNullIsAValueAndKeepsEveryPositionEvaluating() throws Exception {
         JsonNode statesVar = objectMapper.readTree("{\"input\": {\"bar\": null}}");
 
