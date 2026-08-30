@@ -936,6 +936,19 @@ class JsonataEvaluatorTest {
     }
 
     @Test
+    void failedNonCodedExpressionUsesAwsSentenceSeparator() {
+        JsonNode statesVar = objectMapper.createObjectNode();
+
+        AslExecutor.FailStateException failure = assertThrows(AslExecutor.FailStateException.class,
+                () -> evaluator.evaluateField("{% $replace('a','','b') %}", "Output/v", statesVar, null));
+
+        assertEquals("States.QueryEvaluationError", failure.error);
+        assertEquals("The JSONata expression '$replace('a','','b')' specified for the field 'Output/v' "
+                + "threw an error during evaluation. Second argument of replace function "
+                + "cannot be an empty string", failure.cause);
+    }
+
+    @Test
     void anExplicitNullIsAValueAndKeepsEveryPositionEvaluating() throws Exception {
         JsonNode statesVar = objectMapper.readTree("{\"input\": {\"bar\": null}}");
 

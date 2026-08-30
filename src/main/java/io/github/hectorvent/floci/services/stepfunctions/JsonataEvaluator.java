@@ -31,7 +31,6 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.regex.Pattern;
 
 import static io.github.hectorvent.floci.services.stepfunctions.AslExecutor.FailStateException;
 
@@ -50,7 +49,6 @@ import static com.dashjoin.jsonata.Jsonata.jsonata;
 public class JsonataEvaluator {
 
     private static final Set<String> HASH_ALGORITHMS = Set.of("MD5", "SHA-1", "SHA-256", "SHA-384", "SHA-512");
-    private static final Pattern JSONATA_ERROR_CODE_PREFIX = Pattern.compile("^[A-Z]\\d{4}:");
 
     /**
      * The largest magnitude a {@code double} can still hold as an exact integer count of longs.
@@ -274,12 +272,9 @@ public class JsonataEvaluator {
             if (!"States.QueryEvaluationError".equals(failure.error)) {
                 throw failure;
             }
-            String separator = failure.cause != null
-                    && JSONATA_ERROR_CODE_PREFIX.matcher(failure.cause).find()
-                    ? ". " : ": ";
             throw new FailStateException(failure.error,
                     "The JSONata expression '" + expr + "' specified for the field '" + field
-                            + "' threw an error during evaluation" + separator + failure.cause);
+                            + "' threw an error during evaluation. " + failure.cause);
         }
         if (value.isMissingNode()) {
             throw new FailStateException("States.QueryEvaluationError",
