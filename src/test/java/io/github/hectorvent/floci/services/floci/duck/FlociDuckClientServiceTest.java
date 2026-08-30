@@ -19,7 +19,7 @@ import io.github.hectorvent.floci.core.common.docker.DockerHostResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
-class FlociDuckClientTest {
+class FlociDuckClientServiceTest {
 
     private HttpServer server;
 

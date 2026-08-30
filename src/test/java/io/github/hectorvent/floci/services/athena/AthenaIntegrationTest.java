@@ -486,4 +486,34 @@ class AthenaIntegrationTest {
             .statusCode(200)
             .body("QueryExecution.Status.State", equalTo("SUCCEEDED"));
     }
+
+    @Test
+    @Order(15)
+    void malformedCreateDatabaseDdlIsRecordedAsFailedExecution() {
+        String id = given()
+            .header("X-Amz-Target", "AmazonAthena.StartQueryExecution")
+            .contentType(CONTENT_TYPE)
+            .body(Map.of("QueryString", """
+                    CREATE DATABASE invalid_properties_test
+                    WITH DBPROPERTIES ('owner'='integration-test', )
+                    """))
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().path("QueryExecutionId");
+
+        given()
+            .header("X-Amz-Target", "AmazonAthena.GetQueryExecution")
+            .contentType(CONTENT_TYPE)
+            .body("{ \"QueryExecutionId\": \"" + id + "\" }")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("QueryExecution.Status.State", equalTo("FAILED"))
+            .body("QueryExecution.Status.StateChangeReason", equalTo("Invalid database properties"))
+            .body("QueryExecution.StatementType", equalTo("DDL"))
+            .body("QueryExecution.ResultConfiguration", nullValue());
+    }
 }

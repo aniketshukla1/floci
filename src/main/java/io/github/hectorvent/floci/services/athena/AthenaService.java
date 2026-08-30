@@ -45,6 +45,9 @@ public class AthenaService {
                     + "(?:\\s+WITH\\s+DBPROPERTIES\\s*\\((.*?)\\))?"
                     + "\\s*;?\\s*$",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern CREATE_DATABASE_PREFIX_PATTERN = Pattern.compile(
+            "^\\s*CREATE\\s+(?:DATABASE|SCHEMA)\\b",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern DATABASE_PROPERTY_PATTERN = Pattern.compile(
             "\\s*'((?:''|[^'])*)'\\s*=\\s*'((?:''|[^'])*)'\\s*");
     private static final Pattern RESULT_STATEMENT_PATTERN = Pattern.compile(
@@ -89,7 +92,7 @@ public class AthenaService {
             resolvedContext.setCatalog(DEFAULT_CATALOG);
         }
 
-        CreateDatabaseDdl createDatabaseDdl = parseCreateDatabase(query);
+        boolean createDatabaseStatement = CREATE_DATABASE_PREFIX_PATTERN.matcher(statementText(query)).find();
         // AWS reports the result CSV object itself as the OutputLocation, not a
         // directory prefix — the same key is written and returned to the client.
         // Statements that do not return rows must not be wrapped in a result COPY.
@@ -101,14 +104,18 @@ public class AthenaService {
                 : null;
 
         QueryExecution execution = new QueryExecution(id, query, workGroup, resolvedResult, resolvedContext);
-        if (createDatabaseDdl != null) {
+        if (createDatabaseStatement) {
             execution.setStatementType("DDL");
         }
         execution.getStatus().setState(QueryExecutionState.RUNNING);
         queryStore.put(id, execution);
 
-        if (createDatabaseDdl != null) {
+        if (createDatabaseStatement) {
             try {
+                CreateDatabaseDdl createDatabaseDdl = parseCreateDatabase(query);
+                if (createDatabaseDdl == null) {
+                    throw new AwsException("InvalidRequestException", "Invalid CREATE DATABASE statement", 400);
+                }
                 createGlueDatabase(createDatabaseDdl);
                 markSucceeded(id, execution);
             } catch (Exception e) {
