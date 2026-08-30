@@ -85,7 +85,11 @@ class HttpApiRequestAuthorizerTest {
         createNodeLambda(BACKEND_FN, """
                 exports.handler = async (event) => ({
                     statusCode: 200,
-                    body: JSON.stringify({ message: "Hello from backend", path: event.rawPath })
+                    body: JSON.stringify({
+                        message: "Hello from backend",
+                        path: event.rawPath,
+                        authorizer: event.requestContext?.authorizer ?? null
+                    })
                 });
                 """);
 
@@ -267,7 +271,7 @@ class HttpApiRequestAuthorizerTest {
 
     @Test
     @Order(10)
-    void requestAuthorizerAllowsWithIamPolicy() {
+    void requestAuthorizerAllowsWithIamPolicy() throws Exception {
         given()
                 .contentType(ContentType.JSON)
                 .body("""
@@ -276,9 +280,14 @@ class HttpApiRequestAuthorizerTest {
                 .when().patch("/v2/apis/" + httpApiId + "/routes/" + routeId)
                 .then().statusCode(200);
 
-        given()
+        String body = given()
                 .when().get("/execute-api/" + httpApiId + "/test/hello")
-                .then().statusCode(200);
+                .then().statusCode(200)
+                .extract().body().asString();
+
+        JsonNode authorizer = MAPPER.readTree(body).path("authorizer").path("lambda");
+        assertEquals("user123", authorizer.path("userId").asText());
+        assertEquals("admin", authorizer.path("role").asText());
     }
 
     // ──────────────────────────── Test: Deny with IAM policy (format 1.0) ────────────────────────────
@@ -321,7 +330,7 @@ class HttpApiRequestAuthorizerTest {
 
     @Test
     @Order(40)
-    void simpleResponseAllows() {
+    void simpleResponseAllowsAndForwardsContext() throws Exception {
         given()
                 .contentType(ContentType.JSON)
                 .body("""
@@ -330,9 +339,14 @@ class HttpApiRequestAuthorizerTest {
                 .when().patch("/v2/apis/" + httpApiId + "/routes/" + routeId)
                 .then().statusCode(200);
 
-        given()
+        String body = given()
                 .when().get("/execute-api/" + httpApiId + "/test/hello")
-                .then().statusCode(200);
+                .then().statusCode(200)
+                .extract().body().asString();
+
+        JsonNode authorizer = MAPPER.readTree(body).path("authorizer").path("lambda");
+        assertEquals("simple-user", authorizer.path("userId").asText());
+        assertEquals("premium", authorizer.path("plan").asText());
     }
 
     // ──────────────────────────── Test: Simple response Deny (format 2.0) ────────────────────────────
@@ -431,10 +445,8 @@ class HttpApiRequestAuthorizerTest {
                 .when().patch("/v2/apis/" + httpApiId + "/routes/" + routeId)
                 .then().statusCode(200);
 
-        // The echo authorizer allows the request and embeds the received event in its context.
-        // The backend Lambda receives the proxy event which does NOT include authorizer context
-        // in the v2 proxy event format. So we verify the authorizer was invoked (200 response)
-        // and then invoke the echo function directly with a realistic event to verify format.
+        // The echo authorizer allows the request and embeds the actual event it received in its
+        // context. The backend must receive that context in its proxy event.
         String response = given()
                 .header("X-Custom-Header", "test-value")
                 .queryParam("foo", "bar")
@@ -442,23 +454,9 @@ class HttpApiRequestAuthorizerTest {
                 .then().statusCode(200)
                 .extract().body().asString();
 
-        // Backend received the request — authorizer allowed it
         JsonNode backendResponse = MAPPER.readTree(response);
         assertEquals("Hello from backend", backendResponse.path("message").asText());
-
-        // Verify format by invoking echo function with a v1-shaped event
-        String testEvent = """
-                {"version":"1.0","type":"REQUEST","methodArn":"arn:aws:execute-api:us-east-1:000000000000:%s/test/GET/hello","resource":"/hello","path":"/hello","httpMethod":"GET","headers":{"X-Custom-Header":"test-value"},"queryStringParameters":{"foo":"bar"}}
-                """.formatted(httpApiId);
-        String echoResponse = given()
-                .contentType(ContentType.JSON)
-                .body(testEvent)
-                .when().post("/2015-03-31/functions/" + ECHO_FN + "/invocations")
-                .then().statusCode(200)
-                .extract().body().asString();
-
-        JsonNode echoResult = MAPPER.readTree(echoResponse);
-        String authEventStr = echoResult.path("context").path("receivedEvent").asText(null);
+        String authEventStr = backendResponse.at("/authorizer/lambda/receivedEvent").asText(null);
         assertNotNull(authEventStr, "Echo authorizer should embed receivedEvent in context");
         JsonNode authEvent = MAPPER.readTree(authEventStr);
 
@@ -489,23 +487,10 @@ class HttpApiRequestAuthorizerTest {
                 .then().statusCode(200)
                 .extract().body().asString();
 
-        // Backend received the request — authorizer allowed it
+        // The authorizer's context carries the actual event it received through to the backend.
         JsonNode backendResponse = MAPPER.readTree(response);
         assertEquals("Hello from backend", backendResponse.path("message").asText());
-
-        // Verify format by invoking echo function with a v2-shaped event
-        String testEvent = """
-                {"version":"2.0","type":"REQUEST","routeArn":"arn:aws:execute-api:us-east-1:000000000000:%s/test/GET/hello","routeKey":"GET /hello","rawPath":"/hello","rawQueryString":"key=value","headers":{"x-custom-header":"test-value-v2"},"queryStringParameters":{"key":"value"},"requestContext":{"accountId":"000000000000","apiId":"%s","http":{"method":"GET","path":"/hello"}}}
-                """.formatted(httpApiId, httpApiId);
-        String echoResponse = given()
-                .contentType(ContentType.JSON)
-                .body(testEvent)
-                .when().post("/2015-03-31/functions/" + ECHO_FN + "/invocations")
-                .then().statusCode(200)
-                .extract().body().asString();
-
-        JsonNode echoResult = MAPPER.readTree(echoResponse);
-        String authEventStr = echoResult.path("context").path("receivedEvent").asText(null);
+        String authEventStr = backendResponse.at("/authorizer/lambda/receivedEvent").asText(null);
         assertNotNull(authEventStr, "Echo authorizer should embed receivedEvent in context");
         JsonNode authEvent = MAPPER.readTree(authEventStr);
 

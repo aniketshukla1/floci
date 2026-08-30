@@ -1472,6 +1472,7 @@ public class ApiGatewayExecuteController {
 
         Map<String, String> jwtClaims = null;
         List<String> jwtScopes = null;
+        JsonNode requestAuthorizerContext = null;
         if ("JWT".equalsIgnoreCase(route.getAuthorizationType()) && route.getAuthorizerId() != null) {
             JwtAuthorizerResult jwtResult = enforceJwtAuthorizer(region, apiId, route, headers, uriInfo);
             if (jwtResult.errorResponse() != null) return jwtResult.errorResponse();
@@ -1480,8 +1481,12 @@ public class ApiGatewayExecuteController {
         }
 
         if ("CUSTOM".equalsIgnoreCase(route.getAuthorizationType()) && route.getAuthorizerId() != null) {
-            Response authError = enforceRequestAuthorizerV2(region, apiId, stageName, route, httpMethod, path, headers, uriInfo);
-            if (authError != null) return authError;
+            RequestAuthorizerResult authorizerResult = enforceRequestAuthorizerV2(
+                    region, apiId, stageName, route, httpMethod, path, headers, uriInfo);
+            if (authorizerResult.errorResponse() != null) {
+                return authorizerResult.errorResponse();
+            }
+            requestAuthorizerContext = authorizerResult.context();
         }
 
         if (route.getTarget() == null) {
@@ -1520,7 +1525,8 @@ public class ApiGatewayExecuteController {
 
         String requestId = UUID.randomUUID().toString();
         String eventJson = buildV2ProxyEvent(httpMethod, path, route.getRouteKey(),
-                apiId, region, stageName, headers, uriInfo, body, requestId, jwtClaims, jwtScopes);
+                apiId, region, stageName, headers, uriInfo, body, requestId,
+                jwtClaims, jwtScopes, requestAuthorizerContext);
 
         LOG.debugv("execute-api v2: {0} {1}/{2}{3} → Lambda {4}", httpMethod, apiId, stageName, path, functionName);
 
@@ -1696,6 +1702,9 @@ public class ApiGatewayExecuteController {
         }
     }
 
+    private record RequestAuthorizerResult(Response errorResponse, JsonNode context) {
+    }
+
     private JwtAuthorizerResult enforceJwtAuthorizer(String region, String apiId, Route route, HttpHeaders headers,
                                           UriInfo uriInfo) {
         Authorizer authorizer;
@@ -1790,22 +1799,22 @@ public class ApiGatewayExecuteController {
      * Enforces a Lambda REQUEST authorizer on an HTTP API (v2) route.
      * Supports both payload format versions (1.0 and 2.0) and simple responses.
      *
-     * @return null if authorized, or an error Response if denied/unauthorized
+     * @return the authorizer context when authorized, or an error response when denied/unauthorized
      */
-    private Response enforceRequestAuthorizerV2(String region, String apiId, String stageName,
-                                                Route route, String httpMethod, String path,
-                                                HttpHeaders headers, UriInfo uriInfo) {
+    private RequestAuthorizerResult enforceRequestAuthorizerV2(String region, String apiId, String stageName,
+                                                               Route route, String httpMethod, String path,
+                                                               HttpHeaders headers, UriInfo uriInfo) {
         Authorizer authorizer;
         try {
             authorizer = apiGatewayV2Service.getAuthorizer(region, apiId, route.getAuthorizerId());
         } catch (AwsException e) {
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Authorizer not found"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
 
         if (!"REQUEST".equalsIgnoreCase(authorizer.getAuthorizerType())) {
-            return null; // Not a REQUEST authorizer — skip
+            return new RequestAuthorizerResult(null, null); // Not a REQUEST authorizer — skip
         }
 
         // Validate identity sources — if any configured source is missing, return 401 without invoking Lambda
@@ -1817,17 +1826,17 @@ public class ApiGatewayExecuteController {
                     String headerName = expression.substring("$request.header.".length());
                     String value = headers.getHeaderString(headerName);
                     if (value == null || value.isEmpty()) {
-                        return Response.status(401)
+                        return new RequestAuthorizerResult(Response.status(401)
                                 .entity(jsonMessage("Unauthorized"))
-                                .type(MediaType.APPLICATION_JSON).build();
+                                .type(MediaType.APPLICATION_JSON).build(), null);
                     }
                 } else if (expression.startsWith("$request.querystring.")) {
                     String paramName = expression.substring("$request.querystring.".length());
                     String value = queryParams.getFirst(paramName);
                     if (value == null || value.isEmpty()) {
-                        return Response.status(401)
+                        return new RequestAuthorizerResult(Response.status(401)
                                 .entity(jsonMessage("Unauthorized"))
-                                .type(MediaType.APPLICATION_JSON).build();
+                                .type(MediaType.APPLICATION_JSON).build(), null);
                     }
                 }
                 // $context.* identity sources are always present — no validation needed
@@ -1849,9 +1858,9 @@ public class ApiGatewayExecuteController {
         String functionName = functionNameFromUri(authorizer.getAuthorizerUri());
         if (functionName == null) {
             LOG.warnv("Cannot extract function name from authorizer URI: {0}", authorizer.getAuthorizerUri());
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Internal Server Error"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
 
         // Invoke the authorizer Lambda
@@ -1861,26 +1870,26 @@ public class ApiGatewayExecuteController {
                     eventJson.getBytes(StandardCharsets.UTF_8), InvocationType.RequestResponse);
         } catch (Exception e) {
             LOG.warnv("Lambda REQUEST authorizer invocation failed for API {0}: {1}", apiId, e.getMessage());
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Internal Server Error"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
 
         // Check for function error (Lambda threw an exception)
         if (invokeResult.getFunctionError() != null) {
             LOG.warnv("Lambda REQUEST authorizer returned function error for API {0}: {1}",
                     apiId, invokeResult.getFunctionError());
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Internal Server Error"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
 
         byte[] payload = invokeResult.getPayload();
         if (payload == null || payload.length == 0) {
             LOG.warnv("Lambda REQUEST authorizer returned empty payload for API {0}", apiId);
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Internal Server Error"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
 
         // Parse the authorizer response
@@ -1894,57 +1903,62 @@ public class ApiGatewayExecuteController {
                 JsonNode isAuthorized = response.path("isAuthorized");
                 if (isAuthorized.isMissingNode() || isAuthorized.isNull()) {
                     LOG.warnv("Lambda REQUEST authorizer simple response missing isAuthorized for API {0}", apiId);
-                    return Response.status(500)
+                    return new RequestAuthorizerResult(Response.status(500)
                             .entity(jsonMessage("Internal Server Error"))
-                            .type(MediaType.APPLICATION_JSON).build();
+                            .type(MediaType.APPLICATION_JSON).build(), null);
                 }
                 if (!isAuthorized.asBoolean(false)) {
-                    return Response.status(403)
+                    return new RequestAuthorizerResult(Response.status(403)
                             .entity(jsonMessage("Forbidden"))
-                            .type(MediaType.APPLICATION_JSON).build();
+                            .type(MediaType.APPLICATION_JSON).build(), null);
                 }
-                return null; // authorized
+                return new RequestAuthorizerResult(null, requestAuthorizerContext(response));
             }
 
             // IAM policy document format
             JsonNode policyDocument = response.path("policyDocument");
             if (policyDocument.isMissingNode() || policyDocument.isNull()) {
                 LOG.warnv("Authorizer response missing policyDocument for API {0}", apiId);
-                return Response.status(500)
+                return new RequestAuthorizerResult(Response.status(500)
                         .entity(jsonMessage("Internal Server Error"))
-                        .type(MediaType.APPLICATION_JSON).build();
+                        .type(MediaType.APPLICATION_JSON).build(), null);
             }
 
             JsonNode statements = policyDocument.path("Statement");
             if (statements.isMissingNode() || statements.isNull()
                     || !statements.isArray() || statements.isEmpty()) {
                 LOG.warnv("Authorizer response missing or empty Statement array for API {0}", apiId);
-                return Response.status(500)
+                return new RequestAuthorizerResult(Response.status(500)
                         .entity(jsonMessage("Internal Server Error"))
-                        .type(MediaType.APPLICATION_JSON).build();
+                        .type(MediaType.APPLICATION_JSON).build(), null);
             }
 
             String effect = statements.get(0).path("Effect").asText("Deny");
             if ("Deny".equalsIgnoreCase(effect)) {
-                return Response.status(403)
+                return new RequestAuthorizerResult(Response.status(403)
                         .entity(jsonMessage("User is not authorized to access this resource"))
-                        .type(MediaType.APPLICATION_JSON).build();
+                        .type(MediaType.APPLICATION_JSON).build(), null);
             }
 
             if (!"Allow".equalsIgnoreCase(effect)) {
                 LOG.warnv("Authorizer response has unrecognized Effect '{0}' for API {1}", effect, apiId);
-                return Response.status(500)
+                return new RequestAuthorizerResult(Response.status(500)
                         .entity(jsonMessage("Internal Server Error"))
-                        .type(MediaType.APPLICATION_JSON).build();
+                        .type(MediaType.APPLICATION_JSON).build(), null);
             }
 
-            return null; // authorized
+            return new RequestAuthorizerResult(null, requestAuthorizerContext(response));
         } catch (Exception e) {
             LOG.warnv("Failed to parse authorizer response for API {0}: {1}", apiId, e.getMessage());
-            return Response.status(500)
+            return new RequestAuthorizerResult(Response.status(500)
                     .entity(jsonMessage("Internal Server Error"))
-                    .type(MediaType.APPLICATION_JSON).build();
+                    .type(MediaType.APPLICATION_JSON).build(), null);
         }
+    }
+
+    private JsonNode requestAuthorizerContext(JsonNode response) {
+        JsonNode context = response.get("context");
+        return context != null && context.isObject() ? context.deepCopy() : null;
     }
 
     /**
@@ -2197,21 +2211,23 @@ public class ApiGatewayExecuteController {
                                      HttpHeaders headers, UriInfo uriInfo,
                                      byte[] body, String requestId) {
         return buildV2ProxyEvent(httpMethod, path, routeKey, apiId, region, stageName,
-                headers, uriInfo, body, requestId, null, null);
+                headers, uriInfo, body, requestId, null, null, null);
     }
 
-    // jwtClaims is non-null only when the route's authorizer is JWT-type and verification
-    // succeeded (see dispatchV2/enforceJwtAuthorizer) - null means either no authorizer on this
-    // route (Auth: NONE) or a CUSTOM/REQUEST authorizer. jwtScopes is non-null only when that
-    // route additionally carries authorizationScopes (see JwtAuthorizerResult). Unlike the
-    // v1/REST CUSTOM-authorizer path (buildV1ProxyEvent's principalId/context handling), a v2
-    // CUSTOM/REQUEST authorizer's response context is not currently threaded into
-    // requestContext.authorizer here at all.
     String buildV2ProxyEvent(String httpMethod, String path, String routeKey,
                                      String apiId, String region, String stageName,
                                      HttpHeaders headers, UriInfo uriInfo,
                                      byte[] body, String requestId, Map<String, String> jwtClaims,
                                      List<String> jwtScopes) {
+        return buildV2ProxyEvent(httpMethod, path, routeKey, apiId, region, stageName,
+                headers, uriInfo, body, requestId, jwtClaims, jwtScopes, null);
+    }
+
+    String buildV2ProxyEvent(String httpMethod, String path, String routeKey,
+                                     String apiId, String region, String stageName,
+                                     HttpHeaders headers, UriInfo uriInfo,
+                                     byte[] body, String requestId, Map<String, String> jwtClaims,
+                                     List<String> jwtScopes, JsonNode requestAuthorizerContext) {
         // The JAX-RS {proxy} binding strips a trailing slash, but rawPath is by contract the
         // raw path and routers treat /x and /x/ as distinct routes. Recover it from the raw
         // request URI for the event path fields. Route matching in dispatchV2 and the
@@ -2287,6 +2303,9 @@ public class ApiGatewayExecuteController {
                 ArrayNode scopesNode = jwtNode.putArray("scopes");
                 jwtScopes.forEach(scopesNode::add);
             }
+        } else if (requestAuthorizerContext != null) {
+            ObjectNode authorizerNode = ctx.putObject("authorizer");
+            authorizerNode.set("lambda", requestAuthorizerContext);
         }
 
         if (body != null && body.length > 0) {
