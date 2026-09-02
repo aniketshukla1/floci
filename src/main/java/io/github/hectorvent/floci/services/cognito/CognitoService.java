@@ -350,7 +350,7 @@ public class CognitoService implements ResourceProvider {
 
     public UserPool describeUserPool(String id) {
         UserPool pool = poolStore.get(id)
-                .orElseThrow(() -> new AwsException("ResourceNotFoundException", "User pool not found", 400));
+                .orElseThrow(() -> userPoolNotFound(id));
         boolean generatedKeys = ensureJwtSigningKeys(pool);
         boolean generatedSecret = ensureRefreshTokenSecret(pool);
         if (generatedKeys || generatedSecret) {
@@ -1144,7 +1144,7 @@ public class CognitoService implements ResourceProvider {
 
     public CognitoUser adminGetUser(String userPoolId, String username) {
         UserPool pool = poolStore.get(userPoolId).orElseThrow(
-                () -> new AwsException("ResourceNotFoundException", "User pool not found", 400));
+                () -> userPoolNotFound(userPoolId));
         LinkedHashMap<String, CognitoUser> matches = new LinkedHashMap<>();
         userStore.get(userKey(userPoolId, username))
                 .ifPresent(u -> matches.put(u.getUsername(), u));
@@ -1574,9 +1574,9 @@ public class CognitoService implements ResourceProvider {
         UserPoolClient client = clientStore.get(clientId)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException", "Client not found",
                         400));
-        UserPool pool = poolStore.get(client.getUserPoolId())
-                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
-                        "User pool not found", 400));
+        String userPoolId = client.getUserPoolId();
+        UserPool pool = poolStore.get(userPoolId)
+                .orElseThrow(() -> userPoolNotFound(userPoolId));
         CognitoUser user = adminGetUser(client.getUserPoolId(), username);
         if (verificationCodeService != null && isSignUpConfirmationEnabled(pool)) {
             try {
@@ -1937,6 +1937,11 @@ public class CognitoService implements ResourceProvider {
     }
 
     // ──────────────────────────── Private helpers ────────────────────────────
+
+    private static AwsException userPoolNotFound(String userPoolId) {
+        return new AwsException("ResourceNotFoundException",
+                "User pool " + userPoolId + " does not exist.", 400);
+    }
 
     UserPoolClient findClientById(String clientId) {
         return clientStore.get(clientId)
