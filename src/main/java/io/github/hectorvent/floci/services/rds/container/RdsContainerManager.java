@@ -157,10 +157,10 @@ public class RdsContainerManager {
                     specBuilder, storageResourceId, exactVolumeName, engine, image);
 
         // Add engine-specific command
-            List<String> cmd = buildContainerCmd(engine);
-            if (!cmd.isEmpty()) {
-                specBuilder.withCmd(cmd);
-            }
+        List<String> cmd = buildContainerCmd(engine, image);
+        if (!cmd.isEmpty()) {
+            specBuilder.withCmd(cmd);
+        }
 
             ContainerSpec spec = specBuilder.build();
 
@@ -667,12 +667,52 @@ public class RdsContainerManager {
         return envs;
     }
 
-    private List<String> buildContainerCmd(DatabaseEngine engine) {
-        // Configure MySQL to use mysql_native_password so the proxy can authenticate
-        // without needing caching_sha2_password RSA key exchange
+    static List<String> buildContainerCmd(DatabaseEngine engine, String image) {
+        // Keep the backend handshake on mysql_native_password so the transparent proxy can
+        // validate the client scramble. MySQL 8.4 removed default-authentication-plugin and
+        // requires the native plugin to be enabled separately before selecting it as the default.
         return switch (engine) {
-            case MYSQL -> List.of("--default-authentication-plugin=mysql_native_password");
+            case MYSQL -> isMySql84Image(image)
+                    ? List.of(
+                            "--mysql-native-password=ON",
+                            "--authentication-policy=mysql_native_password")
+                    : List.of("--default-authentication-plugin=mysql_native_password");
             case POSTGRES, MARIADB -> List.of();
         };
+    }
+
+    private static boolean isMySql84Image(String image) {
+        if (image == null || image.isBlank()) {
+            return false;
+        }
+        String reference = image;
+        int digestSeparator = reference.indexOf('@');
+        if (digestSeparator >= 0) {
+            reference = reference.substring(0, digestSeparator);
+        }
+        int slashSeparator = reference.lastIndexOf('/');
+        int tagSeparator = reference.lastIndexOf(':');
+        if (tagSeparator < slashSeparator || tagSeparator == reference.length() - 1) {
+            return false;
+        }
+        String tag = reference.substring(tagSeparator + 1);
+        int dot = tag.indexOf('.');
+        if (dot <= 0 || dot == tag.length() - 1) {
+            return false;
+        }
+        int minorEnd = dot + 1;
+        while (minorEnd < tag.length() && Character.isDigit(tag.charAt(minorEnd))) {
+            minorEnd++;
+        }
+        if (minorEnd == dot + 1) {
+            return false;
+        }
+        try {
+            int major = Integer.parseInt(tag.substring(0, dot));
+            int minor = Integer.parseInt(tag.substring(dot + 1, minorEnd));
+            return major == 8 && minor >= 4;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 }
