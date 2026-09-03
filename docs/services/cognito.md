@@ -17,6 +17,8 @@ Floci strips reserved `floci:*` tags from stored and returned `UserPoolTags` on 
 
 Standalone `TagResource` rejects reserved `floci:*` keys. `ListTagsForResource` and `UntagResource` operate on the persisted user-pool tag map.
 
+An action given a user pool ID that does not resolve returns `ResourceNotFoundException` with the live service's wording, `User pool <poolId> does not exist.`, so tooling that matches Cognito error text behaves the same way locally.
+
 ## Supported Actions
 
 ### User Pools
