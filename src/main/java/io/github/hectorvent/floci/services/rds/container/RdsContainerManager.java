@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -672,18 +673,27 @@ public class RdsContainerManager {
         // validate the client scramble. MySQL 8.4 removed default-authentication-plugin and
         // requires the native plugin to be enabled separately before selecting it as the default.
         return switch (engine) {
-            case MYSQL -> isMySql84Image(image)
-                    ? List.of(
-                            "--mysql-native-password=ON",
-                            "--authentication-policy=mysql_native_password")
-                    : List.of("--default-authentication-plugin=mysql_native_password");
+            case MYSQL -> {
+                MySqlVersion version = mysqlImageVersion(image).orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "RDS MySQL images require an explicit numeric major.minor tag"));
+                if (version.major() >= 9) {
+                    throw new IllegalArgumentException(
+                            "RDS MySQL 9 and newer are unsupported because mysql_native_password was removed");
+                }
+                yield version.major() == 8 && version.minor() >= 4
+                        ? List.of(
+                                "--mysql-native-password=ON",
+                                "--authentication-policy=mysql_native_password")
+                        : List.of("--default-authentication-plugin=mysql_native_password");
+            }
             case POSTGRES, MARIADB -> List.of();
         };
     }
 
-    private static boolean isMySql84Image(String image) {
+    private static Optional<MySqlVersion> mysqlImageVersion(String image) {
         if (image == null || image.isBlank()) {
-            return false;
+            return Optional.empty();
         }
         String reference = image;
         int digestSeparator = reference.indexOf('@');
@@ -693,26 +703,29 @@ public class RdsContainerManager {
         int slashSeparator = reference.lastIndexOf('/');
         int tagSeparator = reference.lastIndexOf(':');
         if (tagSeparator < slashSeparator || tagSeparator == reference.length() - 1) {
-            return false;
+            return Optional.empty();
         }
         String tag = reference.substring(tagSeparator + 1);
         int dot = tag.indexOf('.');
         if (dot <= 0 || dot == tag.length() - 1) {
-            return false;
+            return Optional.empty();
         }
         int minorEnd = dot + 1;
         while (minorEnd < tag.length() && Character.isDigit(tag.charAt(minorEnd))) {
             minorEnd++;
         }
         if (minorEnd == dot + 1) {
-            return false;
+            return Optional.empty();
         }
         try {
             int major = Integer.parseInt(tag.substring(0, dot));
             int minor = Integer.parseInt(tag.substring(dot + 1, minorEnd));
-            return major == 8 && minor >= 4;
+            return Optional.of(new MySqlVersion(major, minor));
         } catch (NumberFormatException e) {
-            return false;
+            return Optional.empty();
         }
+    }
+
+    private record MySqlVersion(int major, int minor) {
     }
 }
