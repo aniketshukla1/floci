@@ -672,16 +672,14 @@ public class RdsContainerManager {
         // Keep the backend handshake on mysql_native_password so the transparent proxy can
         // validate the client scramble. MySQL 8.4 removed default-authentication-plugin and
         // requires the native plugin to be enabled separately before selecting it as the default.
+        // Indeterminate tags and MySQL 9+ use the server default, which the proxy also supports.
         return switch (engine) {
             case MYSQL -> {
-                MySqlVersion version = mysqlImageVersion(image).orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "RDS MySQL images require an explicit numeric major.minor tag"));
-                if (version.major() >= 9) {
-                    throw new IllegalArgumentException(
-                            "RDS MySQL 9 and newer are unsupported because mysql_native_password was removed");
+                Optional<MySqlVersion> version = mysqlImageVersion(image);
+                if (version.isEmpty() || version.get().major() >= 9) {
+                    yield List.of();
                 }
-                yield version.major() == 8 && version.minor() >= 4
+                yield version.get().major() == 8 && version.get().minor() >= 4
                         ? List.of(
                                 "--mysql-native-password=ON",
                                 "--authentication-policy=mysql_native_password")

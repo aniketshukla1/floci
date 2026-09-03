@@ -76,17 +76,13 @@ class RdsContainerManagerTest {
     }
 
     @Test
-    void rejectsMysqlImagesWithoutSupportedVersionTags() {
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> RdsContainerManager.buildContainerCmd(DatabaseEngine.MYSQL, "mysql:9.0"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> RdsContainerManager.buildContainerCmd(DatabaseEngine.MYSQL, "mysql:latest"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> RdsContainerManager.buildContainerCmd(
-                        DatabaseEngine.MYSQL, "mysql@sha256:abcdef"));
+    void defersToServerAuthenticationForMysql9AndUnversionedImages() {
+        assertTrue(RdsContainerManager.buildContainerCmd(
+                DatabaseEngine.MYSQL, "mysql:9.0").isEmpty());
+        assertTrue(RdsContainerManager.buildContainerCmd(
+                DatabaseEngine.MYSQL, "mysql:latest").isEmpty());
+        assertTrue(RdsContainerManager.buildContainerCmd(
+                DatabaseEngine.MYSQL, "mysql@sha256:abcdef").isEmpty());
     }
 
     @Test
