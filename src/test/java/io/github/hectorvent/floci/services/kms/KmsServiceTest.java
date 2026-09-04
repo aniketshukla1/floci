@@ -83,11 +83,14 @@ class KmsServiceTest {
     @ValueSource(strings = {"cn-north-1", "cn-northwest-1"})
     void createSm2KeySucceedsInChinaRegions(String region) {
         KmsKey key = kmsService.createKey(null, "SIGN_VERIFY", "SM2", null, Map.of(), region);
+        byte[] message = "SM2 regional signing".getBytes(StandardCharsets.UTF_8);
+        byte[] signature = kmsService.sign(key.getKeyId(), message, "SM2_DSA", region);
 
         assertEquals(KmsKeySpec.SM2, key.getKeySpec());
         assertEquals(KmsKeyUsage.SIGN_VERIFY, key.getKeyUsage());
         assertNotNull(key.getPrivateKeyEncoded());
         assertNotNull(key.getPublicKeyEncoded());
+        assertTrue(kmsService.verify(key.getKeyId(), message, signature, "SM2_DSA", region));
     }
 
     @Test
