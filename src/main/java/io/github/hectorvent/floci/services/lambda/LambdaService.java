@@ -308,6 +308,16 @@ public class LambdaService implements ResourceProvider {
     }
 
     public LambdaFunction createFunction(String region, Map<String, Object> request) {
+        Map<String, Object> environment = structureMember(request, "Environment");
+        Map<String, Object> ephemeralStorage = structureMember(request, "EphemeralStorage");
+        Map<String, Object> tracingConfig = structureMember(request, "TracingConfig");
+        Map<String, Object> deadLetterConfig = structureMember(request, "DeadLetterConfig");
+        Map<String, Object> vpcConfig = structureMember(request, "VpcConfig");
+        Map<String, Object> snapStart = structureMember(request, "SnapStart");
+        Map<String, Object> loggingConfig = structureMember(request, "LoggingConfig");
+        Map<String, Object> imageConfig = structureMember(request, "ImageConfig");
+        Map<String, Object> code = structureMember(request, "Code");
+
         String functionName = (String) request.get("FunctionName");
         String role = (String) request.get("Role");
         String handler = (String) request.get("Handler");
@@ -355,11 +365,9 @@ public class LambdaService implements ResourceProvider {
         fn.setRevisionId(UUID.randomUUID().toString());
 
         // Handle environment variables
-        @SuppressWarnings("unchecked")
-        Map<String, Object> envBlock = (Map<String, Object>) request.get("Environment");
-        if (envBlock != null) {
+        if (environment != null) {
             @SuppressWarnings("unchecked")
-            Map<String, String> vars = (Map<String, String>) envBlock.get("Variables");
+            Map<String, String> vars = (Map<String, String>) environment.get("Variables");
             if (vars != null) fn.setEnvironment(vars);
         }
 
@@ -377,19 +385,19 @@ public class LambdaService implements ResourceProvider {
         }
 
         // EphemeralStorage
-        if (request.get("EphemeralStorage") instanceof Map<?, ?> es) {
-            fn.setEphemeralStorageSize(toInt(es.get("Size"), 512));
+        if (ephemeralStorage != null) {
+            fn.setEphemeralStorageSize(toInt(ephemeralStorage.get("Size"), 512));
         }
 
         // TracingConfig
-        if (request.get("TracingConfig") instanceof Map<?, ?> tc) {
-            Object mode = tc.get("Mode");
+        if (tracingConfig != null) {
+            Object mode = tracingConfig.get("Mode");
             fn.setTracingMode(mode != null ? mode.toString() : "PassThrough");
         }
 
         // DeadLetterConfig
-        if (request.get("DeadLetterConfig") instanceof Map<?, ?> dlq) {
-            fn.setDeadLetterTargetArn((String) dlq.get("TargetArn"));
+        if (deadLetterConfig != null) {
+            fn.setDeadLetterTargetArn((String) deadLetterConfig.get("TargetArn"));
         }
 
         // Layers
@@ -405,15 +413,13 @@ public class LambdaService implements ResourceProvider {
             fn.setKmsKeyArn((String) request.get("KMSKeyArn"));
         }
 
-        if (request.get("VpcConfig") instanceof Map<?, ?>) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> vpc = (Map<String, Object>) request.get("VpcConfig");
-            fn.setVpcConfig(vpc);
-            fn.setVpcId(resolveVpcId(region, vpc));
+        if (vpcConfig != null) {
+            fn.setVpcConfig(vpcConfig);
+            fn.setVpcId(resolveVpcId(region, vpcConfig));
         }
 
-        applySnapStart(fn, request.get("SnapStart"));
-        applyLoggingConfig(fn, request.get("LoggingConfig"));
+        applySnapStart(fn, snapStart);
+        applyLoggingConfig(fn, loggingConfig);
 
         List<LambdaFileSystemConfig> fileSystemConfigs =
                 parseFileSystemConfigs(request.get("FileSystemConfigs"));
@@ -421,9 +427,7 @@ public class LambdaService implements ResourceProvider {
         fn.setFileSystemConfigs(fileSystemConfigs);
 
         // ImageConfig (PackageType=Image overrides)
-        if (request.get("ImageConfig") instanceof Map<?, ?> ic) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> imageConfig = (Map<String, Object>) ic;
+        if (imageConfig != null) {
             if (imageConfig.get("Command") instanceof List<?> cmd) {
                 fn.setImageConfigCommand(cmd.stream().map(Object::toString).toList());
             }
@@ -436,8 +440,6 @@ public class LambdaService implements ResourceProvider {
         }
 
         // Handle code deployment
-        @SuppressWarnings("unchecked")
-        Map<String, Object> code = (Map<String, Object>) request.get("Code");
         if (code != null) {
             String imageUri = (String) code.get("ImageUri");
             if (imageUri != null) {
@@ -601,6 +603,15 @@ public class LambdaService implements ResourceProvider {
     }
 
     public LambdaFunction updateFunctionConfiguration(String region, String functionName, Map<String, Object> request) {
+        Map<String, Object> environment = structureMember(request, "Environment");
+        Map<String, Object> ephemeralStorage = structureMember(request, "EphemeralStorage");
+        Map<String, Object> tracingConfig = structureMember(request, "TracingConfig");
+        Map<String, Object> deadLetterConfig = structureMember(request, "DeadLetterConfig");
+        Map<String, Object> requestedVpcConfigUpdate = structureMember(request, "VpcConfig");
+        Map<String, Object> snapStart = structureMember(request, "SnapStart");
+        Map<String, Object> loggingConfig = structureMember(request, "LoggingConfig");
+        Map<String, Object> imageConfig = structureMember(request, "ImageConfig");
+
         LambdaFunction fn = getFunction(region, functionName);
 
         // Validated before any field mutation below, not inline where Layers is applied further
@@ -615,10 +626,10 @@ public class LambdaService implements ResourceProvider {
             validateLayersResolvable(layerList);
         }
         if (request.containsKey("SnapStart")) {
-            validateSnapStart(request.get("SnapStart"));
+            validateSnapStart(snapStart);
         }
         if (request.containsKey("LoggingConfig")) {
-            validateLoggingConfig(request.get("LoggingConfig"));
+            validateLoggingConfig(loggingConfig);
         }
         if (request.containsKey("Role")) {
             validateRoleArn((String) request.get("Role"));
@@ -628,10 +639,8 @@ public class LambdaService implements ResourceProvider {
         }
 
         Map<String, Object> requestedVpcConfig = fn.getVpcConfig();
-        if (request.get("VpcConfig") instanceof Map<?, ?>) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> vpc = (Map<String, Object>) request.get("VpcConfig");
-            requestedVpcConfig = new java.util.HashMap<>(vpc);
+        if (requestedVpcConfigUpdate != null) {
+            requestedVpcConfig = new java.util.HashMap<>(requestedVpcConfigUpdate);
         }
         List<LambdaFileSystemConfig> requestedFileSystemConfigs = fn.getFileSystemConfigs();
         if (request.containsKey("FileSystemConfigs")) {
@@ -660,11 +669,9 @@ public class LambdaService implements ResourceProvider {
             fn.setTimeout(((Number) request.get("Timeout")).intValue());
         }
         if (request.containsKey("Environment")) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> envBlock = (Map<String, Object>) request.get("Environment");
-            if (envBlock != null && envBlock.containsKey("Variables")) {
+            if (environment != null && environment.containsKey("Variables")) {
                 @SuppressWarnings("unchecked")
-                Map<String, String> vars = (Map<String, String>) envBlock.get("Variables");
+                Map<String, String> vars = (Map<String, String>) environment.get("Variables");
                 fn.setEnvironment(vars != null ? vars : new java.util.HashMap<>());
             }
         }
@@ -690,21 +697,21 @@ public class LambdaService implements ResourceProvider {
         }
 
         if (request.containsKey("EphemeralStorage")) {
-            if (request.get("EphemeralStorage") instanceof Map<?, ?> es) {
-                fn.setEphemeralStorageSize(toInt(es.get("Size"), 512));
+            if (ephemeralStorage != null) {
+                fn.setEphemeralStorageSize(toInt(ephemeralStorage.get("Size"), 512));
             }
         }
 
         if (request.containsKey("TracingConfig")) {
-            if (request.get("TracingConfig") instanceof Map<?, ?> tc) {
-                Object mode = tc.get("Mode");
+            if (tracingConfig != null) {
+                Object mode = tracingConfig.get("Mode");
                 fn.setTracingMode(mode != null ? mode.toString() : "PassThrough");
             }
         }
 
         if (request.containsKey("DeadLetterConfig")) {
-            if (request.get("DeadLetterConfig") instanceof Map<?, ?> dlq) {
-                fn.setDeadLetterTargetArn((String) dlq.get("TargetArn"));
+            if (deadLetterConfig != null) {
+                fn.setDeadLetterTargetArn((String) deadLetterConfig.get("TargetArn"));
             }
         }
 
@@ -717,18 +724,18 @@ public class LambdaService implements ResourceProvider {
         }
 
         if (request.containsKey("VpcConfig")) {
-            if (request.get("VpcConfig") instanceof Map<?, ?>) {
+            if (requestedVpcConfigUpdate != null) {
                 fn.setVpcConfig(requestedVpcConfig);
                 fn.setVpcId(resolveVpcId(region, requestedVpcConfig));
             }
         }
 
         if (request.containsKey("SnapStart")) {
-            applySnapStart(fn, request.get("SnapStart"));
+            applySnapStart(fn, snapStart);
         }
 
         if (request.containsKey("LoggingConfig")) {
-            applyLoggingConfig(fn, request.get("LoggingConfig"));
+            applyLoggingConfig(fn, loggingConfig);
         }
 
         if (request.containsKey("FileSystemConfigs")) {
@@ -736,9 +743,7 @@ public class LambdaService implements ResourceProvider {
         }
 
         if (request.containsKey("ImageConfig")) {
-            if (request.get("ImageConfig") instanceof Map<?, ?> ic) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> imageConfig = (Map<String, Object>) ic;
+            if (imageConfig != null) {
                 if (imageConfig.containsKey("Command")) {
                     List<String> cmd = imageConfig.get("Command") instanceof List<?>
                             ? ((List<?>) imageConfig.get("Command")).stream().map(Object::toString).toList() : null;
@@ -1043,6 +1048,8 @@ public class LambdaService implements ResourceProvider {
     // ──────────────────────────── Event Source Mapping (SQS) ────────────────────────────
 
     public EventSourceMapping createEventSourceMapping(String region, Map<String, Object> request) {
+        validateEventSourceMappingStructures(request);
+
         String functionName = (String) request.get("FunctionName");
         String eventSourceArn = (String) request.get("EventSourceArn");
 
@@ -1129,22 +1136,15 @@ public class LambdaService implements ResourceProvider {
     }
 
     private EventSourceMapping.DestinationConfig parseDestinationConfig(Map<String, Object> request) {
-        Object raw = request.get("DestinationConfig");
-        if (raw == null) {
+        Map<String, Object> destinationConfigMember = structureMember(request, "DestinationConfig");
+        if (destinationConfigMember == null) {
             return null;
-        }
-        if (!(raw instanceof Map<?, ?> destMap)) {
-            throw new AwsException("InvalidParameterValueException",
-                    "DestinationConfig must be a JSON object", 400);
         }
 
-        Object rawOnFailure = destMap.get("OnFailure");
-        if (rawOnFailure == null) {
+        Map<String, Object> onFailureMap = structureValue(
+                destinationConfigMember.get("OnFailure"), "DestinationConfig.OnFailure");
+        if (onFailureMap == null) {
             return null;
-        }
-        if (!(rawOnFailure instanceof Map<?, ?> onFailureMap)) {
-            throw new AwsException("InvalidParameterValueException",
-                    "DestinationConfig.OnFailure must be a JSON object", 400);
         }
 
         Object destination = onFailureMap.get("Destination");
@@ -1217,16 +1217,11 @@ public class LambdaService implements ResourceProvider {
      * an empty ScalingConfig as "clear the cap").
      */
     private ScalingConfig parseScalingConfig(Map<String, Object> request, String eventSourceArn) {
-        Object raw = request.get("ScalingConfig");
-        if (raw == null) {
+        Map<String, Object> map = structureMember(request, "ScalingConfig");
+        if (map == null) {
             return null;
         }
-        if (!(raw instanceof Map<?, ?>)) {
-            throw new AwsException("InvalidParameterValueException",
-                    "ScalingConfig must be a JSON object", 400);
-        }
         boolean isSqs = eventSourceArn != null && eventSourceArn.contains(":sqs:");
-        Map<?, ?> map = (Map<?, ?>) raw;
         Object mc = map.get("MaximumConcurrency");
         if (mc == null) {
             if (!isSqs) {
@@ -1293,6 +1288,8 @@ public class LambdaService implements ResourceProvider {
     }
 
     public EventSourceMapping updateEventSourceMapping(String uuid, Map<String, Object> request) {
+        validateEventSourceMappingStructures(request);
+
         EventSourceMapping esm = getEventSourceMapping(uuid);
 
         boolean wasEnabled = esm.isEnabled();
@@ -1550,6 +1547,30 @@ public class LambdaService implements ResourceProvider {
             }
         }
         return null;
+    }
+
+    private static Map<String, Object> structureMember(Map<String, Object> request, String member) {
+        return structureValue(request.get(member), member);
+    }
+
+    private static void validateEventSourceMappingStructures(Map<String, Object> request) {
+        structureMember(request, "ScalingConfig");
+        Map<String, Object> destinationConfig = structureMember(request, "DestinationConfig");
+        if (destinationConfig != null) {
+            structureValue(destinationConfig.get("OnFailure"), "DestinationConfig.OnFailure");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> structureValue(Object value, String member) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        throw new AwsException("SerializationException",
+                member + " must be a JSON object or null", 400);
     }
 
     private static void validateSnapStart(Object value) {
