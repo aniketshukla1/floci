@@ -41,7 +41,9 @@ public class CodeBuildService {
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, Build>> builds = new ConcurrentHashMap<>();
     // key: region -> buildId -> request buildspec override (transient: builds are runtime state)
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, String>> buildspecOverrides = new ConcurrentHashMap<>();
-    // key: region:projectName -> build counter (transient)
+    // key: region:projectName -> last allocated build number (durable across restarts)
+    private Map<String, Long> persistedBuildCounters = new ConcurrentHashMap<>();
+    // key: region:projectName -> build counter (runtime synchronization wrapper)
     private final ConcurrentHashMap<String, AtomicLong> buildCounters = new ConcurrentHashMap<>();
 
     private final CodeBuildRunner runner;
@@ -66,6 +68,8 @@ public class CodeBuildService {
                 new TypeReference<Map<String, Map<String, ReportGroup>>>() {});
         this.sourceCredentials = storageBacked("codebuild-source-credentials.json",
                 new TypeReference<Map<String, Map<String, SourceCredential>>>() {});
+        this.persistedBuildCounters = storageBacked("codebuild-build-counters.json",
+                new TypeReference<Map<String, Long>>() {});
         normalizeRegionMaps(projects);
         normalizeRegionMaps(reportGroups);
         normalizeRegionMaps(sourceCredentials);
@@ -424,9 +428,13 @@ public class CodeBuildService {
         }
 
         String counterKey = region + ":" + projectName;
-        long buildNumber = buildCounters
-                .computeIfAbsent(counterKey, k -> new AtomicLong(0))
-                .incrementAndGet();
+        AtomicLong counter = buildCounters.computeIfAbsent(counterKey,
+                key -> new AtomicLong(persistedBuildCounters.getOrDefault(key, 0L)));
+        long buildNumber;
+        synchronized (counter) {
+            buildNumber = counter.incrementAndGet();
+            persistedBuildCounters.put(counterKey, buildNumber);
+        }
 
         String buildId = projectName + ":" + buildNumber;
         String arn = AwsArnUtils.Arn.of("codebuild", region, account, "build/" + buildId).toString();

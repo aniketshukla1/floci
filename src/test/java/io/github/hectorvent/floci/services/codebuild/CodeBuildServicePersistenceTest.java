@@ -87,6 +87,29 @@ class CodeBuildServicePersistenceTest {
     }
 
     @Test
+    void buildNumbersContinueAfterRestart() {
+        SharedStorageFactory storage = new SharedStorageFactory();
+
+        CodeBuildService first = serviceWithStorage(storage);
+        first.createProject(REGION, ACCOUNT, "p1", "demo",
+                source("NO_SOURCE"), null, null, artifacts("NO_ARTIFACTS"), null,
+                new ProjectEnvironment(), "arn:aws:iam::" + ACCOUNT + ":role/cb",
+                null, null, null, null, null, null, null);
+        first.startBuild(REGION, ACCOUNT, "p1", null,
+                null, null, null, null, null, null);
+        Build second = first.startBuild(REGION, ACCOUNT, "p1", null,
+                null, null, null, null, null, null);
+
+        CodeBuildService reloaded = serviceWithStorage(storage);
+        Build third = reloaded.startBuild(REGION, ACCOUNT, "p1", null,
+                null, null, null, null, null, null);
+
+        assertEquals(2, second.getBuildNumber());
+        assertEquals(3, third.getBuildNumber());
+        assertEquals("p1:3", third.getId());
+    }
+
+    @Test
     void startAndRetryBuildResponsesUseAcceptedBuildSnapshot() {
         CodeBuildRunner runner = mock(CodeBuildRunner.class);
         doAnswer(invocation -> {
