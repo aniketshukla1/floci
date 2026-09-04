@@ -309,6 +309,7 @@ public class LambdaService implements ResourceProvider {
 
     public LambdaFunction createFunction(String region, Map<String, Object> request) {
         Map<String, Object> environment = structureMember(request, "Environment");
+        Map<String, String> environmentVariables = environmentVariables(environment);
         Map<String, Object> ephemeralStorage = structureMember(request, "EphemeralStorage");
         Map<String, Object> tracingConfig = structureMember(request, "TracingConfig");
         Map<String, Object> deadLetterConfig = structureMember(request, "DeadLetterConfig");
@@ -366,9 +367,7 @@ public class LambdaService implements ResourceProvider {
 
         // Handle environment variables
         if (environment != null) {
-            @SuppressWarnings("unchecked")
-            Map<String, String> vars = (Map<String, String>) environment.get("Variables");
-            if (vars != null) fn.setEnvironment(vars);
+            if (environmentVariables != null) fn.setEnvironment(environmentVariables);
         }
 
         // Handle tags
@@ -604,6 +603,7 @@ public class LambdaService implements ResourceProvider {
 
     public LambdaFunction updateFunctionConfiguration(String region, String functionName, Map<String, Object> request) {
         Map<String, Object> environment = structureMember(request, "Environment");
+        Map<String, String> environmentVariables = environmentVariables(environment);
         Map<String, Object> ephemeralStorage = structureMember(request, "EphemeralStorage");
         Map<String, Object> tracingConfig = structureMember(request, "TracingConfig");
         Map<String, Object> deadLetterConfig = structureMember(request, "DeadLetterConfig");
@@ -670,9 +670,7 @@ public class LambdaService implements ResourceProvider {
         }
         if (request.containsKey("Environment")) {
             if (environment != null && environment.containsKey("Variables")) {
-                @SuppressWarnings("unchecked")
-                Map<String, String> vars = (Map<String, String>) environment.get("Variables");
-                fn.setEnvironment(vars != null ? vars : new java.util.HashMap<>());
+                fn.setEnvironment(environmentVariables != null ? environmentVariables : new java.util.HashMap<>());
             }
         }
 
@@ -1551,6 +1549,15 @@ public class LambdaService implements ResourceProvider {
 
     private static Map<String, Object> structureMember(Map<String, Object> request, String member) {
         return structureValue(request.get(member), member);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, String> environmentVariables(Map<String, Object> environment) {
+        if (environment == null) {
+            return null;
+        }
+        return (Map<String, String>) (Map<?, ?>) structureValue(
+                environment.get("Variables"), "Environment.Variables");
     }
 
     private static void validateEventSourceMappingStructures(Map<String, Object> request) {

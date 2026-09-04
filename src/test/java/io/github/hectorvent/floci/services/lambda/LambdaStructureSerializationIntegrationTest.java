@@ -57,6 +57,48 @@ class LambdaStructureSerializationIntegrationTest {
     }
 
     @Test
+    void environmentVariablesRejectsScalarBeforeUpdateMutation() {
+        Map<String, Object> createRequest = functionRequest("nested-environment-create");
+        createRequest.put("Environment", Map.of("Variables", 5));
+        given()
+            .contentType("application/json")
+            .body(createRequest)
+        .when()
+            .post(BASE_PATH + "/functions")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("SerializationException"));
+
+        Map<String, Object> initialRequest = functionRequest("nested-environment-update");
+        initialRequest.put("Description", "original description");
+        given()
+            .contentType("application/json")
+            .body(initialRequest)
+        .when()
+            .post(BASE_PATH + "/functions")
+        .then()
+            .statusCode(201);
+
+        given()
+            .contentType("application/json")
+            .body(Map.of(
+                    "Description", "must not be applied",
+                    "Environment", Map.of("Variables", 5)))
+        .when()
+            .put(BASE_PATH + "/functions/nested-environment-update/configuration")
+        .then()
+            .statusCode(400)
+            .body("__type", equalTo("SerializationException"));
+
+        given()
+        .when()
+            .get(BASE_PATH + "/functions/nested-environment-update/configuration")
+        .then()
+            .statusCode(200)
+            .body("Description", equalTo("original description"));
+    }
+
+    @Test
     void explicitNullStructureMembersRemainOptional() {
         Map<String, Object> request = functionRequest("null-structure-members");
         FUNCTION_STRUCTURE_MEMBERS.forEach(member -> request.put(member, null));
