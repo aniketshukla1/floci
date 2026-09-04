@@ -166,7 +166,7 @@ public class KmsService implements ResourceProvider {
         key.setPolicy(policy != null ? policy : buildDefaultKeyPolicy());
         key.getTags().putAll(ReservedTags.stripReservedTags(tags));
 
-        generateKeyMaterial(key);
+        generateKeyMaterial(key, region);
 
         keyStore.put(region + "::" + keyId, key);
         LOG.infov("Created KMS key: {0} ({1}/{2}) in {3}", keyId, key.getKeyUsage(), key.getKeySpec(), region);
@@ -189,7 +189,7 @@ public class KmsService implements ResourceProvider {
         return normalized;
     }
 
-    private void generateKeyMaterial(KmsKey key) {
+    private void generateKeyMaterial(KmsKey key, String region) {
         KmsKeySpec spec = key.getKeySpec();
         try {
             switch (spec.getKeyType()) {
@@ -229,9 +229,17 @@ public class KmsService implements ResourceProvider {
                     key.setPrivateKeyEncoded(Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded()));
                     key.setPublicKeyEncoded(Base64.getEncoder().encodeToString(pair.getPublic().getEncoded()));
                 }
-                case SM2 ->
+                case SM2 -> {
+                    if (!region.startsWith("cn-")) {
                         throw new AwsException("UnsupportedOperationException",
                                 "KeySpec SM2 is not supported in this Region", 400);
+                    }
+                    KeyPairGenerator generator = new KeyPairGeneratorSpi.EC();
+                    generator.initialize(new ECGenParameterSpec("sm2p256v1"));
+                    KeyPair pair = generator.generateKeyPair();
+                    key.setPrivateKeyEncoded(Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded()));
+                    key.setPublicKeyEncoded(Base64.getEncoder().encodeToString(pair.getPublic().getEncoded()));
+                }
                 default ->
                         throw new AwsException("InvalidCustomerMasterKeySpecException", "Unsupported key spec: " + spec, 400);
             }

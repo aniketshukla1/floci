@@ -79,6 +79,17 @@ class KmsServiceTest {
         assertEquals(400, exception.getHttpStatus());
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"cn-north-1", "cn-northwest-1"})
+    void createSm2KeySucceedsInChinaRegions(String region) {
+        KmsKey key = kmsService.createKey(null, "SIGN_VERIFY", "SM2", null, Map.of(), region);
+
+        assertEquals(KmsKeySpec.SM2, key.getKeySpec());
+        assertEquals(KmsKeyUsage.SIGN_VERIFY, key.getKeyUsage());
+        assertNotNull(key.getPrivateKeyEncoded());
+        assertNotNull(key.getPublicKeyEncoded());
+    }
+
     @Test
     void updateKeyDescriptionPersistsDescription() {
         KmsKey key = kmsService.createKey("old description", REGION);
