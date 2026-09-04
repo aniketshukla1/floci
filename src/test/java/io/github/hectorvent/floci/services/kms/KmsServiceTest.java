@@ -70,6 +70,16 @@ class KmsServiceTest {
     }
 
     @Test
+    void createSm2KeyReportsRegionUnsupportedOperation() {
+        AwsException exception = assertThrows(AwsException.class, () ->
+                kmsService.createKey(null, "SIGN_VERIFY", "SM2", null, Map.of(), REGION));
+
+        assertEquals("UnsupportedOperationException", exception.getErrorCode());
+        assertEquals("KeySpec SM2 is not supported in this Region", exception.getMessage());
+        assertEquals(400, exception.getHttpStatus());
+    }
+
+    @Test
     void updateKeyDescriptionPersistsDescription() {
         KmsKey key = kmsService.createKey("old description", REGION);
 

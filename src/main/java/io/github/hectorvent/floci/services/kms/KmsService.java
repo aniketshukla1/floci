@@ -229,6 +229,9 @@ public class KmsService implements ResourceProvider {
                     key.setPrivateKeyEncoded(Base64.getEncoder().encodeToString(pair.getPrivate().getEncoded()));
                     key.setPublicKeyEncoded(Base64.getEncoder().encodeToString(pair.getPublic().getEncoded()));
                 }
+                case SM2 ->
+                        throw new AwsException("UnsupportedOperationException",
+                                "KeySpec SM2 is not supported in this Region", 400);
                 default ->
                         throw new AwsException("InvalidCustomerMasterKeySpecException", "Unsupported key spec: " + spec, 400);
             }
