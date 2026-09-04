@@ -231,7 +231,7 @@ public class KmsService implements ResourceProvider {
                     key.setPublicKeyEncoded(Base64.getEncoder().encodeToString(pair.getPublic().getEncoded()));
                 }
                 case SM2 -> {
-                    if (!region.startsWith("cn-")) {
+                    if (!region.equals("cn-north-1") && !region.equals("cn-northwest-1")) {
                         throw new AwsException("UnsupportedOperationException",
                                 "KeySpec SM2 is not supported in this Region", 400);
                     }

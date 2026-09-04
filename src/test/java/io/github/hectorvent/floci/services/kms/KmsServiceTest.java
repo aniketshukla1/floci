@@ -69,10 +69,11 @@ class KmsServiceTest {
         assertEquals("Enabled", key.getKeyState());
     }
 
-    @Test
-    void createSm2KeyReportsRegionUnsupportedOperation() {
+    @ParameterizedTest
+    @ValueSource(strings = {"us-east-1", "cn-fake-1"})
+    void createSm2KeyReportsRegionUnsupportedOperation(String region) {
         AwsException exception = assertThrows(AwsException.class, () ->
-                kmsService.createKey(null, "SIGN_VERIFY", "SM2", null, Map.of(), REGION));
+                kmsService.createKey(null, "SIGN_VERIFY", "SM2", null, Map.of(), region));
 
         assertEquals("UnsupportedOperationException", exception.getErrorCode());
         assertEquals("KeySpec SM2 is not supported in this Region", exception.getMessage());
