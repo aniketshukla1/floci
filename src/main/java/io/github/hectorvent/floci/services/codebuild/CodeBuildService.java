@@ -37,9 +37,9 @@ public class CodeBuildService {
     private Map<String, Map<String, ReportGroup>> reportGroups = new ConcurrentHashMap<>();
     // key: region -> arn -> source credential (token is stored but never returned)
     private Map<String, Map<String, SourceCredential>> sourceCredentials = new ConcurrentHashMap<>();
-    // key: region -> buildId -> build (transient: builds are runtime state)
+    // key: account:region -> buildId -> build (transient: builds are runtime state)
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, Build>> builds = new ConcurrentHashMap<>();
-    // key: region -> buildId -> request buildspec override (transient: builds are runtime state)
+    // key: account:region -> buildId -> request buildspec override (transient: builds are runtime state)
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, String>> buildspecOverrides = new ConcurrentHashMap<>();
     // key: account:region:projectName -> last allocated build number (durable across restarts)
     private Map<String, Long> persistedBuildCounters = new ConcurrentHashMap<>();
@@ -110,12 +110,12 @@ public class CodeBuildService {
         return sourceCredentials.computeIfAbsent(region, r -> new ConcurrentHashMap<>());
     }
 
-    private Map<String, Build> buildsFor(String region) {
-        return builds.computeIfAbsent(region, r -> new ConcurrentHashMap<>());
+    private Map<String, Build> buildsFor(String account, String region) {
+        return builds.computeIfAbsent(account + ":" + region, ignored -> new ConcurrentHashMap<>());
     }
 
-    private Map<String, String> buildspecOverridesFor(String region) {
-        return buildspecOverrides.computeIfAbsent(region, r -> new ConcurrentHashMap<>());
+    private Map<String, String> buildspecOverridesFor(String account, String region) {
+        return buildspecOverrides.computeIfAbsent(account + ":" + region, ignored -> new ConcurrentHashMap<>());
     }
 
     // ---- Projects ----
@@ -470,9 +470,9 @@ public class CodeBuildService {
 
         build.setPhases(new CopyOnWriteArrayList<>());
 
-        buildsFor(region).put(buildId, build);
+        buildsFor(account, region).put(buildId, build);
         if (buildspecOverride != null && !buildspecOverride.isBlank()) {
-            buildspecOverridesFor(region).put(buildId, buildspecOverride);
+            buildspecOverridesFor(account, region).put(buildId, buildspecOverride);
         }
         Build responseBuild = copyBuild(build);
 
@@ -481,24 +481,24 @@ public class CodeBuildService {
         return responseBuild;
     }
 
-    public Build getBuild(String region, String buildId) {
-        Build build = buildsFor(region).get(buildId);
+    public Build getBuild(String region, String account, String buildId) {
+        Build build = buildsFor(account, region).get(buildId);
         if (build == null) {
             throw new AwsException("ResourceNotFoundException", "Build not found: " + buildId, 400);
         }
         return build;
     }
 
-    public List<Build> batchGetBuilds(String region, List<String> buildIds) {
-        Map<String, Build> store = buildsFor(region);
+    public List<Build> batchGetBuilds(String region, String account, List<String> buildIds) {
+        Map<String, Build> store = buildsFor(account, region);
         return buildIds.stream()
                 .map(store::get)
                 .filter(b -> b != null)
                 .collect(Collectors.toList());
     }
 
-    public List<String> listBuilds(String region) {
-        return buildsFor(region).values().stream()
+    public List<String> listBuilds(String region, String account) {
+        return buildsFor(account, region).values().stream()
                 .sorted((a, b) -> Double.compare(
                         b.getStartTime() != null ? b.getStartTime() : 0,
                         a.getStartTime() != null ? a.getStartTime() : 0))
@@ -506,8 +506,8 @@ public class CodeBuildService {
                 .collect(Collectors.toList());
     }
 
-    public List<String> listBuildsForProject(String region, String projectName) {
-        return buildsFor(region).values().stream()
+    public List<String> listBuildsForProject(String region, String account, String projectName) {
+        return buildsFor(account, region).values().stream()
                 .filter(b -> projectName.equals(b.getProjectName()))
                 .sorted((a, b) -> Double.compare(
                         b.getStartTime() != null ? b.getStartTime() : 0,
@@ -516,17 +516,17 @@ public class CodeBuildService {
                 .collect(Collectors.toList());
     }
 
-    public void stopBuild(String region, String buildId) {
-        Build build = buildsFor(region).get(buildId);
+    public void stopBuild(String region, String account, String buildId) {
+        Build build = buildsFor(account, region).get(buildId);
         if (build == null) {
             throw new AwsException("ResourceNotFoundException", "Build not found: " + buildId, 400);
         }
-        runner.stopBuild(buildId);
+        runner.stopBuild(build.getArn());
     }
 
     public Build retryBuild(String region, String account, String buildId) {
-        Build original = getBuild(region, buildId);
-        String buildspecOverride = buildspecOverridesFor(region).get(original.getId());
+        Build original = getBuild(region, account, buildId);
+        String buildspecOverride = buildspecOverridesFor(account, region).get(original.getId());
         return startBuild(region, account, original.getProjectName(),
                 buildspecOverride, original.getEnvironment(), original.getArtifacts(),
                 null, original.getTimeoutInMinutes(), null, null);
