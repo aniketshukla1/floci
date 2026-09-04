@@ -34,6 +34,7 @@ class CodeBuildServicePersistenceTest {
 
     private static final String REGION = "us-east-1";
     private static final String ACCOUNT = "000000000000";
+    private static final String OTHER_ACCOUNT = "111111111111";
 
     @Test
     void durableResourcesSurviveRestart() {
@@ -107,6 +108,29 @@ class CodeBuildServicePersistenceTest {
         assertEquals(2, second.getBuildNumber());
         assertEquals(3, third.getBuildNumber());
         assertEquals("p1:3", third.getId());
+    }
+
+    @Test
+    void buildNumbersAreIsolatedByAccountAcrossRestart() {
+        SharedStorageFactory storage = new SharedStorageFactory();
+
+        CodeBuildService first = serviceWithStorage(storage);
+        first.createProject(REGION, ACCOUNT, "p1", "demo",
+                source("NO_SOURCE"), null, null, artifacts("NO_ARTIFACTS"), null,
+                new ProjectEnvironment(), "arn:aws:iam::" + ACCOUNT + ":role/cb",
+                null, null, null, null, null, null, null);
+
+        assertEquals(1, first.startBuild(REGION, ACCOUNT, "p1", null,
+                null, null, null, null, null, null).getBuildNumber());
+        assertEquals(1, first.startBuild(REGION, OTHER_ACCOUNT, "p1", null,
+                null, null, null, null, null, null).getBuildNumber());
+
+        CodeBuildService reloaded = serviceWithStorage(storage);
+
+        assertEquals(2, reloaded.startBuild(REGION, ACCOUNT, "p1", null,
+                null, null, null, null, null, null).getBuildNumber());
+        assertEquals(2, reloaded.startBuild(REGION, OTHER_ACCOUNT, "p1", null,
+                null, null, null, null, null, null).getBuildNumber());
     }
 
     @Test

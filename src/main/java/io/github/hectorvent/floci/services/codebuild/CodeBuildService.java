@@ -41,9 +41,9 @@ public class CodeBuildService {
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, Build>> builds = new ConcurrentHashMap<>();
     // key: region -> buildId -> request buildspec override (transient: builds are runtime state)
     private final ConcurrentHashMap<String, ConcurrentHashMap<String, String>> buildspecOverrides = new ConcurrentHashMap<>();
-    // key: region:projectName -> last allocated build number (durable across restarts)
+    // key: account:region:projectName -> last allocated build number (durable across restarts)
     private Map<String, Long> persistedBuildCounters = new ConcurrentHashMap<>();
-    // key: region:projectName -> build counter (runtime synchronization wrapper)
+    // key: account:region:projectName -> build counter (runtime synchronization wrapper)
     private final ConcurrentHashMap<String, AtomicLong> buildCounters = new ConcurrentHashMap<>();
 
     private final CodeBuildRunner runner;
@@ -427,7 +427,7 @@ public class CodeBuildService {
             throw new AwsException("ResourceNotFoundException", "Project not found: " + projectName, 400);
         }
 
-        String counterKey = region + ":" + projectName;
+        String counterKey = account + ":" + region + ":" + projectName;
         AtomicLong counter = buildCounters.computeIfAbsent(counterKey,
                 key -> new AtomicLong(persistedBuildCounters.getOrDefault(key, 0L)));
         long buildNumber;
