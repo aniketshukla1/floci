@@ -1741,7 +1741,7 @@ public class KmsService implements ResourceProvider {
     }
 
     private static void validateSm2Request(KmsKeySpec spec, String algorithm, KmsMessageType messageType) {
-        if (KmsKeySpec.getSignVerifyAlgorithm(algorithm) != KmsKeySpec.Algorithm.SM2_DSA) {
+        if (KmsKeySpec.getSignVerifyAlgorithm(algorithm) != KmsKeySpec.Algorithm.SM2DSA) {
             throw new AwsException("InvalidKeyUsageException",
                     "Algorithm " + algorithm + " is incompatible with key spec " + spec.name() + ".", 400);
         }

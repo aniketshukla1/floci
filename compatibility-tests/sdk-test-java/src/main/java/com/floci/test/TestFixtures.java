@@ -614,9 +614,13 @@ public final class TestFixtures {
     }
 
     public static KmsClient kmsClient() {
+        return kmsClient(REGION);
+    }
+
+    public static KmsClient kmsClient(Region region) {
         return KmsClient.builder()
                 .endpointOverride(ENDPOINT)
-                .region(REGION)
+                .region(region)
                 .credentialsProvider(CREDENTIALS)
                 .build();
     }
