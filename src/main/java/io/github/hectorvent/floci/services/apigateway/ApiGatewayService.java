@@ -2000,9 +2000,9 @@ public class ApiGatewayService {
     }
 
     public void tagResource(String region, String apiId, Map<String, String> tags) {
-        ReservedTags.rejectApiGatewayReservedTagsOnUpdate(tags);
         RestApi api = getRestApi(region, apiId);
-        api.getTags().putAll(tags);
+        ReservedTags.rejectApiGatewayReservedTagsOnUpdate(tags, apiId);
+        api.getTags().putAll(ReservedTags.stripApiGatewayReservedTags(tags));
         apiStore.put(apiKey(region, apiId), api);
     }
 
