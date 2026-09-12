@@ -102,7 +102,7 @@ class AslExecutorRetryTest {
                       "Resource": "%s",
                       "End": true,
                       "Retry": [{
-                        "ErrorEquals": ["Lambda.AWSLambdaException"],
+                        "ErrorEquals": ["Boom"],
                         "IntervalSeconds": 1,
                         "BackoffRate": 1.0,
                         "MaxAttempts": 2
@@ -133,7 +133,7 @@ class AslExecutorRetryTest {
                       "Resource": "%s",
                       "End": true,
                       "Retry": [{
-                        "ErrorEquals": ["Lambda.AWSLambdaException"],
+                        "ErrorEquals": ["Boom"],
                         "IntervalSeconds": 1,
                         "BackoffRate": 1.0,
                         "MaxAttempts": 1
@@ -144,7 +144,7 @@ class AslExecutorRetryTest {
                 """.formatted(FLAKY_FUNCTION_ARN));
 
         assertEquals("FAILED", execution.getStatus());
-        assertEquals("Lambda.AWSLambdaException", execution.getError());
+        assertEquals("Boom", execution.getError());
         verify(lambdaExecutor, times(2))
                 .invoke(eq(flakyFunction), any(byte[].class), eq(InvocationType.RequestResponse));
     }
@@ -164,7 +164,7 @@ class AslExecutorRetryTest {
                       "Resource": "%s",
                       "End": true,
                       "Retry": [{
-                        "ErrorEquals": ["SomeOther.Error"],
+                        "ErrorEquals": ["Lambda.AWSLambdaException"],
                         "IntervalSeconds": 1,
                         "MaxAttempts": 3
                       }]
@@ -174,7 +174,7 @@ class AslExecutorRetryTest {
                 """.formatted(FLAKY_FUNCTION_ARN));
 
         assertEquals("FAILED", execution.getStatus());
-        assertEquals("Lambda.AWSLambdaException", execution.getError());
+        assertEquals("Boom", execution.getError());
         verify(lambdaExecutor, times(1))
                 .invoke(eq(flakyFunction), any(byte[].class), eq(InvocationType.RequestResponse));
     }
@@ -213,7 +213,7 @@ class AslExecutorRetryTest {
                 """.formatted(FLAKY_FUNCTION_ARN));
 
         assertEquals("SUCCEEDED", execution.getStatus());
-        assertEquals("Lambda.AWSLambdaException",
+        assertEquals("Boom",
                 objectMapper.readTree(execution.getOutput()).path("Error").asText());
         verify(lambdaExecutor, times(2))
                 .invoke(eq(flakyFunction), any(byte[].class), eq(InvocationType.RequestResponse));
@@ -234,7 +234,7 @@ class AslExecutorRetryTest {
                         "States": {"Inner": {"Type": "Task", "Resource": "%s", "End": true}}
                       }],
                       "Retry": [{
-                        "ErrorEquals": ["Lambda.AWSLambdaException"],
+                        "ErrorEquals": ["Boom"],
                         "IntervalSeconds": 1,
                         "BackoffRate": 1.0,
                         "MaxAttempts": 1
@@ -279,7 +279,7 @@ class AslExecutorRetryTest {
                 """.formatted(FLAKY_FUNCTION_ARN));
 
         assertEquals("SUCCEEDED", execution.getStatus());
-        assertEquals("Lambda.AWSLambdaException",
+        assertEquals("Boom",
                 objectMapper.readTree(execution.getOutput()).path("Error").asText());
         verify(lambdaExecutor, times(1))
                 .invoke(eq(flakyFunction), any(byte[].class), eq(InvocationType.RequestResponse));
@@ -303,7 +303,7 @@ class AslExecutorRetryTest {
                             "Resource": "%s",
                             "End": true,
                             "Retry": [{
-                              "ErrorEquals": ["Lambda.AWSLambdaException"],
+                              "ErrorEquals": ["Boom"],
                               "IntervalSeconds": 1,
                               "BackoffRate": 1.0,
                               "MaxAttempts": 1
@@ -340,7 +340,7 @@ class AslExecutorRetryTest {
                         "States": {"Inner": {"Type": "Task", "Resource": "%s", "End": true}}
                       },
                       "Retry": [{
-                        "ErrorEquals": ["Lambda.AWSLambdaException"],
+                        "ErrorEquals": ["Boom"],
                         "IntervalSeconds": 1,
                         "BackoffRate": 1.0,
                         "MaxAttempts": 1

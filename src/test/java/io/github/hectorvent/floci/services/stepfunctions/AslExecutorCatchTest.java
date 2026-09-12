@@ -152,10 +152,43 @@ class AslExecutorCatchTest {
                 """.formatted(FAILING_FUNCTION_ARN));
 
         assertEquals("FAILED", execution.getStatus());
-        assertEquals("Lambda.AWSLambdaException", execution.getError());
-        assertEquals("Handled", execution.getCause());
+        assertEquals("ContractFailure", execution.getError());
+        assertEquals(new String(errorPayload(), StandardCharsets.UTF_8), execution.getCause());
         verify(lambdaExecutor).invoke(eq(failingFunction), any(byte[].class), eq(InvocationType.RequestResponse));
         verify(lambdaExecutor, never()).invoke(eq(cleanupFunction), any(byte[].class), eq(InvocationType.RequestResponse));
+    }
+
+    @Test
+    void optimizedLambdaFailurePreservesFunctionErrorAndSkipsServiceErrorRetrier() throws Exception {
+        Execution execution = run("""
+                {
+                  "StartAt": "FailingLambdaTask",
+                  "States": {
+                    "FailingLambdaTask": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::lambda:invoke",
+                      "Parameters": {"FunctionName": "%s", "Payload.$": "$"},
+                      "Retry": [{
+                        "ErrorEquals": ["Lambda.AWSLambdaException"],
+                        "IntervalSeconds": 0,
+                        "MaxAttempts": 3
+                      }],
+                      "Catch": [{
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "Handled"
+                      }],
+                      "End": true
+                    },
+                    "Handled": {"Type": "Pass", "End": true}
+                  }
+                }
+                """.formatted(FAILING_FUNCTION_ARN));
+
+        assertEquals("SUCCEEDED", execution.getStatus());
+        JsonNode failure = objectMapper.readTree(execution.getOutput());
+        assertEquals("ContractFailure", failure.path("Error").asText());
+        assertEquals(new String(errorPayload(), StandardCharsets.UTF_8), failure.path("Cause").asText());
+        verify(lambdaExecutor).invoke(eq(failingFunction), any(byte[].class), eq(InvocationType.RequestResponse));
     }
 
     private Execution run(String definition) {

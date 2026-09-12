@@ -946,7 +946,7 @@ public class AslExecutor {
             InvokeResult result = lambdaExecutor.invoke(fn, payloadBytes, InvocationType.RequestResponse);
 
             if (result.getFunctionError() != null) {
-                throw new FailStateException("Lambda.AWSLambdaException", result.getFunctionError());
+                throw lambdaFunctionFailure(result);
             }
 
             byte[] responseBytes = result.getPayload();
@@ -1087,6 +1087,26 @@ public class AslExecutor {
 
         throw new FailStateException("States.TaskFailed",
                 "Unsupported resource: " + resource);
+    }
+
+    private FailStateException lambdaFunctionFailure(InvokeResult result) {
+        byte[] payload = result.getPayload();
+        String cause = payload != null && payload.length > 0
+                ? new String(payload, StandardCharsets.UTF_8)
+                : result.getFunctionError();
+        String error = "Lambda.Unknown";
+        if (payload != null && payload.length > 0) {
+            try {
+                String payloadErrorType = objectMapper.readTree(payload).path("errorType").asText(null);
+                if (payloadErrorType != null && !payloadErrorType.isBlank()) {
+                    error = payloadErrorType;
+                }
+            } catch (Exception ignored) {
+                // Lambda can return a non-JSON payload from a custom runtime. Preserve it as the
+                // cause and use Lambda.Unknown rather than misclassifying it as a service failure.
+            }
+        }
+        return new FailStateException(error, cause);
     }
 
     /**
