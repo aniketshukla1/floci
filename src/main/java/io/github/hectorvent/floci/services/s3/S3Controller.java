@@ -1922,9 +1922,11 @@ public class S3Controller {
      * Format: hex-size;chunk-signature=sig\r\n data \r\n ... 0;chunk-signature=sig\r\n
      */
     private byte[] decodeAwsChunked(byte[] body, String contentEncoding, String contentSha256) {
-        boolean isAwsChunked = (contentEncoding != null && contentEncoding.contains("aws-chunked"))
+        boolean isAwsChunked = (contentEncoding != null
+                && contentEncoding.toLowerCase(Locale.ROOT).contains("aws-chunked"))
                 || "STREAMING-AWS4-HMAC-SHA256-PAYLOAD".equals(contentSha256)
-                || "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER".equals(contentSha256);
+                || "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER".equals(contentSha256)
+                || "STREAMING-UNSIGNED-PAYLOAD-TRAILER".equals(contentSha256);
         if (!isAwsChunked) {
             return body;
         }
