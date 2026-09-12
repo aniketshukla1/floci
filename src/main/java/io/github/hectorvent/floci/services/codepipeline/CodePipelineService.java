@@ -385,7 +385,8 @@ public class CodePipelineService {
 
     private ObjectNode getPipelineState(JsonNode request, String region, String account) {
         CodePipelinePipeline pipeline = requirePipeline(account, region, text(request, "name"));
-        CodePipelineExecution latest = executions(account, region, pipeline.getName()).stream().findFirst().orElse(null);
+        List<CodePipelineExecution> pipelineExecutions = executions(account, region, pipeline.getName());
+        CodePipelineExecution latest = pipelineExecutions.stream().findFirst().orElse(null);
         ObjectNode response = mapper.createObjectNode();
         response.put("pipelineName", pipeline.getName());
         response.put("pipelineVersion", pipeline.getVersion());
@@ -414,11 +415,16 @@ public class CodePipelineService {
                             .ifPresent(a -> actionState.set("latestExecution", actionStateNode(a)));
                 }
             }
-            if (latest != null && stageName.equals(latest.getCurrentStage())) {
+            CodePipelineExecution latestStageExecution = pipelineExecutions.stream()
+                    .filter(execution -> !actionExecutionsForStage(execution, stageName).isEmpty())
+                    .findFirst()
+                    .orElse(null);
+            if (latestStageExecution != null) {
                 ObjectNode latestExecution = state.putObject("latestExecution");
-                latestExecution.put("pipelineExecutionId", latest.getPipelineExecutionId());
-                latestExecution.put("status", latest.getStatus());
-                latestExecution.put("type", latest.getExecutionType());
+                latestExecution.put("pipelineExecutionId", latestStageExecution.getPipelineExecutionId());
+                latestExecution.put("status", stageExecutionStatus(
+                        actionExecutionsForStage(latestStageExecution, stageName)));
+                latestExecution.put("type", latestStageExecution.getExecutionType());
             }
         }
         return response;
@@ -1310,6 +1316,22 @@ public class CodePipelineService {
         return execution.getActionExecutions().stream()
                 .filter(a -> stage.equals(a.getStageName()))
                 .toList();
+    }
+
+    private String stageExecutionStatus(List<ActionExecution> actions) {
+        if (actions.stream().anyMatch(action -> "Failed".equals(action.getStatus()))) {
+            return "Failed";
+        }
+        if (actions.stream().anyMatch(action -> "InProgress".equals(action.getStatus()))) {
+            return "InProgress";
+        }
+        if (actions.stream().anyMatch(action -> "Abandoned".equals(action.getStatus()))) {
+            return "Stopped";
+        }
+        if (actions.stream().allMatch(action -> "Succeeded".equals(action.getStatus()))) {
+            return "Succeeded";
+        }
+        return "Failed";
     }
 
     private List<Map<String, Object>> objectList(JsonNode node) {

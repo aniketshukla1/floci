@@ -262,7 +262,11 @@ class CodePipelineIntegrationTest {
                 .then()
                 .statusCode(200)
                 .body("stageStates", hasSize(2))
-                .body("stageStates[0].actionStates[0].latestExecution.status", equalTo("Succeeded"));
+                .body("stageStates[0].actionStates[0].latestExecution.status", equalTo("Succeeded"))
+                .body("stageStates[0].latestExecution.pipelineExecutionId", equalTo(executionId))
+                .body("stageStates[0].latestExecution.status", equalTo("Succeeded"))
+                .body("stageStates[1].latestExecution.pipelineExecutionId", equalTo(executionId))
+                .body("stageStates[1].latestExecution.status", equalTo("Succeeded"));
 
         post("ListActionExecutions", """
                 {
@@ -764,7 +768,9 @@ class CodePipelineIntegrationTest {
                 .then()
                 .statusCode(200)
                 .body("stageStates[0].actionStates[0].latestExecution.status", equalTo("Failed"))
-                .body("stageStates[0].actionStates[0].latestExecution.summary", equalTo("Rejected by test"));
+                .body("stageStates[0].actionStates[0].latestExecution.summary", equalTo("Rejected by test"))
+                .body("stageStates[0].latestExecution.pipelineExecutionId", equalTo(executionId2))
+                .body("stageStates[0].latestExecution.status", equalTo("Failed"));
     }
 
     @Test
