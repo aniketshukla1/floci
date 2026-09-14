@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.stepfunctions;
 
 import io.github.hectorvent.floci.core.common.AwsErrorResponse;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.PaginatedResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -184,14 +185,21 @@ public class StepFunctionsJsonHandler {
     }
 
     private Response handleListStateMachineAliases(JsonNode request) {
-        List<StateMachineAlias> aliases = service.listStateMachineAliases(
-                requiredText(request, "stateMachineArn"));
+        Integer maxResults = request.hasNonNull("maxResults")
+                ? request.path("maxResults").asInt() : null;
+        PaginatedResult<StateMachineAlias> page = service.listStateMachineAliases(
+                requiredText(request, "stateMachineArn"),
+                maxResults,
+                optionalText(request, "nextToken"));
         ObjectNode response = objectMapper.createObjectNode();
         ArrayNode array = response.putArray("stateMachineAliases");
-        for (StateMachineAlias alias : aliases) {
+        for (StateMachineAlias alias : page.items()) {
             ObjectNode item = array.addObject();
             item.put("stateMachineAliasArn", alias.getStateMachineAliasArn());
             item.put("creationDate", alias.getCreationDate());
+        }
+        if (page.nextToken() != null) {
+            response.put("nextToken", page.nextToken());
         }
         return Response.ok(response).build();
     }

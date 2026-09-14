@@ -7,6 +7,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 
@@ -142,6 +145,49 @@ class StepFunctionsAliasesIntegrationTest {
                 {"name":"TEST","routingConfiguration":[
                  {"stateMachineVersionArn":"%s","weight":90}]}
                 """.formatted(versionArn))
+                .then().statusCode(400).body(containsString("ValidationException"));
+    }
+
+    @Test
+    void listAliasesPaginatesWithAnOpaqueRoundTripToken() {
+        String name = "alias-pagination-" + System.currentTimeMillis();
+        Response created = call("CreateStateMachine", """
+                {"name":"%s","definition":"%s",
+                 "roleArn":"arn:aws:iam::000000000000:role/r","publish":true}
+                """.formatted(name, DEF));
+        String stateMachineArn = created.then().statusCode(200)
+                .extract().jsonPath().getString("stateMachineArn");
+        String versionArn = created.jsonPath().getString("stateMachineVersionArn");
+
+        for (String aliasName : new String[] {"ALPHA", "BETA"}) {
+            call("CreateStateMachineAlias", """
+                    {"name":"%s","routingConfiguration":[
+                     {"stateMachineVersionArn":"%s","weight":100}]}
+                    """.formatted(aliasName, versionArn))
+                    .then().statusCode(200);
+        }
+
+        Response firstPage = call("ListStateMachineAliases", """
+                {"stateMachineArn":"%s","maxResults":1}
+                """.formatted(stateMachineArn));
+        firstPage.then().statusCode(200)
+                .body("stateMachineAliases.size()", is(1));
+        String firstArn = firstPage.jsonPath().getString("stateMachineAliases[0].stateMachineAliasArn");
+        String nextToken = firstPage.jsonPath().getString("nextToken");
+        assertNotNull(nextToken);
+
+        Response secondPage = call("ListStateMachineAliases", """
+                {"stateMachineArn":"%s","maxResults":1,"nextToken":"%s"}
+                """.formatted(stateMachineArn, nextToken));
+        secondPage.then().statusCode(200)
+                .body("stateMachineAliases.size()", is(1));
+        assertNotEquals(firstArn,
+                secondPage.jsonPath().getString("stateMachineAliases[0].stateMachineAliasArn"));
+        assertNull(secondPage.jsonPath().getString("nextToken"));
+
+        call("ListStateMachineAliases", """
+                {"stateMachineArn":"%s","maxResults":1001}
+                """.formatted(stateMachineArn))
                 .then().statusCode(400).body(containsString("ValidationException"));
     }
 }

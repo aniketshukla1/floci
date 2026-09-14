@@ -3,6 +3,8 @@ package io.github.hectorvent.floci.services.stepfunctions;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsRegions;
+import io.github.hectorvent.floci.core.common.PaginatedResult;
+import io.github.hectorvent.floci.core.common.Pagination;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.resource.ExplorerResource;
 import io.github.hectorvent.floci.core.resource.ResourceProvider;
@@ -126,15 +128,17 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
                                 SfnMockLoader mockLoader) {
         this.stateMachineStore = storageFactory.create("stepfunctions", "sfn-state-machines.json",
                 new TypeReference<Map<String, StateMachine>>() {});
-        this.stateMachineAliasStore = storageFactory.create(
-                "stepfunctions", "sfn-state-machine-aliases.json",
-                new TypeReference<Map<String, StateMachineAlias>>() {});
         this.executionStore = storageFactory.create("stepfunctions", "sfn-executions.json",
                 new TypeReference<Map<String, Execution>>() {});
         this.activityStore = storageFactory.create("stepfunctions", "sfn-activities.json",
                 new TypeReference<Map<String, Activity>>() {});
         this.mapRunStore = storageFactory.create("stepfunctions", "sfn-map-runs.json",
                 new TypeReference<Map<String, MapRun>>() {});
+        // Keep the established state-machine/execution/activity/map-run factory order stable for
+        // embedders and tests that supply sequential backends. New stores are appended.
+        this.stateMachineAliasStore = storageFactory.create(
+                "stepfunctions", "sfn-state-machine-aliases.json",
+                new TypeReference<Map<String, StateMachineAlias>>() {});
         this.regionResolver = regionResolver;
         this.aslExecutor = aslExecutor;
         this.objectMapper = objectMapper;
@@ -571,6 +575,11 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
     }
 
     public List<StateMachineAlias> listStateMachineAliases(String stateMachineArn) {
+        return listStateMachineAliases(stateMachineArn, null, null).items();
+    }
+
+    public PaginatedResult<StateMachineAlias> listStateMachineAliases(
+            String stateMachineArn, Integer maxResults, String nextToken) {
         QualifiedStateMachineArn qualifiedArn = parseQualifiedStateMachineArn(stateMachineArn);
         String baseArn = qualifiedArn != null && qualifiedArn.isVersion()
                 ? qualifiedArn.baseArn() : stateMachineArn;
@@ -585,8 +594,22 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
             aliases.removeIf(alias -> alias.getRoutingConfiguration().stream()
                     .noneMatch(route -> stateMachineArn.equals(route.getStateMachineVersionArn())));
         }
-        aliases.sort(Comparator.comparingDouble(StateMachineAlias::getCreationDate).reversed());
-        return aliases.stream().map(this::copyAlias).toList();
+        return Pagination.paginate(
+                aliases.stream().map(this::copyAlias).toList(),
+                StepFunctionsService::aliasPaginationCursor,
+                maxResults,
+                nextToken,
+                100,
+                1000,
+                "ValidationException");
+    }
+
+    private static String aliasPaginationCursor(StateMachineAlias alias) {
+        // ListStateMachineAliases is newest-first. Pagination sorts cursors ascending, so invert
+        // the millisecond timestamp and use the ARN to make aliases created together deterministic.
+        long creationMillis = (long) (alias.getCreationDate() * 1000);
+        return String.format(Locale.ROOT, "%020d:%s",
+                Long.MAX_VALUE - creationMillis, alias.getStateMachineAliasArn());
     }
 
     public synchronized StateMachineAlias updateStateMachineAlias(
