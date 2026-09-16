@@ -23,6 +23,8 @@ import com.github.dockerjava.api.command.ExecCreateCmdResponse;
 import com.github.dockerjava.api.command.ExecStartCmd;
 import com.github.dockerjava.api.command.CopyArchiveFromContainerCmd;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.model.AccessMode;
+import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.StreamType;
 import com.github.dockerjava.api.model.Mount;
@@ -101,6 +103,7 @@ class ContainerLauncherTest {
         when(config.services()).thenReturn(services);
         when(services.lambda()).thenReturn(lambda);
         when(lambda.dockerNetwork()).thenReturn(Optional.empty());
+        lenient().when(lambda.dockerFlags()).thenReturn(Optional.empty());
         lenient().when(lambda.extraHosts()).thenReturn(Optional.empty());
         lenient().when(lambda.awsConfigPath()).thenReturn(Optional.empty());
         when(config.docker()).thenReturn(docker);
@@ -859,6 +862,32 @@ class ContainerLauncherTest {
 
         assertTrue(captureRealContainerSpec().extraHosts().isEmpty(),
                 "no extra hosts when the config is unset (non-Linux host in this test)");
+    }
+
+    @Test
+    void launchFunction_appliesConfiguredDockerFlagsToTheRuntimeContainer() throws Exception {
+        Path certificates = Files.createDirectory(tempDir.resolve("host certificates"));
+        EmulatorConfig.LambdaServiceConfig lambda = config.services().lambda();
+        when(lambda.dockerFlags()).thenReturn(Optional.of(
+                "-v '" + certificates + ":/certs:ro' -e NODE_EXTRA_CA_CERTS=/certs/root.pem"));
+
+        Path codePath = Files.createDirectory(tempDir.resolve("docker-flags"));
+        LambdaFunction fn = new LambdaFunction();
+        fn.setFunctionName("docker-flags-fn");
+        fn.setRuntime("nodejs20.x");
+        fn.setHandler("index.handler");
+        fn.setCodeLocalPath(codePath.toString());
+
+        launcher.launch(fn);
+
+        ContainerSpec spec = captureRealContainerSpec();
+        assertTrue(spec.env().contains("NODE_EXTRA_CA_CERTS=/certs/root.pem"));
+        Bind certificateBind = spec.binds().stream()
+                .filter(bind -> "/certs".equals(bind.getVolume().getPath()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(certificates.toString(), certificateBind.getPath());
+        assertEquals(AccessMode.ro, certificateBind.getAccessMode());
     }
 
     @Test

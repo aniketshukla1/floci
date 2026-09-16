@@ -2323,6 +2323,16 @@ public interface EmulatorConfig {
         Optional<List<String>> extraHosts();
 
         /**
+         * Extra Docker create flags applied to every Lambda container. Supports the
+         * LocalStack-compatible {@code -e}, {@code -v}, {@code -p}, {@code --add-host},
+         * {@code --network}, {@code --user}, {@code --dns}, and {@code --privileged} subset.
+         *
+         * <p>Env vars: FLOCI_SERVICES_LAMBDA_DOCKER_FLAGS, or the LocalStack-compatible
+         * LAMBDA_DOCKER_FLAGS alias.
+         */
+        Optional<String> dockerFlags();
+
+        /**
          * Accept a {@code Layers} ARN naming another account, recording it on the function
          * without mounting its content. Off by default, because it broadens what CreateFunction
          * and UpdateFunctionConfiguration accept beyond what AWS does.

@@ -48,7 +48,8 @@ public class FlociConfigRelocationsInterceptor implements ConfigSourceIntercepto
      */
     static final List<Entry<String, String>> RELOCATIONS = List.of(
             entry("floci.max-request-size", "floci.protocols.max-request-size"),
-            entry("floci.ecr-base-uri", "floci.services.lambda.ecr-base-uri")
+            entry("floci.ecr-base-uri", "floci.services.lambda.ecr-base-uri"),
+            entry("lambda.docker-flags", "floci.services.lambda.docker-flags")
     );
 
     /**

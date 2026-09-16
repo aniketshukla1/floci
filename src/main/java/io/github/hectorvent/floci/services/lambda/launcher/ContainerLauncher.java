@@ -348,6 +348,9 @@ public class ContainerLauncher implements LambdaRuntimeLauncher {
             specBuilder.withReadOnlyBind(hostPath, "/opt/aws-config");
         });
 
+        config.services().lambda().dockerFlags()
+                .ifPresent(flags -> LambdaDockerFlags.apply(specBuilder, flags));
+
         ContainerSpec spec = specBuilder.build();
 
         // Create container without starting — provided.* runtimes exec

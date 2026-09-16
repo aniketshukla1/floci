@@ -141,6 +141,7 @@ floci:
       zip-max-entries: 100000                  # Maximum ZIP entries extracted per deployment package
       poll-interval-ms: 1000
       container-idle-timeout-seconds: 300     # Remove idle containers after this
+      # docker-flags: -v /host/certs:/certs:ro -e NODE_EXTRA_CA_CERTS=/certs/root.pem
       region-concurrency-limit: 1000          # Concurrent executions ceiling per region
       unreserved-concurrency-min: 100         # Minimum unreserved capacity PutFunctionConcurrency must leave
       hot-reload:

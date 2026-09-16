@@ -38,6 +38,15 @@ class FlociConfigRelocationsInterceptorTest {
     }
 
     @Test
+    void localStackLambdaDockerFlagsKeyResolvesToTheFlociLambdaSetting() {
+        SmallRyeConfig config = config(Map.of(
+                "lambda.docker-flags", "-v /host-ca:/certs:ro -e NODE_EXTRA_CA_CERTS=/certs/root.pem"));
+
+        assertEquals("-v /host-ca:/certs:ro -e NODE_EXTRA_CA_CERTS=/certs/root.pem",
+                config.getValue("floci.services.lambda.docker-flags", String.class));
+    }
+
+    @Test
     void theRelocatedKeyWinsOverTheLegacyKeyFromTheSameSource() {
         SmallRyeConfig config = config(Map.of(
                 "floci.max-request-size", "4096",
