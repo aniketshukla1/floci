@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -225,6 +226,49 @@ class GlueViewDdlBuilderTest {
     }
 
     @Test
+    void testIcebergTableUsesCurrentMetadataLocation() {
+        Database db = createDatabase("lakehouse");
+        when(glueService.getDatabases()).thenReturn(List.of(db));
+
+        Table icebergTable = createTable("events", null, null, null);
+        icebergTable.setParameters(Map.of(
+                "table_type", "ICEBERG",
+                "metadata_location", "s3://warehouse/events/metadata/00002-current.metadata.json"));
+        when(glueService.getTables("lakehouse")).thenReturn(List.of(icebergTable));
+
+        String ddl = builder.build("lakehouse");
+
+        String source = "iceberg_scan('s3://warehouse/events/metadata/00002-current.metadata.json')";
+        assertTrue(ddl.contains("CREATE OR REPLACE VIEW \"lakehouse\".\"events\" AS SELECT * FROM "
+                + source + ";\n"));
+        assertTrue(ddl.contains("CREATE OR REPLACE VIEW \"events\" AS SELECT * FROM " + source + ";\n"));
+        assertFalse(ddl.contains("read_csv_auto"));
+        assertFalse(ddl.contains("read_parquet"));
+    }
+
+    @Test
+    void testIcebergTableWithoutMetadataLocationIsSkipped() {
+        Database db = createDatabase("lakehouse");
+        when(glueService.getDatabases()).thenReturn(List.of(db));
+
+        Table icebergTable = createTable("events", "s3://warehouse/events", null, null);
+        icebergTable.setParameters(Map.of("table_type", "iceberg"));
+        when(glueService.getTables("lakehouse")).thenReturn(List.of(icebergTable));
+
+        String ddl = builder.build(null);
+
+        assertFalse(ddl.contains("CREATE OR REPLACE VIEW \"lakehouse\".\"events\""));
+        assertFalse(ddl.contains("read_csv_auto"));
+    }
+
+    @Test
+    void testIcebergMetadataLocationEscapesSingleQuotes() {
+        assertEquals("iceberg_scan('s3://bucket/owner''s-table/metadata/current.json')",
+                GlueViewDdlBuilder.icebergReadExpression(
+                        "s3://bucket/owner's-table/metadata/current.json"));
+    }
+
+    @Test
     void testIdentifierQuotingEscapesDoubleQuotes() {
         Database db = createDatabase("my\"db");
         when(glueService.getDatabases()).thenReturn(List.of(db));
@@ -316,4 +360,3 @@ class GlueViewDdlBuilderTest {
         Mockito.verify(glueService, Mockito.times(1)).getTables("shop");
     }
 }
-

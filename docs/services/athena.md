@@ -36,20 +36,23 @@ Floci emulates Amazon Athena with **real SQL execution** powered by a [floci-duc
 ## How it works
 
 1. **Lazy sidecar start**: On the first `StartQueryExecution` call, Floci checks for a local `floci/floci-duck:latest` image and starts the container. Subsequent queries reuse the running container.
-2. **Glue DDL injection**: Floci registers every Glue database as a DuckDB schema (`CREATE SCHEMA IF NOT EXISTS "<schema>"`) and creates qualified views (`CREATE OR REPLACE VIEW "<db>"."<table>"`) mapping each table to its S3 location via DuckDB's `read_parquet`, `read_json_auto`, or `read_csv_auto` functions, chosen based on the table's `InputFormat` or SerDe serialization library. In addition, tables in the query context database receive unqualified view aliases (`CREATE OR REPLACE VIEW "<table>"` in DuckDB's default `main` schema), so queries can reference tables as both `FROM db.table` and `FROM table`.
+2. **Glue DDL injection**: Floci registers every Glue database as a DuckDB schema (`CREATE SCHEMA IF NOT EXISTS "<schema>"`) and creates qualified views (`CREATE OR REPLACE VIEW "<db>"."<table>"`) over each table. Iceberg tables use `iceberg_scan` with their current Glue `metadata_location`. Other tables map their S3 location through DuckDB's `read_parquet`, `read_json_auto`, or `read_csv_auto` functions, chosen from the table's `InputFormat` or SerDe serialization library. Tables in the query context database also receive unqualified view aliases (`CREATE OR REPLACE VIEW "<table>"` in DuckDB's default `main` schema), so queries can reference tables as both `FROM db.table` and `FROM table`.
 3. **Query execution**: The user's SQL is wrapped in `COPY (...) TO 's3://...' (FORMAT CSV, HEADER)` and executed. Results are written directly to the output S3 path.
 4. **Results retrieval**: `GetQueryResults` reads the CSV back from S3 and returns it in the standard Athena `ResultSet` shape.
 
 ## Format inference
 
-The DuckDB read function is chosen from the Glue table's `StorageDescriptor`:
+The DuckDB read function is chosen from the Glue table metadata:
 
 | Condition | Read function |
 |---|---|
+| `Parameters.table_type` is `ICEBERG` and `Parameters.metadata_location` is present | `iceberg_scan` on the current metadata JSON file |
 | `InputFormat` or `SerializationLibrary` contains `parquet` | `read_parquet` |
 | `InputFormat` or `SerializationLibrary` contains `json` | `read_json_auto` |
 | `InputFormat` contains `hive` | `read_json_auto` |
 | Anything else | `read_csv_auto` |
+
+Iceberg tables without a `metadata_location` are not registered as DuckDB views. This avoids silently reading every physical data file under the table location and returning files that are not part of the current snapshot.
 
 ## Configuration
 

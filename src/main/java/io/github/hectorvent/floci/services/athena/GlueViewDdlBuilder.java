@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 @ApplicationScoped
@@ -77,17 +78,29 @@ public class GlueViewDdlBuilder {
                 if (t.getName() == null || t.getName().isBlank()) {
                     continue;
                 }
-                if (t.getStorageDescriptor() == null
-                        || t.getStorageDescriptor().getLocation() == null
-                        || t.getStorageDescriptor().getLocation().isBlank()) {
-                    continue;
+                String sourceExpression;
+                if (isIcebergTable(t)) {
+                    String metadataLocation = icebergMetadataLocation(t);
+                    if (metadataLocation == null || metadataLocation.isBlank()) {
+                        LOG.debugv("skip Iceberg table {0}.{1}: metadata_location is missing",
+                                schemaOrNull, t.getName());
+                        continue;
+                    }
+                    sourceExpression = icebergReadExpression(metadataLocation);
+                } else {
+                    if (t.getStorageDescriptor() == null
+                            || t.getStorageDescriptor().getLocation() == null
+                            || t.getStorageDescriptor().getLocation().isBlank()) {
+                        continue;
+                    }
+                    String location = t.getStorageDescriptor().getLocation();
+                    String normalizedLocation = location.endsWith("/")
+                            ? location.substring(0, location.length() - 1)
+                            : location;
+                    String readFn = inferReadFunction(t);
+                    String readPath = PartitionProjection.readPath(t, normalizedLocation);
+                    sourceExpression = readExpression(readFn, readPath);
                 }
-                String location = t.getStorageDescriptor().getLocation();
-                String normalizedLocation = location.endsWith("/")
-                        ? location.substring(0, location.length() - 1)
-                        : location;
-                String readFn = inferReadFunction(t);
-                String readPath = PartitionProjection.readPath(t, normalizedLocation);
                 String target = qualified
                         ? quote(schemaOrNull) + "." + quote(t.getName())
                         : quote(t.getName());
@@ -96,12 +109,26 @@ public class GlueViewDdlBuilder {
                   .append(" AS SELECT ")
                   .append(buildProjection(t))
                   .append(" FROM ")
-                  .append(readExpression(readFn, readPath))
+                  .append(sourceExpression)
                   .append(";\n");
             } catch (Exception e) {
                 LOG.debugv("skip Glue table {0}.{1}: {2}", schemaOrNull, t != null ? t.getName() : "unknown", e.getMessage());
             }
         }
+    }
+
+    static boolean isIcebergTable(Table table) {
+        Map<String, String> parameters = table != null ? table.getParameters() : null;
+        return parameters != null && "ICEBERG".equalsIgnoreCase(parameters.get("table_type"));
+    }
+
+    static String icebergMetadataLocation(Table table) {
+        Map<String, String> parameters = table != null ? table.getParameters() : null;
+        return parameters != null ? parameters.get("metadata_location") : null;
+    }
+
+    static String icebergReadExpression(String metadataLocation) {
+        return "iceberg_scan('" + metadataLocation.replace("'", "''") + "')";
     }
 
     /**
