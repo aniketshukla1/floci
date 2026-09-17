@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageBackedMap;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.autoscaling.model.*;
@@ -64,6 +65,7 @@ public class AutoScalingService {
     private Map<String, LaunchConfiguration> launchConfigs = new ConcurrentHashMap<>();
     private Map<String, AutoScalingGroup> groups = new ConcurrentHashMap<>();
     private final Map<String, Object> groupLocks = new ConcurrentHashMap<>();
+    private AccountAwareStorageBackend<AutoScalingGroup> groupsStore;
     private Map<String, LifecycleHook> hooks = new ConcurrentHashMap<>();
     private Map<String, ScalingPolicy> policies = new ConcurrentHashMap<>();
     private Map<String, ScalingActivity> activities = new ConcurrentHashMap<>();
@@ -78,7 +80,9 @@ public class AutoScalingService {
             return;
         }
         this.launchConfigs = storageBacked("autoscaling-launch-configurations.json", new TypeReference<Map<String, LaunchConfiguration>>() {});
-        this.groups = storageBacked("autoscaling-groups.json", new TypeReference<Map<String, AutoScalingGroup>>() {});
+        this.groupsStore = storageFactory.create("autoscaling", "autoscaling-groups.json",
+                new TypeReference<Map<String, AutoScalingGroup>>() {});
+        this.groups = new StorageBackedMap<>(groupsStore);
         this.hooks = storageBacked("autoscaling-lifecycle-hooks.json", new TypeReference<Map<String, LifecycleHook>>() {});
         this.policies = storageBacked("autoscaling-policies.json", new TypeReference<Map<String, ScalingPolicy>>() {});
         this.activities = storageBacked("autoscaling-activities.json", new TypeReference<Map<String, ScalingActivity>>() {});
@@ -390,6 +394,15 @@ public class AutoScalingService {
 
     private Object lockFor(String key) {
         return groupLocks.computeIfAbsent(key, ignored -> new Object());
+    }
+
+    Set<String> autoScalingGroupAccountIds() {
+        if (groupsStore == null) {
+            return Set.of();
+        }
+        return groupsStore.scanAllAccountEntries(key -> true).stream()
+                .map(AccountAwareStorageBackend.AccountEntry::accountId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     public void setDesiredCapacity(String region, String name, int desiredCapacity) {
