@@ -49,7 +49,7 @@ class ElbClassicIntegrationTest {
                 .formParam("LoadBalancerName", LB)
                 .formParam("Scheme", "internet-facing")
                 .formParam("Subnets.member.1", subnetA())
-                .formParam("SecurityGroups.member.1", "sg-classic")
+                .formParam("SecurityGroups.member.1", Ec2Service.defaultSecurityGroupId("us-east-1"))
                 .formParam("Listeners.member.1.Protocol", "HTTP")
                 .formParam("Listeners.member.1.LoadBalancerPort", "80")
                 .formParam("Listeners.member.1.InstanceProtocol", "HTTP")
@@ -160,7 +160,13 @@ class ElbClassicIntegrationTest {
                         + ".LoadBalancerDescriptions.member.Subnets.member", equalTo(subnetA()))
                 .body("DescribeLoadBalancersResponse.DescribeLoadBalancersResult"
                         + ".LoadBalancerDescriptions.member.SecurityGroups.member",
-                        equalTo("sg-classic"))
+                        equalTo(Ec2Service.defaultSecurityGroupId("us-east-1")))
+                .body("DescribeLoadBalancersResponse.DescribeLoadBalancersResult"
+                        + ".LoadBalancerDescriptions.member.SourceSecurityGroup.OwnerAlias",
+                        equalTo("000000000000"))
+                .body("DescribeLoadBalancersResponse.DescribeLoadBalancersResult"
+                        + ".LoadBalancerDescriptions.member.SourceSecurityGroup.GroupName",
+                        equalTo("default"))
                 .body("DescribeLoadBalancersResponse.DescribeLoadBalancersResult"
                         + ".LoadBalancerDescriptions.member.ListenerDescriptions.member"
                         + ".Listener.InstancePort", equalTo("8080"))

@@ -3,10 +3,12 @@ package io.github.hectorvent.floci.services.elb;
 import com.fasterxml.jackson.core.type.TypeReference;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.dns.EmbeddedDnsServer;
 import io.github.hectorvent.floci.core.storage.StorageBackedMap;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
+import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.elb.model.ClassicHealthCheck;
 import io.github.hectorvent.floci.services.elb.model.ClassicListener;
@@ -53,6 +55,7 @@ public class ElbClassicService {
     private final ElbClassicHealthChecker healthChecker;
     private final StorageFactory storageFactory;
     private final EmulatorConfig config;
+    private final RegionResolver regionResolver;
 
     // region → load balancer name → record
     private Map<String, Map<String, ClassicLoadBalancer>> loadBalancers = new ConcurrentHashMap<>();
@@ -61,11 +64,13 @@ public class ElbClassicService {
     public ElbClassicService(Ec2Service ec2Service,
                              ElbClassicHealthChecker healthChecker,
                              StorageFactory storageFactory,
-                             EmulatorConfig config) {
+                             EmulatorConfig config,
+                             RegionResolver regionResolver) {
         this.ec2Service = ec2Service;
         this.healthChecker = healthChecker;
         this.storageFactory = storageFactory;
         this.config = config;
+        this.regionResolver = regionResolver;
     }
 
     @PostConstruct
@@ -138,6 +143,7 @@ public class ElbClassicService {
         lb.setCreatedTime(Instant.now());
         lb.setListeners(new ArrayList<>(listeners));
         lb.setSecurityGroups(securityGroups != null ? new ArrayList<>(securityGroups) : new ArrayList<>());
+        updateSourceSecurityGroup(region, lb);
         lb.setHealthCheck(ClassicHealthCheck.defaults());
         if (tags != null && !tags.isEmpty()) {
             lb.setTags(new LinkedHashMap<>(tags));
@@ -325,8 +331,24 @@ public class ElbClassicService {
     public List<String> applySecurityGroups(String region, String name, List<String> securityGroups) {
         ClassicLoadBalancer lb = requireLoadBalancer(region, name);
         lb.setSecurityGroups(new ArrayList<>(securityGroups));
+        updateSourceSecurityGroup(region, lb);
         persist(region);
         return List.copyOf(lb.getSecurityGroups());
+    }
+
+    private void updateSourceSecurityGroup(String region, ClassicLoadBalancer lb) {
+        lb.setSourceSecurityGroupOwnerAlias(null);
+        lb.setSourceSecurityGroupName(null);
+        if (lb.getSecurityGroups().isEmpty()) {
+            return;
+        }
+        List<SecurityGroup> groups = ec2Service.describeSecurityGroups(
+                region, List.of(lb.getSecurityGroups().getFirst()), List.of(), Map.of());
+        if (groups.isEmpty()) {
+            return;
+        }
+        lb.setSourceSecurityGroupOwnerAlias(regionResolver.getAccountId());
+        lb.setSourceSecurityGroupName(groups.getFirst().getGroupName());
     }
 
     public List<String> attachToSubnets(String region, String name, List<String> subnets) {

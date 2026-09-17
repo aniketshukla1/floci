@@ -1,7 +1,9 @@
 package io.github.hectorvent.floci.services.elb;
 
 import io.github.hectorvent.floci.core.common.AwsException;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
+import io.github.hectorvent.floci.services.ec2.model.SecurityGroup;
 import io.github.hectorvent.floci.services.ec2.model.Subnet;
 import io.github.hectorvent.floci.services.elb.model.ClassicHealthCheck;
 import io.github.hectorvent.floci.services.elb.model.ClassicListener;
@@ -37,11 +39,15 @@ class ElbClassicServiceTest {
     @Mock
     ElbClassicHealthChecker healthChecker;
 
+    @Mock
+    RegionResolver regionResolver;
+
     private ElbClassicService service;
 
     @BeforeEach
     void setUp() {
-        service = new ElbClassicService(ec2Service, healthChecker, null, null);
+        service = new ElbClassicService(ec2Service, healthChecker, null, null, regionResolver);
+        lenient().when(regionResolver.getAccountId()).thenReturn("000000000000");
         lenient().when(ec2Service.describeSubnets(anyString(), anyList(), any()))
                 .thenAnswer(invocation -> {
                     List<String> ids = invocation.getArgument(1);
@@ -82,6 +88,21 @@ class ElbClassicServiceTest {
         assertEquals(30, lb.getHealthCheck().getInterval());
         assertEquals(10, lb.getHealthCheck().getHealthyThreshold());
         verify(healthChecker).startMonitoring(lb);
+    }
+
+    @Test
+    void createRecordsTheAttachedSecurityGroupNameAndCallerAccount() {
+        SecurityGroup group = new SecurityGroup();
+        group.setGroupId("sg-1");
+        group.setGroupName("elb-sg");
+        when(ec2Service.describeSecurityGroups(REGION, List.of("sg-1"), List.of(), Map.of()))
+                .thenReturn(List.of(group));
+        when(regionResolver.getAccountId()).thenReturn("333333333333");
+
+        ClassicLoadBalancer lb = create("source-security-group");
+
+        assertEquals("333333333333", lb.getSourceSecurityGroupOwnerAlias());
+        assertEquals("elb-sg", lb.getSourceSecurityGroupName());
     }
 
     @Test
