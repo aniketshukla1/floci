@@ -4115,7 +4115,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         sg.setGroupName(groupName);
         sg.setDescription(description);
         sg.setVpcId(vpcId);
-        sg.setOwnerId(accountId);
+        sg.setOwnerId(callerAccountId());
         sg.setRegion(region);
         // Default egress all
         IpPermission egressAll = new IpPermission();
@@ -4275,7 +4275,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         SecurityGroupRule rule = new SecurityGroupRule();
         rule.setSecurityGroupRuleId("sgr-" + randomHex(17));
         rule.setGroupId(groupId);
-        rule.setGroupOwnerId(accountId);
+        rule.setGroupOwnerId(callerAccountId());
         rule.setEgress(egress);
         rule.setIpProtocol(perm.getIpProtocol());
         rule.setFromPort(perm.getFromPort());
@@ -4298,7 +4298,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         }
         for (UserIdGroupPair pair : perm.getUserIdGroupPairs()) {
             if (pair.getUserId() == null) {
-                pair.setUserId(accountId);
+                pair.setUserId(callerAccountId());
             }
             if (pair.getGroupId() == null && pair.getGroupName() != null) {
                 securityGroups.scan(k -> true).stream()
@@ -5005,7 +5005,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         image.setImageId("ami-" + randomHex(17));
         image.setName(name);
         image.setDescription(description != null ? description : name);
-        image.setOwnerId(accountId);
+        image.setOwnerId(callerAccountId());
         image.setImageOwnerAlias(null);
         image.setPublic(false);
         image.setArchitecture(architecture != null ? architecture : "x86_64");
@@ -5708,7 +5708,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         }
         String ownerId = image.getOwnerId();
         return owners.contains(ownerId)
-                || (owners.contains("self") && accountId.equals(ownerId))
+                || (owners.contains("self") && callerAccountId().equals(ownerId))
                 || (owners.contains("amazon") && AMAZON_OWNER_ID.equals(ownerId))
                 || (owners.contains("aws-marketplace") && AWS_MARKETPLACE_OWNER_ID.equals(ownerId));
     }
@@ -5770,7 +5770,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         EbsBlockDevice ebs = mapping.getEbs();
         Snapshot snapshot = new Snapshot();
         snapshot.setSnapshotId(snapshotId);
-        snapshot.setOwnerId(accountId);
+        snapshot.setOwnerId(image.getOwnerId());
         snapshot.setState("completed");
         snapshot.setDescription("Created by RegisterImage for " + image.getName());
         snapshot.setStartTime(Instant.now());
@@ -5794,10 +5794,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
 
     private boolean matchesSnapshotOwners(Snapshot snapshot, List<String> ownerIds) {
         if (ownerIds == null || ownerIds.isEmpty()) {
-            return accountId.equals(snapshot.getOwnerId());
+            return callerAccountId().equals(snapshot.getOwnerId());
         }
         return ownerIds.contains(snapshot.getOwnerId())
-                || ownerIds.contains("self") && accountId.equals(snapshot.getOwnerId());
+                || ownerIds.contains("self") && callerAccountId().equals(snapshot.getOwnerId());
     }
 
     private boolean matchesSnapshotFilter(Snapshot snapshot, String name, List<String> values) {
