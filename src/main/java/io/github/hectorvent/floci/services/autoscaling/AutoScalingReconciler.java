@@ -333,17 +333,22 @@ public class AutoScalingReconciler {
                 asgInst.setLaunchTemplateVersion(launchSource.launchTemplateVersion());
                 asgInst.setInstanceType(launchSource.instanceType());
                 asg.getInstances().add(asgInst);
-                launchedInstanceIds.add(ec2Inst.getInstanceId());
+                if (ec2Inst.getInstanceId() != null) {
+                    launchedInstanceIds.add(ec2Inst.getInstanceId());
+                }
                 LOG.infov("ASG {0}: launched instance {1} (Pending)",
                         asg.getAutoScalingGroupName(), ec2Inst.getInstanceId());
             }
             if (!asgService.saveAutoScalingGroupIfPresent(asg) && !launchedInstanceIds.isEmpty()) {
+                asg.getInstances().removeIf(instance -> launchedInstanceIds.contains(instance.getInstanceId()));
                 try {
                     ec2Service.terminateInstances(asg.getRegion(), launchedInstanceIds);
-                } catch (Exception e) {
-                    LOG.warnv("ASG {0}: failed to clean up instances {1} after group deletion: {2}",
-                            asg.getAutoScalingGroupName(), launchedInstanceIds, e.getMessage());
+                } catch (Exception cleanupFailure) {
+                    LOG.warnv("ASG {0}: failed to terminate instance(s) launched during deletion {1}: {2}",
+                            asg.getAutoScalingGroupName(), launchedInstanceIds, cleanupFailure.getMessage());
                 }
+                LOG.infov("ASG {0}: discarded instance(s) launched during group deletion {1}",
+                        asg.getAutoScalingGroupName(), launchedInstanceIds);
             }
         } catch (Exception e) {
             LOG.warnv("ASG {0}: failed to launch instances: {1}",

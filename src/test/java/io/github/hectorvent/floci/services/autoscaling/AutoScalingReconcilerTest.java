@@ -27,6 +27,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.anyList;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
@@ -127,6 +128,7 @@ class AutoScalingReconcilerTest {
         when(ec2Service.runInstances(eq("us-east-1"), eq("ami-version-1"), eq("t3.micro"),
                 eq(1), eq(1), eq(null), eq(List.of()), eq(null), eq(null),
                 anyList(), eq(null), eq("arn:aws:iam::000000000000:instance-profile/app-profile"), eq(null))).thenReturn(reservation);
+        when(asgService.saveAutoScalingGroupIfPresent(asg)).thenReturn(true);
 
         reconciler.reconcile(asg);
 
@@ -230,6 +232,7 @@ class AutoScalingReconcilerTest {
         when(ec2Service.runInstances(eq("us-east-1"), eq("ami-lc"), eq("t3.micro"),
                 eq(1), eq(1), eq(null), anyList(), eq(null), eq(null),
                 anyList(), eq(null), eq(null), eq(associatePublicIp))).thenReturn(reservation);
+        when(asgService.saveAutoScalingGroupIfPresent(asg)).thenReturn(true);
 
         reconciler.reconcile(asg);
 
@@ -268,6 +271,7 @@ class AutoScalingReconcilerTest {
         when(ec2Service.runInstances(eq("us-east-1"), eq("ami-version-7"), eq("t3.micro"),
                 eq(1), eq(1), eq(null), eq(List.of()), eq(null), eq(null),
                 eq(List.of()), eq(null), eq(null), eq(null))).thenReturn(reservation);
+        when(asgService.saveAutoScalingGroupIfPresent(asg)).thenReturn(true);
 
         reconciler.reconcile(asg);
 
@@ -317,6 +321,7 @@ class AutoScalingReconcilerTest {
         when(ec2Service.runInstances(eq("us-east-1"), eq("ami-version-3"), eq("t3.small"),
                 eq(1), eq(1), eq(null), eq(List.of()), eq(null), eq(null),
                 eq(List.of()), eq(null), eq(null), eq(null))).thenReturn(reservation);
+        when(asgService.saveAutoScalingGroupIfPresent(asg)).thenReturn(true);
 
         reconciler.reconcile(asg);
 
@@ -533,6 +538,39 @@ class AutoScalingReconcilerTest {
 
         assertEquals(0, asg.getInstances().size());
         verify(asgService).completeInstanceRefreshIfSettled("us-east-1", "app-asg");
+    }
+
+    @Test
+    void scaleOutTerminatesAnInstanceWhenTheGroupWasDeletedBeforeWriteBack() {
+        AutoScalingService asgService = mock(AutoScalingService.class);
+        Ec2Service ec2Service = mock(Ec2Service.class);
+        AutoScalingReconciler reconciler =
+                new AutoScalingReconciler(asgService, ec2Service, mock(ElbV2Service.class));
+        AutoScalingGroup asg = new AutoScalingGroup();
+        asg.setRegion("us-east-1");
+        asg.setAutoScalingGroupName("deleted-asg");
+        asg.setDesiredCapacity(1);
+        asg.setLaunchConfigurationName("app-lc");
+
+        LaunchConfiguration launchConfiguration = new LaunchConfiguration();
+        launchConfiguration.setLaunchConfigurationName("app-lc");
+        launchConfiguration.setImageId("ami-lc");
+        launchConfiguration.setInstanceType("t3.micro");
+        when(asgService.describeLaunchConfigurations("us-east-1", List.of("app-lc")))
+                .thenReturn(List.of(launchConfiguration));
+        Instance instance = new Instance();
+        instance.setInstanceId("i-orphan-candidate");
+        Reservation reservation = new Reservation();
+        reservation.setInstances(List.of(instance));
+        when(ec2Service.runInstances(eq("us-east-1"), eq("ami-lc"), eq("t3.micro"),
+                eq(1), eq(1), eq(null), anyList(), eq(null), eq(null),
+                anyList(), eq(null), eq(null), eq(null))).thenReturn(reservation);
+        when(asgService.saveAutoScalingGroupIfPresent(asg)).thenReturn(false);
+
+        reconciler.reconcile(asg);
+
+        assertTrue(asg.getInstances().isEmpty());
+        verify(ec2Service).terminateInstances("us-east-1", List.of("i-orphan-candidate"));
     }
 
     @Test

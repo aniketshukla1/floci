@@ -70,6 +70,8 @@ public class AutoScalingService {
     private Map<String, InstanceRefresh> instanceRefreshes = new ConcurrentHashMap<>();
     private Map<String, ScheduledAction> scheduledActions = new ConcurrentHashMap<>();
     private Map<String, WarmPoolConfiguration> warmPools = new ConcurrentHashMap<>();
+    private final Object groupMutationLock = new Object();
+    private final Set<String> deletingGroupKeys = new HashSet<>();
 
     @PostConstruct
     void initializeStorage()
@@ -330,16 +332,23 @@ public class AutoScalingService {
 
     public void deleteAutoScalingGroup(String region, String name, boolean forceDelete) {
         String key = asgKey(region, name);
-        synchronized (lockFor(key)) {
-            AutoScalingGroup asg = requireGroup(region, name);
-            List<AsgInstance> active = asg.getInstances().stream()
-                    .filter(i -> !"Terminated".equals(i.getLifecycleState()))
-                    .collect(Collectors.toList());
-            if (!active.isEmpty() && !forceDelete) {
-                throw new AwsException("ResourceInUse",
-                        "Auto Scaling group '" + name + "' has " + active.size()
-                                + " instance(s). Set ForceDelete=true to delete anyway.", 400);
+        AutoScalingGroup asg;
+        List<AsgInstance> active;
+        synchronized (groupMutationLock) {
+            synchronized (lockFor(key)) {
+                asg = requireGroup(region, name);
+                active = asg.getInstances().stream()
+                        .filter(i -> !"Terminated".equals(i.getLifecycleState()))
+                        .collect(Collectors.toList());
+                if (!active.isEmpty() && !forceDelete) {
+                    throw new AwsException("ResourceInUse",
+                            "Auto Scaling group '" + name + "' has " + active.size()
+                                    + " instance(s). Set ForceDelete=true to delete anyway.", 400);
+                }
+                deletingGroupKeys.add(key);
             }
+        }
+        try {
             if (forceDelete && ec2Service != null && !active.isEmpty()) {
                 active.stream()
                         .map(AsgInstance::getInstanceId)
@@ -353,15 +362,21 @@ public class AutoScalingService {
                             }
                         });
             }
-            groups.remove(key);
+            synchronized (lockFor(key)) {
+                groups.remove(key);
+            }
+            // clean up associated hooks and policies
+            hooks.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
+            policies.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
+            instanceRefreshes.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
+            scheduledActions.entrySet().removeIf(e -> region.equals(e.getValue().getRegion())
+                    && name.equals(e.getValue().getAutoScalingGroupName()));
+            warmPools.remove(warmPoolKey(region, name));
+        } finally {
+            synchronized (groupMutationLock) {
+                deletingGroupKeys.remove(key);
+            }
         }
-        // clean up associated hooks and policies
-        hooks.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
-        policies.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
-        instanceRefreshes.entrySet().removeIf(e -> e.getValue().getAutoScalingGroupName().equals(name));
-        scheduledActions.entrySet().removeIf(e -> region.equals(e.getValue().getRegion())
-                && name.equals(e.getValue().getAutoScalingGroupName()));
-        warmPools.remove(warmPoolKey(region, name));
     }
 
     public List<AutoScalingGroup> describeAutoScalingGroups(String region, List<String> names) {
@@ -378,13 +393,18 @@ public class AutoScalingService {
 
     public boolean saveAutoScalingGroupIfPresent(AutoScalingGroup asg) {
         String key = asgKey(asg.getRegion(), asg.getAutoScalingGroupName());
-        synchronized (lockFor(key)) {
-            AutoScalingGroup current = groups.get(key);
-            if (current == asg) {
-                groups.put(key, asg);
-                return true;
+        synchronized (groupMutationLock) {
+            if (deletingGroupKeys.contains(key)) {
+                return false;
             }
-            return false;
+            synchronized (lockFor(key)) {
+                AutoScalingGroup current = groups.get(key);
+                if (current == asg) {
+                    groups.put(key, asg);
+                    return true;
+                }
+                return false;
+            }
         }
     }
 
