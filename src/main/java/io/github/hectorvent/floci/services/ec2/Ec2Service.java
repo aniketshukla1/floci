@@ -5675,6 +5675,9 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
 
     private boolean matchesImageFilter(Ec2ImageCatalog.CatalogImage catalogImage, String name, List<String> values) {
         Image image = catalogImage.toImage();
+        if (isTagFilter(name)) {
+            return matchesFilter(image, name, values, image.getRegion());
+        }
         return switch (name) {
             case "architecture" -> matchesFilterValue(values, image.getArchitecture());
             case "hypervisor" -> matchesFilterValue(values, image.getHypervisor());
@@ -5743,6 +5746,9 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
     }
 
     private boolean matchesRegisteredImageFilter(Image image, String name, List<String> values) {
+        if (isTagFilter(name)) {
+            return matchesFilter(image, name, values, image.getRegion());
+        }
         return switch (name) {
             case "architecture" -> matchesFilterValue(values, image.getArchitecture());
             case "block-device-mapping.snapshot-id" -> image.getBlockDeviceMappings().stream()
@@ -5764,6 +5770,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
             case "virtualization-type" -> matchesFilterValue(values, image.getVirtualizationType());
             default -> true;
         };
+    }
+
+    private boolean isTagFilter(String name) {
+        return name.startsWith("tag:") || "tag-key".equals(name) || "tag-value".equals(name);
     }
 
     private Snapshot snapshotFrom(String region, String snapshotId, Image image, BlockDeviceMapping mapping) {
@@ -5923,6 +5933,8 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         if (rt != null) { rt.setTags(new ArrayList<>(tagList)); routeTables.put(storeKey, rt); return; }
         KeyPair kp = keyPairs.get(storeKey).orElse(null);
         if (kp != null) { kp.setTags(new ArrayList<>(tagList)); keyPairs.put(storeKey, kp); return; }
+        Image image = registeredImages.get(storeKey).orElse(null);
+        if (image != null) { image.setTags(new ArrayList<>(tagList)); registeredImages.put(storeKey, image); return; }
         LaunchTemplate lt = launchTemplates.get(storeKey).orElse(null);
         if (lt != null) { lt.setTags(new ArrayList<>(tagList)); launchTemplates.put(storeKey, lt); return; }
         VpcEndpoint endpoint = vpcEndpoints.get(storeKey).orElse(null);
@@ -7545,6 +7557,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
         if (resource instanceof InternetGateway igw) return igw.getTags();
         if (resource instanceof RouteTable rt) return rt.getTags();
         if (resource instanceof KeyPair kp) return kp.getTags();
+        if (resource instanceof Image image) return image.getTags();
         if (resource instanceof Address addr) return addr.getTags();
         if (resource instanceof Volume vol) return vol.getTags();
         if (resource instanceof NetworkInterface ni) return ni.getTagSet();
