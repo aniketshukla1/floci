@@ -16,7 +16,7 @@ class Ec2ImageTagIntegrationTest {
             "AWS4-HMAC-SHA256 Credential=111111111111/20260917/us-east-1/ec2/aws4_request";
 
     @Test
-    void returnsImageTagsAndAppliesTagFilters() {
+    void returnsImageTagsAndAppliesSupportedTagFilters() {
         String suffix = UUID.randomUUID().toString();
         String tagValue = "Packer-" + suffix;
         String imageId = given()
@@ -70,6 +70,29 @@ class Ec2ImageTagIntegrationTest {
             .formParam("Action", "DescribeImages")
             .formParam("Filter.1.Name", "tag:Origin")
             .formParam("Filter.1.Value.1", "DOES-NOT-EXIST")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeImagesResponse.imagesSet.item.size()", equalTo(0));
+
+        given()
+            .formParam("Action", "DescribeImages")
+            .formParam("Filter.1.Name", "tag-key")
+            .formParam("Filter.1.Value.1", "Origin")
+            .header("Authorization", AUTH_HEADER)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("DescribeImagesResponse.imagesSet.item.size()", equalTo(1))
+            .body("DescribeImagesResponse.imagesSet.item.imageId", equalTo(imageId));
+
+        given()
+            .formParam("Action", "DescribeImages")
+            .formParam("Filter.1.Name", "tag-key")
+            .formParam("Filter.1.Value.1", "DoesNotExist")
             .header("Authorization", AUTH_HEADER)
         .when()
             .post("/")

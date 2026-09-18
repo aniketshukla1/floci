@@ -5773,7 +5773,7 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
     }
 
     private boolean isTagFilter(String name) {
-        return name.startsWith("tag:") || "tag-key".equals(name) || "tag-value".equals(name);
+        return name.startsWith("tag:") || "tag-key".equals(name);
     }
 
     private Snapshot snapshotFrom(String region, String snapshotId, Image image, BlockDeviceMapping mapping) {
