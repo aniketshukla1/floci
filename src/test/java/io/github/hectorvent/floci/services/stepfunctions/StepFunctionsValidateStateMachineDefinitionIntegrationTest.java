@@ -466,17 +466,35 @@ class StepFunctionsValidateStateMachineDefinitionIntegrationTest {
 
     @Test
     void mapNumberLiteralsEnforcePercentageAndReaderMaximums() {
-        String def = mapDefinition("", "\"ToleratedFailurePercentage\":100.1,"
+        String def = mapDefinition("", "\"ItemBatcher\":{\"MaxInputBytesPerBatch\":262145},"
+                + "\"ToleratedFailurePercentage\":100.1,"
                 + "\"ItemReader\":{\"ReaderConfig\":{\"MaxItems\":100000001}},");
 
         validateDefinition(def)
                 .then().statusCode(200)
                 .body("result", equalTo("FAIL"))
-                .body("diagnostics", hasSize(2))
-                .body("diagnostics[0].message", equalTo("Maximum value is 100"))
-                .body("diagnostics[0].location", equalTo("/States/M/ToleratedFailurePercentage"))
-                .body("diagnostics[1].message", equalTo("Maximum value is 100000000"))
-                .body("diagnostics[1].location", equalTo("/States/M/ItemReader/ReaderConfig/MaxItems"));
+                .body("diagnostics", hasSize(3))
+                .body("diagnostics[0].message", equalTo("Maximum value is 262144"))
+                .body("diagnostics[0].location", equalTo("/States/M/ItemBatcher/MaxInputBytesPerBatch"))
+                .body("diagnostics[1].message", equalTo("Maximum value is 100"))
+                .body("diagnostics[1].location", equalTo("/States/M/ToleratedFailurePercentage"))
+                .body("diagnostics[2].message", equalTo("Maximum value is 100000000"))
+                .body("diagnostics[2].location", equalTo("/States/M/ItemReader/ReaderConfig/MaxItems"));
+    }
+
+    @Test
+    void mapInputBytesAcceptsDocumentedMaximumAndReferencePath() {
+        String maximum = mapDefinition("", "\"ItemBatcher\":{\"MaxInputBytesPerBatch\":262144},");
+        validateDefinition(maximum)
+                .then().statusCode(200)
+                .body("result", equalTo("OK"))
+                .body("diagnostics", hasSize(0));
+
+        String path = mapDefinition("", "\"ItemBatcher\":{\"MaxInputBytesPerBatchPath\":\"$.bytes\"},");
+        validateDefinition(path)
+                .then().statusCode(200)
+                .body("result", equalTo("OK"))
+                .body("diagnostics", hasSize(0));
     }
 
     @Test

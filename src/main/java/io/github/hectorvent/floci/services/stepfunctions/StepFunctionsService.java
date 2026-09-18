@@ -2611,7 +2611,7 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
             validateMapNumberField(statePath + "/ItemBatcher", itemBatcher, jsonata,
                     statePath, "MaxItemsPerBatch", "MaxItemsPerBatchPath", false, null, errors);
             validateMapNumberField(statePath + "/ItemBatcher", itemBatcher, jsonata,
-                    statePath, "MaxInputBytesPerBatch", "MaxInputBytesPerBatchPath", false, null, errors);
+                    statePath, "MaxInputBytesPerBatch", "MaxInputBytesPerBatchPath", false, 262_144, errors);
         }
 
         validateMapNumberField(statePath, stateDef, jsonata,
