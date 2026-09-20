@@ -277,7 +277,7 @@ public class EcsContainerManager {
                             LOG.warnv("Publishing ECS awsvpc container port {0} on host port {1}; "
                                             + "multiple tasks cannot share this host port",
                                     pm.containerPort(), hostPort);
-                            specBuilder.withPortBinding(pm.containerPort(), hostPort);
+                            specBuilder.withLoopbackPortBinding(pm.containerPort(), hostPort);
                         } else if (!awsvpc && pm.hostPort() > 0) {
                             specBuilder.withPortBinding(pm.containerPort(), pm.hostPort());
                         } else if (publishDynamicPortsToHost) {

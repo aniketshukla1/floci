@@ -201,7 +201,7 @@ class EcsContainerManagerPortMappingsTest {
 
         startWith(List.of(new PortMapping(15_672)), NetworkMode.awsvpc);
 
-        verify(builder, times(1)).withPortBinding(15_672, 15_672);
+        verify(builder, times(1)).withLoopbackPortBinding(15_672, 15_672);
         verify(builder, never()).withExposedPort(15_672);
         verify(builder, never()).withDynamicPort(15_672);
     }
@@ -213,7 +213,7 @@ class EcsContainerManagerPortMappingsTest {
 
         startWith(List.of(new PortMapping(8080, 18_080, "tcp")), NetworkMode.awsvpc);
 
-        verify(builder, times(1)).withPortBinding(8080, 18_080);
+        verify(builder, times(1)).withLoopbackPortBinding(8080, 18_080);
     }
 
     @Test
