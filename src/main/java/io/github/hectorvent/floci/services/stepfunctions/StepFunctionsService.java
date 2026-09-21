@@ -30,6 +30,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -2659,7 +2660,7 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
                         + (decimal ? "0.0" : "0") + MARKER_PAYLOAD_SEPARATOR
                         + containerPath + "/" + literalField);
             } else if (numeric && maximum != null
-                    && value.decimalValue().compareTo(java.math.BigDecimal.valueOf(maximum)) > 0) {
+                    && value.decimalValue().compareTo(BigDecimal.valueOf(maximum)) > 0) {
                 errors.add(EXPLICIT_LOCATION_MARKER + "Maximum value is " + maximum
                         + MARKER_PAYLOAD_SEPARATOR + containerPath + "/" + literalField);
             }
