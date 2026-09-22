@@ -80,6 +80,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -662,7 +663,7 @@ public class AslExecutor {
             case "Task" -> executeTaskState(name, stateDef, input, chain, sm,
                     jsonata, context, variables, executionDeadlineNanos);
             case "Choice" -> executeChoiceState(stateDef, input, jsonata, context, variables);
-            case "Wait" -> executeWaitState(stateDef, input, jsonata, context, variables, executionDeadlineNanos);
+            case "Wait" -> executeWaitState(name, stateDef, input, jsonata, context, variables, executionDeadlineNanos);
             case "Succeed" -> executeSucceedState(stateDef, input, jsonata, context, variables);
             case "Fail" -> executeFail(stateDef, input, jsonata, context, variables);
             case "Parallel" -> executeParallelState(name, stateDef, input, chain, sm, jsonata,
@@ -2096,7 +2097,7 @@ public class AslExecutor {
         }
     }
 
-    private StateResult executeWaitState(JsonNode stateDef, JsonNode input, boolean jsonata, JsonNode context,
+    private StateResult executeWaitState(String name, JsonNode stateDef, JsonNode input, boolean jsonata, JsonNode context,
                                          ObjectNode variables, long executionDeadlineNanos)
             throws InterruptedException {
         int seconds = 0;
@@ -2112,6 +2113,16 @@ public class AslExecutor {
                 } else {
                     seconds = Math.min(secondsNode.asInt(), MAX_WAIT_SECONDS);
                 }
+            } else if (stateDef.has("Timestamp")) {
+                JsonNode timestampNode = stateDef.get("Timestamp");
+                String timestampText = timestampNode.asText();
+                if (timestampNode.isTextual() && JsonataEvaluator.isExpression(timestampText)) {
+                    JsonNode statesVar = buildStatesVar(input, null, context);
+                    JsonNode result = jsonataEvaluator.evaluateField(
+                            timestampText, "Timestamp", statesVar, variables);
+                    timestampText = result.asText();
+                }
+                seconds = secondsUntilTimestamp(timestampText, name);
             }
         } else {
             effectiveInput = applyInputPath(stateDef, input);
@@ -2120,6 +2131,11 @@ public class AslExecutor {
             } else if (stateDef.has("SecondsPath")) {
                 JsonNode val = resolvePath(stateDef.get("SecondsPath").asText(), effectiveInput);
                 seconds = Math.min(val.asInt(), MAX_WAIT_SECONDS);
+            } else if (stateDef.has("Timestamp")) {
+                seconds = secondsUntilTimestamp(stateDef.get("Timestamp").asText(), name);
+            } else if (stateDef.has("TimestampPath")) {
+                JsonNode val = resolvePath(stateDef.get("TimestampPath").asText(), effectiveInput);
+                seconds = secondsUntilTimestamp(val.asText(), name);
             }
         }
         // Timestamp and TimestampPath: wait until that time or now, whichever is sooner
@@ -2132,6 +2148,23 @@ public class AslExecutor {
         }
         JsonNode output = applyOutputPath(stateDef, input, effectiveInput);
         return new StateResult(output, stateDef.path("Next").asText(null));
+    }
+
+    /**
+     * Seconds to wait for a Wait state's {@code Timestamp}: the duration until that time, or
+     * zero when it is already past. Capped at {@code MAX_WAIT_SECONDS} like every other Wait
+     * pause so emulated runs stay fast.
+     */
+    private int secondsUntilTimestamp(String timestampText, String stateName) {
+        Instant target;
+        try {
+            target = Instant.parse(timestampText);
+        } catch (Exception e) {
+            throw new FailStateException("States.Runtime",
+                    "Invalid timestamp '" + timestampText + "' in Wait state '" + stateName + "'.");
+        }
+        long waitSeconds = Duration.between(Instant.now(), target).getSeconds();
+        return (int) Math.min(Math.max(waitSeconds, 0), MAX_WAIT_SECONDS);
     }
 
     /**

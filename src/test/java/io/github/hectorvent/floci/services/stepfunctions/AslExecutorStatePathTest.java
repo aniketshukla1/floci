@@ -123,6 +123,26 @@ class AslExecutorStatePathTest {
     }
 
     @Test
+    void waitPastTimestampCompletesWithoutWaiting() throws Exception {
+        assertOutput("""
+                {"StartAt":"Wait","States":{
+                  "Wait":{"Type":"Wait","Timestamp":"2000-01-01T00:00:00Z","End":true}}}
+                """,
+                "{\"value\":1}",
+                "{\"value\":1}");
+    }
+
+    @Test
+    void waitTimestampPathResolvesFromInput() throws Exception {
+        assertOutput("""
+                {"StartAt":"Wait","States":{
+                  "Wait":{"Type":"Wait","TimestampPath":"$.wake","End":true}}}
+                """,
+                "{\"wake\":\"2000-01-01T00:00:00Z\",\"value\":1}",
+                "{\"wake\":\"2000-01-01T00:00:00Z\",\"value\":1}");
+    }
+
+    @Test
     void passOutputPathSupportsFilterExpressions() throws Exception {
         assertOutput("""
                 {"StartAt":"Pass","States":{
