@@ -1384,4 +1384,57 @@ class KinesisIntegrationTest {
             .statusCode(400)
             .body("__type", equalTo("ResourceNotFoundException"));
     }
+
+    @Test
+    @Order(68)
+    void listShardsPaginatesWithNextToken() {
+        given()
+            .header("X-Amz-Target", "Kinesis_20131202.CreateStream")
+            .contentType(KINESIS_CONTENT_TYPE)
+            .body("""
+                {"StreamName": "list-shards-pages", "ShardCount": 3}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        String token =
+            given()
+                .header("X-Amz-Target", "Kinesis_20131202.ListShards")
+                .contentType(KINESIS_CONTENT_TYPE)
+                .body("""
+                    {"StreamName": "list-shards-pages", "MaxResults": 2}
+                    """)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body("Shards.size()", equalTo(2))
+                .body("NextToken", notNullValue())
+            .extract()
+                .path("NextToken");
+
+        given()
+            .header("X-Amz-Target", "Kinesis_20131202.ListShards")
+            .contentType(KINESIS_CONTENT_TYPE)
+            .body("{\"StreamName\": \"list-shards-pages\", \"MaxResults\": 2, \"NextToken\": \"" + token + "\"}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body("Shards.size()", equalTo(1))
+            .body("Shards[0].ShardId", equalTo("shardId-000000000002"));
+
+        given()
+            .header("X-Amz-Target", "Kinesis_20131202.ListShards")
+            .contentType(KINESIS_CONTENT_TYPE)
+            .body("""
+                {"StreamName": "list-shards-pages", "MaxResults": 2, "NextToken": "not-a-token!!"}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400);
+    }
 }

@@ -709,7 +709,15 @@ public class KinesisJsonHandler {
         }
 
         int maxResults = request.has("MaxResults") ? request.path("MaxResults").asInt(1000) : 1000;
-        List<KinesisShard> page = paginateShards(shards, maxResults);
+        int startIndex = 0;
+        if (request.has("NextToken") && !request.path("NextToken").isNull()) {
+            startIndex = parseListShardsToken(request.path("NextToken").asText());
+        }
+        List<KinesisShard> snapshot = List.copyOf(shards);
+        if (startIndex < 0 || startIndex > snapshot.size()) {
+            throw new AwsException("InvalidArgumentException", "Invalid NextToken.", 400);
+        }
+        List<KinesisShard> page = paginateShards(snapshot, startIndex, maxResults);
 
         ObjectNode response = objectMapper.createObjectNode();
         ArrayNode shardsArray = response.putArray("Shards");
@@ -732,7 +740,12 @@ public class KinesisJsonHandler {
             }
         }
 
-        response.putNull("NextToken");
+        int endIndex = startIndex + page.size();
+        if (endIndex < snapshot.size()) {
+            response.put("NextToken", encodeListShardsToken(endIndex));
+        } else {
+            response.putNull("NextToken");
+        }
 
         return Response.ok(response).build();
     }
@@ -747,6 +760,26 @@ public class KinesisJsonHandler {
     static List<KinesisShard> paginateShards(List<KinesisShard> shards, int maxResults) {
         List<KinesisShard> snapshot = List.copyOf(shards);
         return snapshot.size() > maxResults ? snapshot.subList(0, maxResults) : snapshot;
+    }
+
+    static List<KinesisShard> paginateShards(List<KinesisShard> shards, int startIndex, int maxResults) {
+        List<KinesisShard> snapshot = List.copyOf(shards);
+        int endIndex = Math.min(startIndex + maxResults, snapshot.size());
+        return snapshot.subList(startIndex, endIndex);
+    }
+
+    static String encodeListShardsToken(int startIndex) {
+        return Base64.getEncoder().encodeToString(
+                Integer.toString(startIndex).getBytes(StandardCharsets.UTF_8));
+    }
+
+    static int parseListShardsToken(String token) {
+        try {
+            String decoded = new String(Base64.getDecoder().decode(token), StandardCharsets.UTF_8);
+            return Integer.parseInt(decoded);
+        } catch (IllegalArgumentException e) {
+            throw new AwsException("InvalidArgumentException", "Invalid NextToken.", 400);
+        }
     }
 
     private Response handleEnableEnhancedMonitoring(JsonNode request, String region) {
