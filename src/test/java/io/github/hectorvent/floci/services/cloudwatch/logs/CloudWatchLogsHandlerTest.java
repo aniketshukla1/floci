@@ -85,6 +85,25 @@ class CloudWatchLogsHandlerTest {
     }
 
     @Test
+    void describeResponsesExposeCreationTime() {
+        JsonNode groups = ((JsonNode) handler.handle(
+                        "DescribeLogGroups", MAPPER.createObjectNode(), REGION).getEntity())
+                .path("logGroups");
+        assertTrue(groups.size() > 0);
+        assertTrue(groups.get(0).has("creationTime"));
+        assertFalse(groups.get(0).has("createdTime"));
+
+        ObjectNode streamRequest = MAPPER.createObjectNode();
+        streamRequest.put("logGroupName", GROUP);
+        JsonNode streams = ((JsonNode) handler.handle(
+                        "DescribeLogStreams", streamRequest, REGION).getEntity())
+                .path("logStreams");
+        assertTrue(streams.size() > 0);
+        assertTrue(streams.get(0).has("creationTime"));
+        assertFalse(streams.get(0).has("createdTime"));
+    }
+
+    @Test
     void describeLogStreamsHonorsOrderByDescendingLimitAndReturnsNextToken() {
         service.createLogStream(GROUP, "another-stream", REGION);
         service.putLogEvents(GROUP, STREAM,
