@@ -70,7 +70,7 @@ public class ElastiCacheQueryHandler {
             case "DescribeUsers"              -> handleDescribeUsers(params);
             case "ModifyUser"                 -> handleModifyUser(params);
             case "DeleteUser"                 -> handleDeleteUser(params);
-            case "CreateCacheCluster"         -> handleCreateCacheCluster(params);
+            case "CreateCacheCluster"         -> handleCreateCacheCluster(params, region);
             case "DescribeCacheClusters"      -> handleDescribeCacheClusters(params);
             case "DeleteCacheCluster"         -> handleDeleteCacheCluster(params);
             case "CreateCacheSubnetGroup"     -> handleCreateCacheSubnetGroup(params);
@@ -318,7 +318,7 @@ public class ElastiCacheQueryHandler {
 
     // ── Cache Clusters (Memcached) ────────────────────────────────────────────
 
-    private Response handleCreateCacheCluster(MultivaluedMap<String, String> params) {
+    private Response handleCreateCacheCluster(MultivaluedMap<String, String> params, String region) {
         String clusterId = params.getFirst("CacheClusterId");
         String engine = params.getFirst("Engine");
 
