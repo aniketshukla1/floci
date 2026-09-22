@@ -338,6 +338,13 @@ public class ApiGatewayV2Service {
 
     // ──────────────────────────── Authorizer CRUD ────────────────────────────
 
+    private static void validateAuthorizerResultTtl(int ttl) {
+        if (ttl < 0 || ttl > 3600) {
+            throw new AwsException("BadRequestException",
+                    "Invalid request: AuthorizerResultTtlInSeconds must be between 0 and 3600.", 400);
+        }
+    }
+
     public Authorizer createAuthorizer(String region, String apiId, Map<String, Object> request) {
         getApi(region, apiId);
         Authorizer auth = new Authorizer();
@@ -366,7 +373,9 @@ public class ApiGatewayV2Service {
         auth.setAuthorizerUri((String) request.get("authorizerUri"));
         auth.setAuthorizerPayloadFormatVersion((String) request.get("authorizerPayloadFormatVersion"));
         if (request.get("authorizerResultTtlInSeconds") != null) {
-            auth.setAuthorizerResultTtlInSeconds(((Number) request.get("authorizerResultTtlInSeconds")).intValue());
+            int ttl = ((Number) request.get("authorizerResultTtlInSeconds")).intValue();
+            validateAuthorizerResultTtl(ttl);
+            auth.setAuthorizerResultTtlInSeconds(ttl);
         }
         if (request.get("enableSimpleResponses") != null) {
             auth.setEnableSimpleResponses(Boolean.parseBoolean(String.valueOf(request.get("enableSimpleResponses"))));
@@ -444,7 +453,9 @@ public class ApiGatewayV2Service {
             auth.setAuthorizerPayloadFormatVersion((String) request.get("authorizerPayloadFormatVersion"));
         }
         if (request.containsKey("authorizerResultTtlInSeconds") && request.get("authorizerResultTtlInSeconds") != null) {
-            auth.setAuthorizerResultTtlInSeconds(((Number) request.get("authorizerResultTtlInSeconds")).intValue());
+            int ttl = ((Number) request.get("authorizerResultTtlInSeconds")).intValue();
+            validateAuthorizerResultTtl(ttl);
+            auth.setAuthorizerResultTtlInSeconds(ttl);
         }
         if (request.containsKey("enableSimpleResponses") && request.get("enableSimpleResponses") != null) {
             auth.setEnableSimpleResponses(Boolean.parseBoolean(String.valueOf(request.get("enableSimpleResponses"))));

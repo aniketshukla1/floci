@@ -266,8 +266,7 @@ class ApiGatewayV2IntegrationTest {
     }
 
     @Test @Order(33)
-    void restoreAuthorizerPreservesEnforcementConfiguration() {
-        Authorizer snapshot = apiGatewayV2Service.getAuthorizer("us-east-1", apiId, authorizerId);
+    void restoreAuthorizerPreservesEnforcementConfiguration() {        Authorizer snapshot = apiGatewayV2Service.getAuthorizer("us-east-1", apiId, authorizerId);
         apiGatewayV2Service.deleteAuthorizer("us-east-1", apiId, authorizerId);
         apiGatewayV2Service.restoreAuthorizer("us-east-1", apiId, snapshot);
 
@@ -276,6 +275,26 @@ class ApiGatewayV2IntegrationTest {
         assertEquals(List.of("$request.header.Authorization"), restored.getIdentitySource());
         assertEquals("https://example.com", restored.getJwtConfiguration().issuer());
         assertEquals(List.of("api"), restored.getJwtConfiguration().audience());
+    }
+
+    @Test @Order(34)
+    void authorizerResultTtlOutsideZeroTo3600IsRejected() {
+        Map<String, Object> negative = Map.of("authorizerResultTtlInSeconds", -1);
+        AwsException createFailure = assertThrows(AwsException.class, () ->
+                apiGatewayV2Service.createAuthorizer("us-east-1", apiId, negative));
+        assertEquals("BadRequestException", createFailure.getErrorCode());
+
+        Map<String, Object> tooLarge = Map.of("authorizerResultTtlInSeconds", 3601);
+        AwsException updateFailure = assertThrows(AwsException.class, () ->
+                apiGatewayV2Service.updateAuthorizer("us-east-1", apiId, authorizerId, tooLarge));
+        assertEquals("BadRequestException", updateFailure.getErrorCode());
+
+        Authorizer lower = apiGatewayV2Service.updateAuthorizer(
+                "us-east-1", apiId, authorizerId, Map.of("authorizerResultTtlInSeconds", 0));
+        assertEquals(0, lower.getAuthorizerResultTtlInSeconds());
+        Authorizer upper = apiGatewayV2Service.updateAuthorizer(
+                "us-east-1", apiId, authorizerId, Map.of("authorizerResultTtlInSeconds", 3600));
+        assertEquals(3600, upper.getAuthorizerResultTtlInSeconds());
     }
 
     // ──────────────────────────── Deployments ────────────────────────────
