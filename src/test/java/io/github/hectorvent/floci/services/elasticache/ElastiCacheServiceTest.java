@@ -380,6 +380,16 @@ class ElastiCacheServiceTest {
     }
 
     @Test
+    void memberLookupAnswersTheReplicationGroupId() {
+        service.createReplicationGroup("grp", "test", AuthMode.NO_AUTH, null, "us-east-1");
+
+        assertEquals(List.of("grp-001"),
+                service.listMemberCacheClusters("grp").stream()
+                        .map(ElastiCacheService.MemberCacheCluster::cacheClusterId).toList());
+        assertTrue(service.listMemberCacheClusters("no-such-cluster").isEmpty());
+    }
+
+    @Test
     void clusterFormationFailureRollsBackAllNodesAndReleasesPorts() {
         stubPerNodeContainers();
         doThrow(new RuntimeException("formation boom"))

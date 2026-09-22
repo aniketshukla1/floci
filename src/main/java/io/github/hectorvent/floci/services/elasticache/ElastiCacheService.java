@@ -708,8 +708,12 @@ public class ElastiCacheService implements ResourceProvider {
         List<MemberCacheCluster> members = new ArrayList<>();
         for (ReplicationGroup group : groups.scan(k -> true)) {
             for (MemberCacheCluster member : memberCacheClusters(group)) {
+                // A single-node Redis/Valkey cluster created through CreateCacheCluster is
+                // looked up by its cluster id, which is the replication group id rather than
+                // the derived member id, so both answer the filter.
                 if (filterClusterId == null || filterClusterId.isBlank()
-                        || filterClusterId.equals(member.cacheClusterId())) {
+                        || filterClusterId.equals(member.cacheClusterId())
+                        || filterClusterId.equals(group.getReplicationGroupId())) {
                     members.add(member);
                 }
             }

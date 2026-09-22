@@ -34,12 +34,13 @@ class ElastiCacheQueryHandlerTest {
 
     private ElastiCacheQueryHandler handler;
     private ElastiCacheService service;
+    private ElastiCacheMemcachedService memcachedService;
 
     @BeforeEach
     void setUp() {
         SigV4Validator sigV4Validator = mock(SigV4Validator.class);
         service = mock(ElastiCacheService.class);
-        ElastiCacheMemcachedService memcachedService = mock(ElastiCacheMemcachedService.class);
+        memcachedService = mock(ElastiCacheMemcachedService.class);
         RegionResolver regionResolver = mock(RegionResolver.class);
         when(regionResolver.getRegion()).thenReturn("us-east-1");
         when(regionResolver.getAccountId()).thenReturn("000000000000");
@@ -192,6 +193,68 @@ class ElastiCacheQueryHandlerTest {
 
         assertEquals(400, response.getStatus());
         assertTrue(((String) response.getEntity()).contains("UnsupportedOperation"));
+    }
+
+    @Test
+    void createCacheClusterAcceptsRedisAsASingleNodeGroup() {
+        ReplicationGroup group = new ReplicationGroup("c1", "d", ReplicationGroupStatus.AVAILABLE,
+                AuthMode.NO_AUTH, new Endpoint("localhost", 6379), Instant.now(), 6379);
+        group.setEngine("redis");
+        ElastiCacheService.MemberCacheCluster member =
+                new ElastiCacheService.MemberCacheCluster(group, "c1-001", 6379, true);
+        when(service.createReplicationGroup(any())).thenReturn(group);
+        when(service.memberCacheClusters(group)).thenReturn(List.of(member));
+
+        MultivaluedMap<String, String> params = params();
+        params.putSingle("CacheClusterId", "c1");
+        params.putSingle("Engine", "redis");
+        params.putSingle("CacheNodeType", "cache.t3.micro");
+        Response response = handler.handle("CreateCacheCluster", params, "us-east-1");
+
+        assertEquals(200, response.getStatus());
+        String body = (String) response.getEntity();
+        assertTrue(body.contains("<CacheClusterId>c1-001</CacheClusterId>"), body);
+        assertTrue(body.contains("<Engine>redis</Engine>"), body);
+        assertTrue(body.contains("<CacheNodeCreateTime>"), body);
+
+        ArgumentCaptor<ElastiCacheService.CreateReplicationGroupRequest> captor =
+                ArgumentCaptor.forClass(ElastiCacheService.CreateReplicationGroupRequest.class);
+        verify(service).createReplicationGroup(captor.capture());
+        assertEquals("c1", captor.getValue().replicationGroupId());
+        assertEquals("redis", captor.getValue().engine());
+        assertEquals("cache.t3.micro", captor.getValue().cacheNodeType());
+    }
+
+    @Test
+    void createCacheClusterRejectsMultiNodeRedis() {
+        MultivaluedMap<String, String> params = params();
+        params.putSingle("CacheClusterId", "c1");
+        params.putSingle("Engine", "redis");
+        params.putSingle("NumCacheNodes", "3");
+        Response response = handler.handle("CreateCacheCluster", params, "us-east-1");
+
+        assertEquals(400, response.getStatus());
+        verify(service, never()).createReplicationGroup(any());
+    }
+
+    @Test
+    void deleteCacheClusterFallsBackToTheReplicationGroup() {
+        ReplicationGroup group = new ReplicationGroup("c1", "d", ReplicationGroupStatus.AVAILABLE,
+                AuthMode.NO_AUTH, new Endpoint("localhost", 6379), Instant.now(), 6379);
+        group.setEngine("redis");
+        ElastiCacheService.MemberCacheCluster member =
+                new ElastiCacheService.MemberCacheCluster(group, "c1-001", 6379, true);
+        when(memcachedService.deleteCacheCluster("c1")).thenThrow(
+                new AwsException("CacheClusterNotFoundFault", "Cache cluster c1 not found.", 404));
+        when(service.listMemberCacheClusters("c1")).thenReturn(List.of(member));
+
+        MultivaluedMap<String, String> params = params();
+        params.putSingle("CacheClusterId", "c1");
+        Response response = handler.handle("DeleteCacheCluster", params, "us-east-1");
+
+        assertEquals(200, response.getStatus());
+        verify(service).deleteReplicationGroup("c1");
+        assertTrue(((String) response.getEntity()).contains("<CacheClusterId>c1-001</CacheClusterId>"));
     }
 
     private static MultivaluedMap<String, String> params() {

@@ -26,6 +26,7 @@ import org.jboss.logging.Logger;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -325,6 +326,9 @@ public class ElastiCacheQueryHandler {
             return AwsQueryResponse.error("InvalidParameterValue",
                     "CacheClusterId is required.", AwsNamespaces.EC, 400);
         }
+        if ("redis".equalsIgnoreCase(engine) || "valkey".equalsIgnoreCase(engine)) {
+            return createRedisCacheCluster(params, region, clusterId, engine);
+        }
         if (!"memcached".equalsIgnoreCase(engine)) {
             return AwsQueryResponse.error("InvalidParameterValue",
                     "Engine must be 'memcached'. For Redis/Valkey use CreateReplicationGroup.", AwsNamespaces.EC, 400);
@@ -333,6 +337,46 @@ public class ElastiCacheQueryHandler {
         try {
             CacheCluster cluster = memcachedService.createCacheCluster(clusterId);
             return Response.ok(AwsQueryResponse.envelope("CreateCacheCluster", AwsNamespaces.EC, cacheClusterXml(cluster))).build();
+        } catch (AwsException e) {
+            return AwsQueryResponse.error(e.getErrorCode(), e.getMessage(), AwsNamespaces.EC, e.getHttpStatus());
+        }
+    }
+
+    /**
+     * A Redis/Valkey {@code CreateCacheCluster} is the single-node cluster AWS creates for that
+     * engine: one node, surfaced as the replication group's member so the Terraform provider's
+     * follow-up {@code DescribeCacheClusters} reads it back. Multi-node Redis goes through
+     * {@code CreateReplicationGroup}.
+     */
+    private Response createRedisCacheCluster(MultivaluedMap<String, String> params, String region,
+                                             String clusterId, String engine) {
+        Integer numNodes = intParam(params, "NumCacheNodes");
+        if (numNodes != null && numNodes != 1) {
+            return AwsQueryResponse.error("InvalidParameterValue",
+                    "NumCacheNodes must be 1 for engine '" + engine
+                            + "'. For replicated clusters use CreateReplicationGroup.",
+                    AwsNamespaces.EC, 400);
+        }
+        try {
+            ReplicationGroup group = service.createReplicationGroup(
+                    new ElastiCacheService.CreateReplicationGroupRequest(
+                            clusterId,
+                            "Single node " + engine + " cluster " + clusterId,
+                            AuthMode.NO_AUTH,
+                            null,
+                            region,
+                            engine,
+                            params.getFirst("EngineVersion"),
+                            params.getFirst("CacheNodeType"),
+                            params.getFirst("CacheParameterGroupName"),
+                            params.getFirst("CacheSubnetGroupName"),
+                            null, null, null, null, null, null,
+                            intParam(params, "Port"),
+                            new ReplicationGroupSettings(null, null, null, null),
+                            parseTags(params)));
+            List<ElastiCacheService.MemberCacheCluster> members = service.memberCacheClusters(group);
+            String result = memberCacheClusterXml(members.getFirst(), true);
+            return Response.ok(AwsQueryResponse.envelope("CreateCacheCluster", AwsNamespaces.EC, result)).build();
         } catch (AwsException e) {
             return AwsQueryResponse.error(e.getErrorCode(), e.getMessage(), AwsNamespaces.EC, e.getHttpStatus());
         }
@@ -399,6 +443,8 @@ public class ElastiCacheQueryHandler {
                .start("CacheNode")
                  .elem("CacheNodeId", "0001")
                  .elem("CacheNodeStatus", "available")
+                 .elem("CacheNodeCreateTime", g.getCreatedAt() != null
+                         ? g.getCreatedAt().toString() : Instant.now().toString())
                  .start("Endpoint")
                    .elem("Address", g.getConfigurationEndpoint().address())
                    .elem("Port", (long) member.port())
@@ -429,8 +475,17 @@ public class ElastiCacheQueryHandler {
         try {
             CacheCluster cluster = memcachedService.deleteCacheCluster(clusterId);
             return Response.ok(AwsQueryResponse.envelope("DeleteCacheCluster", AwsNamespaces.EC, cacheClusterXml(cluster))).build();
-        } catch (AwsException e) {
-            return AwsQueryResponse.error(e.getErrorCode(), e.getMessage(), AwsNamespaces.EC, e.getHttpStatus());
+        } catch (AwsException memcachedFailure) {
+            List<ElastiCacheService.MemberCacheCluster> members =
+                    service.listMemberCacheClusters(clusterId);
+            if (members.isEmpty()) {
+                return AwsQueryResponse.error(memcachedFailure.getErrorCode(), memcachedFailure.getMessage(),
+                        AwsNamespaces.EC, memcachedFailure.getHttpStatus());
+            }
+            ElastiCacheService.MemberCacheCluster member = members.getFirst();
+            service.deleteReplicationGroup(member.group().getReplicationGroupId());
+            return Response.ok(AwsQueryResponse.envelope(
+                    "DeleteCacheCluster", AwsNamespaces.EC, memberCacheClusterXml(member, true))).build();
         }
     }
 
