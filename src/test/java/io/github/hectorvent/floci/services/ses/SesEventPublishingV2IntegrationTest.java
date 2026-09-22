@@ -1773,8 +1773,9 @@ class SesEventPublishingV2IntegrationTest {
     @Order(33)
     void sendWithVirusSignature_publishesSendAndReject() throws Exception {
         // The antivirus test signature is assembled from fragments so it never appears
-        // literally in this repository, where endpoint protection would quarantine it.
-        String signature = "X5O!P%@AP[4" + "\\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+        // literally in this repository, where endpoint protection would quarantine it. The
+        // backslash is doubled so the JSON request body parses to a single backslash.
+        String signature = "X5O!P%@AP[4" + "\\\\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
         drainQueue();
         given()
                 .contentType("application/json")
