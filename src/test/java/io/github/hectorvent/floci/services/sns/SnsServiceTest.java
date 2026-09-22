@@ -227,6 +227,49 @@ class SnsServiceTest {
     }
 
     @Test
+    void publish_subjectWithinLimits_succeeds() {
+        Topic topic = snsService.createTopic("my-topic", null, null, REGION);
+        String messageId = snsService.publish(topic.getTopicArn(), null, "Hello!", "Deployment done!", REGION);
+        assertNotNull(messageId);
+    }
+
+    @Test
+    void publish_subjectTooLong_throwsInvalidParameter() {
+        Topic topic = snsService.createTopic("my-topic", null, null, REGION);
+        AwsException ex = assertThrows(AwsException.class, () ->
+                snsService.publish(topic.getTopicArn(), null, "Hello!", "a".repeat(100), REGION));
+        assertEquals("InvalidParameter", ex.getErrorCode());
+    }
+
+    @Test
+    void publish_subjectWithLineBreak_throwsInvalidParameter() {
+        Topic topic = snsService.createTopic("my-topic", null, null, REGION);
+        AwsException ex = assertThrows(AwsException.class, () ->
+                snsService.publish(topic.getTopicArn(), null, "Hello!", "line one\nline two", REGION));
+        assertEquals("InvalidParameter", ex.getErrorCode());
+    }
+
+    @Test
+    void publish_subjectStartingWithSpace_throwsInvalidParameter() {
+        Topic topic = snsService.createTopic("my-topic", null, null, REGION);
+        AwsException ex = assertThrows(AwsException.class, () ->
+                snsService.publish(topic.getTopicArn(), null, "Hello!", " leading space", REGION));
+        assertEquals("InvalidParameter", ex.getErrorCode());
+    }
+
+    @Test
+    void publishBatch_subjectTooLong_marksEntryFailed() {
+        Topic topic = snsService.createTopic("my-topic", null, null, REGION);
+        List<Map<String, Object>> entries = List.of(
+                Map.of("Id", "1", "Message", "Hello!", "Subject", "b".repeat(150)));
+        SnsService.BatchPublishResult result =
+                snsService.publishBatch(topic.getTopicArn(), entries, REGION);
+        assertTrue(result.successful().isEmpty());
+        assertEquals(1, result.failed().size());
+        assertEquals("InvalidParameter", result.failed().get(0)[1]);
+    }
+
+    @Test
     void tagResource_and_listTags() {
         Topic topic = snsService.createTopic("my-topic", null, null, REGION);
         snsService.tagResource(topic.getTopicArn(), Map.of("env", "test"), REGION);
