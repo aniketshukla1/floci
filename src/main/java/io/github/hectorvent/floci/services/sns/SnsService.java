@@ -513,6 +513,7 @@ public class SnsService implements Resettable, ResourceProvider {
         // The limit is a per-topic attribute, so it cannot be applied until the topic is in
         // hand. SMS and mobile-push publishes never reach a topic and keep the AWS default.
         int payloadSize = computePublishSize(messageBytes, messageAttributes);
+        validateSubject(subject);
 
         // Send SMS
         if (phoneNumber != null) {
@@ -534,7 +535,6 @@ public class SnsService implements Resettable, ResourceProvider {
         if (message == null || message.isBlank()) {
             throw new AwsException("InvalidParameter", "Message is required.", 400);
         }
-        validateSubject(subject);
 
         if (isEndpointArn(effectiveArn)) {
             requireWithinMaxMessageSize(payloadSize, DEFAULT_MAX_MESSAGE_SIZE);

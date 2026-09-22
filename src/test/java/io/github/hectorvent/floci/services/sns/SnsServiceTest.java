@@ -207,6 +207,12 @@ class SnsServiceTest {
     }
 
     @Test
+    void publish_smsWithInvalidSubject_throwsInvalidParameter() {
+        assertThrows(AwsException.class, () ->
+                snsService.publish(null, null, "+819012345678", "Hello phone!", "x".repeat(150), null, REGION));
+    }
+
+    @Test
     void publish_requiresTopicArn() {
         assertThrows(AwsException.class,
             () -> snsService.publish(null, null, "msg", null, REGION));
