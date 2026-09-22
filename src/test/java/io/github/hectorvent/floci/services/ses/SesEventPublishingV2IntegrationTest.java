@@ -1750,4 +1750,60 @@ class SesEventPublishingV2IntegrationTest {
         assertTrue(tags.path("only").isMissingNode() || tags.path("only").isEmpty(),
                 "header tags must be discarded entirely when the request supplies tags: " + tags);
     }
+
+    @Test
+    @Order(32)
+    void sendToSuppressionListSimulator_publishesSendAndBounce() throws Exception {
+        drainQueue();
+        sendEmail("suppressionlist@simulator.amazonses.com");
+        List<JsonNode> events = receiveSesEvents(2);
+        assertEquals(2, events.size(), "expected Send and Bounce events, no Reject");
+        assertTrue(events.stream().anyMatch(e -> "Send".equals(e.path("eventType").asText())));
+        assertTrue(events.stream().noneMatch(e -> "Reject".equals(e.path("eventType").asText())));
+        JsonNode bounce = events.stream()
+                .filter(e -> "Bounce".equals(e.path("eventType").asText()))
+                .findFirst().orElseThrow();
+        assertEquals("Permanent", bounce.path("bounce").path("bounceType").asText());
+        assertEquals("General", bounce.path("bounce").path("bounceSubType").asText());
+        assertEquals("suppressionlist@simulator.amazonses.com",
+                bounce.path("bounce").path("bouncedRecipients").get(0).path("emailAddress").asText());
+    }
+
+    @Test
+    @Order(33)
+    void sendWithVirusSignature_publishesSendAndReject() throws Exception {
+        // The antivirus test signature is assembled from fragments so it never appears
+        // literally in this repository, where endpoint protection would quarantine it.
+        String signature = "X5O!P%@AP[4" + "\\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+        drainQueue();
+        given()
+                .contentType("application/json")
+                .header("Authorization", SES_AUTH)
+                .body("""
+                    {
+                      "FromEmailAddress": "%s",
+                      "Destination": {"ToAddresses": ["success@simulator.amazonses.com"]},
+                      "ConfigurationSetName": "%s",
+                      "Content": {
+                        "Simple": {
+                          "Subject": {"Data": "evt"},
+                          "Body": {"Text": {"Data": "test %s end"}}
+                        }
+                      }
+                    }
+                    """.formatted(SENDER, CS, signature))
+        .when()
+                .post("/v2/email/outbound-emails")
+        .then()
+                .statusCode(200);
+
+        List<JsonNode> events = receiveSesEvents(2);
+        assertEquals(2, events.size(), "expected Send and Reject events, no Delivery");
+        assertTrue(events.stream().anyMatch(e -> "Send".equals(e.path("eventType").asText())));
+        assertTrue(events.stream().noneMatch(e -> "Delivery".equals(e.path("eventType").asText())));
+        JsonNode reject = events.stream()
+                .filter(e -> "Reject".equals(e.path("eventType").asText()))
+                .findFirst().orElseThrow();
+        assertEquals("Bad content", reject.path("reject").path("reason").asText());
+    }
 }

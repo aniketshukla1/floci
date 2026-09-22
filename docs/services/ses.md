@@ -389,7 +389,9 @@ Floci recognises the AWS [mailbox simulator addresses](https://docs.aws.amazon.c
 | `success@simulator.amazonses.com` | `Delivery` |
 | `bounce@simulator.amazonses.com` | `Bounce` |
 | `complaint@simulator.amazonses.com` | `Complaint` |
-| `suppressionlist@simulator.amazonses.com` | `Reject` |
+| `suppressionlist@simulator.amazonses.com` | `Bounce` (`bounceType: Permanent`, `bounceSubType: General`) |
+
+A message carrying the [EICAR antivirus test signature](https://www.eicar.org/download-anti-malware-testfile/) is accepted and then rejected with a `Reject` event (`reason: Bad content`); its body is never persisted. A recipient on the account suppression list produces a `Bounce` with `bounceSubType: OnAccountSuppressionList` (or a `Complaint` with `complaintSubType: OnAccountSuppressionList` when the stored reason is a complaint).
 
 A `+label` subaddress is supported on any of these, so `bounce+order-123@simulator.amazonses.com` triggers a `Bounce` just like the bare address — the label lets senders distinguish test messages. Only `+` separates the label; `bounce-label@...` is not a simulator address.
 

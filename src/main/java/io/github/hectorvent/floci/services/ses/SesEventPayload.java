@@ -220,14 +220,20 @@ final class SesEventPayload {
             }
             case "BOUNCE" -> {
                 body.put("bounceType", "Permanent");
-                body.put("bounceSubType", "General");
+                body.put("bounceSubType",
+                        bounceSubType(destination, suppressionBounceRecipients));
                 emitDedupedRecipientObjects(body.putArray("bouncedRecipients"),
-                        destination, SimulatorAddresses::isBounce,
+                        destination, SimulatorAddresses::isBounceOrSuppressionList,
                         suppressionBounceRecipients);
                 body.put("timestamp", ISO_MILLIS.format(timestamp));
                 body.put("feedbackId", "feedback-" + messageId);
             }
             case "COMPLAINT" -> {
+                String complaintSubType =
+                        complaintSubType(destination, suppressionComplaintRecipients);
+                if (complaintSubType != null) {
+                    body.put("complaintSubType", complaintSubType);
+                }
                 emitDedupedRecipientObjects(body.putArray("complainedRecipients"),
                         destination, SimulatorAddresses::isComplaint,
                         suppressionComplaintRecipients);
@@ -240,6 +246,40 @@ final class SesEventPayload {
             }
         }
         return body;
+    }
+
+    /**
+     * Per-recipient bounce classification shared by event publishing and message insights.
+     * A simulator bounce, including the suppression-list simulator that AWS reports as a hard
+     * bounce, is General. A recipient bounced only because its address sits on the account
+     * suppression list is OnAccountSuppressionList.
+     */
+    static String bounceSubType(List<String> envelopeDestinations,
+                                List<String> suppressionBounceRecipients) {
+        boolean simulatorBounce = envelopeDestinations != null && envelopeDestinations.stream()
+                .anyMatch(SimulatorAddresses::isBounceOrSuppressionList);
+        if (!simulatorBounce && suppressionBounceRecipients != null
+                && !suppressionBounceRecipients.isEmpty()) {
+            return "OnAccountSuppressionList";
+        }
+        return "General";
+    }
+
+    /**
+     * Per-recipient complaint classification shared by event publishing and message insights.
+     * Returns OnAccountSuppressionList when the complaint comes only from the account
+     * suppression list, or null when a simulator complaint (or no) recipient drives it, in
+     * which case no subtype is rendered.
+     */
+    static String complaintSubType(List<String> envelopeDestinations,
+                                   List<String> suppressionComplaintRecipients) {
+        boolean simulatorComplaint = envelopeDestinations != null && envelopeDestinations.stream()
+                .anyMatch(SimulatorAddresses::isComplaint);
+        if (!simulatorComplaint && suppressionComplaintRecipients != null
+                && !suppressionComplaintRecipients.isEmpty()) {
+            return "OnAccountSuppressionList";
+        }
+        return null;
     }
 
     /**

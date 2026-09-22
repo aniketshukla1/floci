@@ -309,6 +309,53 @@ class SesEventPayloadTest {
         assertNotNull(node.get("reject").get("reason"));
     }
 
+    @Test
+    void bounce_suppressionListSimulatorIsAHardBounce() {
+        ObjectNode node = SesEventPayload.build(mapper, "BOUNCE", "msg-1", "from@example.com",
+                null, "000000000000", "",
+                List.of("suppressionlist@simulator.amazonses.com"),
+                List.of(), List.of(),
+                List.of("suppressionlist@simulator.amazonses.com"), List.of(), List.of(),
+                "cs", List.of(), List.of(), ts);
+
+        assertEquals("Permanent", node.get("bounce").get("bounceType").asText());
+        assertEquals("General", node.get("bounce").get("bounceSubType").asText());
+        var bounced = node.get("bounce").get("bouncedRecipients");
+        assertEquals(1, bounced.size());
+        assertEquals("suppressionlist@simulator.amazonses.com",
+                bounced.get(0).get("emailAddress").asText());
+    }
+
+    @Test
+    void bounce_accountSuppressionOnlyReportsOnAccountSuppressionList() {
+        ObjectNode node = SesEventPayload.build(mapper, "BOUNCE", "msg-1", "from@example.com",
+                null, "000000000000", "",
+                List.of("suppressed@example.com"),
+                List.of(), List.of(),
+                List.of("suppressed@example.com"),
+                List.of("suppressed@example.com"),
+                List.of(),
+                "cs", List.of(), List.of(), ts);
+
+        assertEquals("OnAccountSuppressionList",
+                node.get("bounce").get("bounceSubType").asText());
+    }
+
+    @Test
+    void complaint_accountSuppressionOnlyReportsOnAccountSuppressionList() {
+        ObjectNode node = SesEventPayload.build(mapper, "COMPLAINT", "msg-1", "from@example.com",
+                null, "000000000000", "",
+                List.of("suppressed@example.com"),
+                List.of(), List.of(),
+                List.of("suppressed@example.com"),
+                List.of(),
+                List.of("suppressed@example.com"),
+                "cs", List.of(), List.of(), ts);
+
+        assertEquals("OnAccountSuppressionList",
+                node.get("complaint").get("complaintSubType").asText());
+    }
+
     /**
      * AWS CloudWatch metric names for SES events are mostly the same as the SNS
      * {@code eventType} value, except {@code RENDERING_FAILURE} is emitted as

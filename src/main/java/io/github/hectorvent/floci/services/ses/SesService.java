@@ -259,17 +259,22 @@ public class SesService {
 
         String messageId = UUID.randomUUID().toString();
         String effectiveReturnPath = firstNonBlank(returnPath, source);
-        SentEmail email = new SentEmail(messageId, region, source, toAddresses, ccAddresses,
-                bccAddresses, replyToAddresses, subject, bodyText, bodyHtml);
-        email.setReturnPath(effectiveReturnPath);
-        if (additionalHeaders != null && !additionalHeaders.isEmpty()) {
-            email.setHeaders(additionalHeaders);
+        // A message carrying the antivirus test signature is accepted and then rejected, the
+        // way AWS handles EICAR content. Its body is never persisted, relayed, or logged.
+        boolean virusRejected = containsVirusSignature(bodyText, bodyHtml);
+        if (!virusRejected) {
+            SentEmail email = new SentEmail(messageId, region, source, toAddresses, ccAddresses,
+                    bccAddresses, replyToAddresses, subject, bodyText, bodyHtml);
+            email.setReturnPath(effectiveReturnPath);
+            if (additionalHeaders != null && !additionalHeaders.isEmpty()) {
+                email.setHeaders(additionalHeaders);
+            }
+            sentEmailService.record(region, messageId, email);
         }
-        sentEmailService.record(region, messageId, email);
 
-        List<String> relayedTo = filterUnsuppressed(toAddresses, suppressedReasons);
-        List<String> relayedCc = filterUnsuppressed(ccAddresses, suppressedReasons);
-        List<String> relayedBcc = filterUnsuppressed(bccAddresses, suppressedReasons);
+        List<String> relayedTo = virusRejected ? List.of() : filterUnsuppressed(toAddresses, suppressedReasons);
+        List<String> relayedCc = virusRejected ? List.of() : filterUnsuppressed(ccAddresses, suppressedReasons);
+        List<String> relayedBcc = virusRejected ? List.of() : filterUnsuppressed(bccAddresses, suppressedReasons);
         if (sizeOf(relayedTo) + sizeOf(relayedCc) + sizeOf(relayedBcc) > 0) {
             smtpRelay.relay(SmtpRelay.RelayMessage.builder(source)
                     .returnPath(effectiveReturnPath)
@@ -283,16 +288,20 @@ public class SesService {
                     .headers(additionalHeaders)
                     .messageId(messageId)
                     .build());
-        } else {
+        } else if (!virusRejected) {
             LOG.infov("SES email accepted but not relayed (all recipients suppressed): messageId={0}",
                     messageId);
         }
 
-        LOG.infov("SES email sent: from={0}, to={1}, subject={2}, messageId={3}",
-                source, toAddresses, subject, messageId);
+        if (virusRejected) {
+            LOG.infov("SES email rejected by virus scan: messageId={0}", messageId);
+        } else {
+            LOG.infov("SES email sent: from={0}, to={1}, subject={2}, messageId={3}",
+                    source, toAddresses, subject, messageId);
+        }
         publishSendEvents(effectiveConfigSet, messageId, source, subject,
                 toAddresses, ccAddresses, bccAddresses, envelope,
-                suppressedReasons, emailTags, additionalHeaders, region);
+                suppressedReasons, emailTags, additionalHeaders, region, virusRejected);
         return messageId;
     }
 
@@ -358,24 +367,32 @@ public class SesService {
         // AWS routes bounces to the Return-Path carried by the message, falling back to the
         // request's return path and then the sender.
         String effectiveReturnPath = firstNonBlank(headers.returnPath(), returnPath, effectiveSource);
-        SentEmail email = new SentEmail(messageId, region, effectiveSource, effectiveDestinations, rawMessage);
-        email.setReturnPath(effectiveReturnPath);
-        sentEmailService.record(region, messageId, email);
+        boolean virusRejected = containsVirusSignature(rawMessage);
+        if (!virusRejected) {
+            SentEmail email = new SentEmail(messageId, region, effectiveSource, effectiveDestinations, rawMessage);
+            email.setReturnPath(effectiveReturnPath);
+            sentEmailService.record(region, messageId, email);
+        }
 
-        List<String> relayedDestinations = filterUnsuppressed(effectiveDestinations, suppressedReasons);
+        List<String> relayedDestinations = virusRejected ? List.of()
+                : filterUnsuppressed(effectiveDestinations, suppressedReasons);
         if (!relayedDestinations.isEmpty()) {
             smtpRelay.relayRaw(new SmtpRelay.RawRelayMessage(effectiveSource, effectiveReturnPath,
                     relayedDestinations, rawMessage, messageId));
-        } else {
+        } else if (!virusRejected) {
             LOG.infov("SES raw email accepted but not relayed (all recipients suppressed): messageId={0}",
                     messageId);
         }
 
-        LOG.infov("SES raw email sent: from={0}, messageId={1}", effectiveSource, messageId);
+        if (virusRejected) {
+            LOG.infov("SES raw email rejected by virus scan: messageId={0}", messageId);
+        } else {
+            LOG.infov("SES raw email sent: from={0}, messageId={1}", effectiveSource, messageId);
+        }
         publishSendEvents(effectiveConfigSet, messageId, effectiveSource,
                 headers.subject(), headers.to(), headers.cc(), headers.bcc(),
                 effectiveDestinations,
-                suppressedReasons, effectiveTags, List.of(), region);
+                suppressedReasons, effectiveTags, List.of(), region, virusRejected);
         return messageId;
     }
 
@@ -400,6 +417,19 @@ public class SesService {
                                    Map<String, String> suppressedReasons,
                                    List<MessageTag> emailTags,
                                    List<MessageHeader> additionalHeaders, String region) {
+        publishSendEvents(configurationSetName, messageId, source, subject, toAddresses,
+                ccAddresses, bccAddresses, envelopeDestinations, suppressedReasons, emailTags,
+                additionalHeaders, region, false);
+    }
+
+    private void publishSendEvents(String configurationSetName, String messageId, String source,
+                                   String subject, List<String> toAddresses,
+                                   List<String> ccAddresses, List<String> bccAddresses,
+                                   List<String> envelopeDestinations,
+                                   Map<String, String> suppressedReasons,
+                                   List<MessageTag> emailTags,
+                                   List<MessageHeader> additionalHeaders, String region,
+                                   boolean virusRejected) {
         if (eventPublisher == null || messageId == null) {
             return;
         }
@@ -441,7 +471,7 @@ public class SesService {
         }
 
         for (String eventType : determineSendEventTypes(envelope,
-                suppressionBounceRecipients, suppressionComplaintRecipients)) {
+                suppressionBounceRecipients, suppressionComplaintRecipients, virusRejected)) {
             if (configSetActive) {
                 eventPublisher.publish(cs, eventType, messageId, source, sourceArn, sendingAccountId,
                         subject, toAddresses, ccAddresses, bccAddresses, envelope,
@@ -521,21 +551,26 @@ public class SesService {
 
     private static List<String> determineSendEventTypes(List<String> destinations,
                                                         List<String> suppressionBounceRecipients,
-                                                        List<String> suppressionComplaintRecipients) {
+                                                        List<String> suppressionComplaintRecipients,
+                                                        boolean virusRejected) {
         List<String> events = new ArrayList<>();
         events.add("SEND");
+        // A virus-rejected message is never delivered, bounced, or complained about: only the
+        // acceptance (SEND) and the rejection are reported.
+        if (virusRejected) {
+            events.add("REJECT");
+            return events;
+        }
         for (String d : destinations) {
             if (SimulatorAddresses.isSuccess(d) && !events.contains("DELIVERY")) {
                 events.add("DELIVERY");
             }
-            if (SimulatorAddresses.isBounce(d) && !events.contains("BOUNCE")) {
+            if ((SimulatorAddresses.isBounce(d) || SimulatorAddresses.isSuppressionList(d))
+                    && !events.contains("BOUNCE")) {
                 events.add("BOUNCE");
             }
             if (SimulatorAddresses.isComplaint(d) && !events.contains("COMPLAINT")) {
                 events.add("COMPLAINT");
-            }
-            if (SimulatorAddresses.isSuppressionList(d) && !events.contains("REJECT")) {
-                events.add("REJECT");
             }
         }
         if (!suppressionBounceRecipients.isEmpty() && !events.contains("BOUNCE")) {
@@ -545,6 +580,21 @@ public class SesService {
             events.add("COMPLAINT");
         }
         return events;
+    }
+
+    /**
+     * Whether any body carries the EICAR antivirus test signature. The signature is assembled
+     * from fragments at runtime and never appears literally in this repository, so endpoint
+     * protection does not quarantine checkouts that contain this source.
+     */
+    static boolean containsVirusSignature(String... bodies) {
+        String signature = "X5O!P%@AP[4" + "\\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+        for (String body : bodies) {
+            if (body != null && body.contains(signature)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void setEmailIdentityConfigurationSet(String identityValue, String configurationSetName,

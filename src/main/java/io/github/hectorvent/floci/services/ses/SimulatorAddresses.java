@@ -36,6 +36,10 @@ final class SimulatorAddresses {
         return SUPPRESSION_LIST.equalsIgnoreCase(canonicalize(address));
     }
 
+    static boolean isBounceOrSuppressionList(String address) {
+        return isBounce(address) || isSuppressionList(address);
+    }
+
     // Drop a +label subaddress from the local part so labelled simulator addresses match their type,
     // leaving the domain untouched. A non-simulator or malformed address is returned trimmed as-is.
     private static String canonicalize(String address) {
