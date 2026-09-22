@@ -709,6 +709,10 @@ public class KinesisJsonHandler {
         }
 
         int maxResults = request.has("MaxResults") ? request.path("MaxResults").asInt(1000) : 1000;
+        if (maxResults < 1 || maxResults > 10_000) {
+            throw new AwsException("InvalidArgumentException",
+                    "MaxResults must be between 1 and 10000.", 400);
+        }
         int startIndex = 0;
         if (request.has("NextToken") && !request.path("NextToken").isNull()) {
             startIndex = parseListShardsToken(request.path("NextToken").asText());

@@ -1436,5 +1436,16 @@ class KinesisIntegrationTest {
             .post("/")
         .then()
             .statusCode(400);
+
+        given()
+            .header("X-Amz-Target", "Kinesis_20131202.ListShards")
+            .contentType(KINESIS_CONTENT_TYPE)
+            .body("""
+                {"StreamName": "list-shards-pages", "MaxResults": 0}
+                """)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(400);
     }
 }
