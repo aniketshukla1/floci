@@ -682,6 +682,66 @@ class SnsIntegrationTest {
     }
 
     @Test
+    @Order(19)
+    void filterPolicy_messageBodyMatchesS3RecordsArray() {
+        String queueUrl = given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateQueue")
+            .formParam("QueueName", "sns-records-filter-" + UUID.randomUUID())
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().xmlPath().getString("CreateQueueResponse.CreateQueueResult.QueueUrl");
+
+        String subscription = given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "Subscribe")
+            .formParam("TopicArn", topicArn)
+            .formParam("Protocol", "sqs")
+            .formParam("Endpoint", queueUrl)
+            .formParam("Attributes.entry.1.key", "FilterPolicyScope")
+            .formParam("Attributes.entry.1.value", "MessageBody")
+            .formParam("Attributes.entry.2.key", "FilterPolicy")
+            .formParam("Attributes.entry.2.value",
+                    "{\"Records\":{\"s3\":{\"bucket\":{\"name\":[\"mybucket\"]}}}}")
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .extract().xmlPath().getString("SubscribeResponse.SubscribeResult.SubscriptionArn");
+
+        try {
+            given()
+                .contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "Publish")
+                .formParam("TopicArn", topicArn)
+                .formParam("Message", "{\"Records\":[{\"s3\":{\"bucket\":{\"name\":\"mybucket\"}}}]}")
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200);
+
+            given()
+                .contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "ReceiveMessage")
+                .formParam("QueueUrl", queueUrl)
+            .when()
+                .post("/")
+            .then()
+                .statusCode(200)
+                .body(containsString("mybucket"));
+        } finally {
+            given().contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "Unsubscribe").formParam("SubscriptionArn", subscription)
+                .when().post("/");
+            given().contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "DeleteQueue").formParam("QueueUrl", queueUrl)
+                .when().post("/");
+        }
+    }
+
+    @Test
     @Order(50)
     void rawDelivery_createQueuesAndSubscribe() {
         String suffix = UUID.randomUUID().toString().substring(0, 8);

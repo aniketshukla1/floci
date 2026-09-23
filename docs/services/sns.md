@@ -89,6 +89,9 @@ Supported subscription protocols:
 - `http` / `https`: posts to an HTTP endpoint
 - `application`: fans out to a mobile push platform endpoint (see [Mobile push](#mobile-push-mock))
 
+For `FilterPolicyScope=MessageBody`, nested policy objects descend into JSON objects and arrays.
+An object inside an array matches when one array element satisfies the complete nested policy.
+
 ## Message size
 
 `MaximumMessageSize` is the per-topic limit, in bytes, on a published payload. It accepts `1024`

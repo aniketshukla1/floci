@@ -384,6 +384,33 @@ class SnsServiceTest {
     }
 
     @Test
+    void filterPolicy_messageBody_nestedObjectsInsideArray() {
+        Subscription sub = subscriptionWithPolicy(
+                "{\"Records\":{\"s3\":{\"bucket\":{\"name\":[\"mybucket\"]}}}}", "MessageBody");
+        assertTrue(snsService.matchesFilterPolicy(sub, body("""
+                {"Records":[{"s3":{"bucket":{"name":"other"}}},
+                            {"s3":{"bucket":{"name":"mybucket"}}}]}
+                """), null));
+        assertFalse(snsService.matchesFilterPolicy(sub, body("""
+                {"Records":[{"s3":{"bucket":{"name":"other"}}}]}
+                """), null));
+        assertFalse(snsService.matchesFilterPolicy(sub, body("{\"Records\":[]}"), null));
+    }
+
+    @Test
+    void filterPolicy_messageBody_nestedArrayRequiresOneElementToMatchWholePolicy() {
+        Subscription sub = subscriptionWithPolicy(
+                "{\"Records\":{\"name\":[\"mybucket\"],\"region\":[\"us-east-1\"]}}", "MessageBody");
+        assertFalse(snsService.matchesFilterPolicy(sub, body("""
+                {"Records":[{"name":"mybucket","region":"us-west-2"},
+                            {"name":"other","region":"us-east-1"}]}
+                """), null));
+        assertTrue(snsService.matchesFilterPolicy(sub, body("""
+                {"Records":[{"name":"mybucket","region":"us-east-1"}]}
+                """), null));
+    }
+
+    @Test
     void filterPolicy_messageBody_numericRule() {
         Subscription sub = subscriptionWithPolicy(
                 "{\"price\":[{\"numeric\":[\">=\",100,\"<\",200]}]}", "MessageBody");

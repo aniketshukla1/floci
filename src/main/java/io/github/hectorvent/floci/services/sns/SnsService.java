@@ -1198,6 +1198,14 @@ public class SnsService implements Resettable, ResourceProvider {
         if (!policy.isObject()) {
             return false;
         }
+        if (body != null && body.isArray()) {
+            for (JsonNode element : body) {
+                if (matchesBodyPolicy(policy, element)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         var fields = policy.fields();
         while (fields.hasNext()) {
             var entry = fields.next();
