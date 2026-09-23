@@ -489,6 +489,64 @@ class S3IntegrationTest {
     }
 
     @Test
+    void createBucketRejectsUnknownLocationConstraintWithoutCreatingBucket() {
+        for (String invalidRegion : List.of("polygondwanaland-west-1", "us-fake-9")) {
+            String bucket = "unknown-region-" + invalidRegion;
+            String createBucketConfiguration = """
+                    <CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                        <LocationConstraint>%s</LocationConstraint>
+                    </CreateBucketConfiguration>
+                    """.formatted(invalidRegion);
+
+            given()
+                .contentType("application/xml")
+                .body(createBucketConfiguration)
+            .when()
+                .put("/" + bucket)
+            .then()
+                .statusCode(400)
+                .body(containsString("InvalidLocationConstraint"));
+
+            given()
+            .when()
+                .head("/" + bucket)
+            .then()
+                .statusCode(404);
+        }
+    }
+
+    @Test
+    void createBucketAcceptsKnownRegionOutsideAdvertisedRegionList() {
+        String bucket = "ap-south-two-bucket";
+        String createBucketConfiguration = """
+                <CreateBucketConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+                    <LocationConstraint>ap-south-2</LocationConstraint>
+                </CreateBucketConfiguration>
+                """;
+
+        given()
+            .contentType("application/xml")
+            .body(createBucketConfiguration)
+        .when()
+            .put("/" + bucket)
+        .then()
+            .statusCode(200);
+
+        given()
+        .when()
+            .head("/" + bucket)
+        .then()
+            .statusCode(200)
+            .header("x-amz-bucket-region", equalTo("ap-south-2"));
+
+        given()
+        .when()
+            .delete("/" + bucket)
+        .then()
+            .statusCode(204);
+    }
+
+    @Test
     void createBucketRejectsOverlyLongBucketName() {
         String longBucketName = "30388849b0eaef3dfba3aa83849d28987be6fb7920bdbf3233bdc8e966f73870.json";
         given()

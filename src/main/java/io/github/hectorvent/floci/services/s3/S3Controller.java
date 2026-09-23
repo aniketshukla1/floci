@@ -6,6 +6,7 @@ import io.github.hectorvent.floci.core.common.AccountResolver;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsNamespaces;
+import io.github.hectorvent.floci.core.common.AwsRegions;
 import io.github.hectorvent.floci.core.common.IamEnforcementFilter;
 import io.github.hectorvent.floci.core.common.XmlBuilder;
 import io.github.hectorvent.floci.core.common.XmlParser;
@@ -60,7 +61,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
@@ -85,7 +85,6 @@ public class S3Controller {
             .ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.US)
             .withZone(ZoneId.of("GMT"));
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final Pattern LOCATION_CONSTRAINT_PATTERN = Pattern.compile("[a-z]{2}(-[a-z]+)+-\\d+");
 
     private final S3Service s3Service;
     private final S3SelectService s3SelectService;
@@ -4152,6 +4151,6 @@ public class S3Controller {
     }
 
     private static boolean isValidLocationConstraint(String value) {
-        return "EU".equalsIgnoreCase(value) || LOCATION_CONSTRAINT_PATTERN.matcher(value).matches();
+        return "EU".equalsIgnoreCase(value) || AwsRegions.isRegionId(value);
     }
 }
