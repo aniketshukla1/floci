@@ -874,40 +874,20 @@ public class SnsService implements Resettable, ResourceProvider {
     }
 
     /**
-     * Subjects must be UTF-8 text with no line breaks or control characters, less than 100
-     * characters long, and begin with a letter, number, or punctuation mark. A null or empty
-     * subject is the absent optional parameter and is accepted.
+     * Subjects must be UTF-8 text with no line breaks or control characters and at most 100
+     * characters long. A null or empty subject is the absent optional parameter and is accepted.
      */
     static void validateSubject(String subject) {
         if (subject == null || subject.isEmpty()) {
             return;
         }
-        if (subject.length() >= MAX_SUBJECT_LENGTH
-                || subject.chars().anyMatch(Character::isISOControl)
-                || !isSubjectStart(subject.charAt(0))) {
+        if (subject.length() > MAX_SUBJECT_LENGTH
+                || subject.chars().anyMatch(Character::isISOControl)) {
             throw new AwsException("InvalidParameter",
                     "Invalid parameter: Subject Reason: Subjects must be UTF-8 text with no line"
-                            + " breaks or control characters, and less than 100 characters long.",
+                            + " breaks or control characters, and at most 100 characters long.",
                     400);
         }
-    }
-
-    private static boolean isSubjectStart(char c) {
-        if (Character.isLetterOrDigit(c)) {
-            return true;
-        }
-        int type = Character.getType(c);
-        return type == Character.CONNECTOR_PUNCTUATION
-                || type == Character.DASH_PUNCTUATION
-                || type == Character.START_PUNCTUATION
-                || type == Character.END_PUNCTUATION
-                || type == Character.INITIAL_QUOTE_PUNCTUATION
-                || type == Character.FINAL_QUOTE_PUNCTUATION
-                || type == Character.OTHER_PUNCTUATION
-                || type == Character.MATH_SYMBOL
-                || type == Character.CURRENCY_SYMBOL
-                || type == Character.MODIFIER_SYMBOL
-                || type == Character.OTHER_SYMBOL;
     }
 
     private void recordPushNotification(PushNotification notification) {

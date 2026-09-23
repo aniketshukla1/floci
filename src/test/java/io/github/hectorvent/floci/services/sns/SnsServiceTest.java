@@ -235,7 +235,7 @@ class SnsServiceTest {
     @Test
     void publish_subjectWithinLimits_succeeds() {
         Topic topic = snsService.createTopic("my-topic", null, null, REGION);
-        String messageId = snsService.publish(topic.getTopicArn(), null, "Hello!", "Deployment done!", REGION);
+        String messageId = snsService.publish(topic.getTopicArn(), null, "Hello!", "a".repeat(100), REGION);
         assertNotNull(messageId);
     }
 
@@ -243,7 +243,7 @@ class SnsServiceTest {
     void publish_subjectTooLong_throwsInvalidParameter() {
         Topic topic = snsService.createTopic("my-topic", null, null, REGION);
         AwsException ex = assertThrows(AwsException.class, () ->
-                snsService.publish(topic.getTopicArn(), null, "Hello!", "a".repeat(100), REGION));
+                snsService.publish(topic.getTopicArn(), null, "Hello!", "a".repeat(101), REGION));
         assertEquals("InvalidParameter", ex.getErrorCode());
     }
 
@@ -256,11 +256,10 @@ class SnsServiceTest {
     }
 
     @Test
-    void publish_subjectStartingWithSpace_throwsInvalidParameter() {
+    void publish_subjectStartingWithSpace_succeeds() {
         Topic topic = snsService.createTopic("my-topic", null, null, REGION);
-        AwsException ex = assertThrows(AwsException.class, () ->
-                snsService.publish(topic.getTopicArn(), null, "Hello!", " leading space", REGION));
-        assertEquals("InvalidParameter", ex.getErrorCode());
+        String messageId = snsService.publish(topic.getTopicArn(), null, "Hello!", " leading space", REGION);
+        assertNotNull(messageId);
     }
 
     @Test
