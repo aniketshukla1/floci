@@ -30,6 +30,7 @@ class SnsServiceTest {
     private static final String REGION = "us-east-1";
     private static final String ACCOUNT = "000000000000";
     private static final String BASE_URL = "http://localhost:4566";
+    private static final String FIREHOSE_ROLE_ARN = "arn:aws:iam::000000000000:role/firehose-role";
 
     private SnsService snsService;
 
@@ -128,6 +129,43 @@ class SnsServiceTest {
         assertEquals("sqs", sub.getProtocol());
         assertEquals(ACCOUNT, sub.getOwner());
         assertEquals(Map.of("attr1", "value1", "attr2", "value2"), sub.getAttributes());
+    }
+
+    @Test
+    void subscribe_firehoseRequiresValidRoleArn() {
+        Topic topic = snsService.createTopic("firehose-topic", null, null, REGION);
+        String streamArn = "arn:aws:firehose:us-east-1:000000000000:deliverystream/test-stream";
+        for (Map<String, String> attributes : List.of(
+                Map.<String, String>of(),
+                Map.of("SubscriptionRoleArn", ""),
+                Map.of("SubscriptionRoleArn", "arn:aws:iam::000000000000:user/not-a-role"))) {
+            AwsException ex = assertThrows(AwsException.class, () -> snsService.subscribe(
+                    topic.getTopicArn(), "firehose", streamArn, REGION, attributes));
+            assertEquals("InvalidParameter", ex.getErrorCode());
+            assertTrue(ex.getMessage().contains("SubscriptionRoleArn"));
+        }
+        assertTrue(snsService.listSubscriptions(REGION).isEmpty());
+    }
+
+    @Test
+    void subscribe_firehoseRoleArnIsReturnedAndCanBeUpdated() {
+        Topic topic = snsService.createTopic("firehose-topic", null, null, REGION);
+        Subscription sub = snsService.subscribe(topic.getTopicArn(), "firehose",
+                "arn:aws:firehose:us-east-1:000000000000:deliverystream/test-stream", REGION,
+                Map.of("SubscriptionRoleArn", FIREHOSE_ROLE_ARN));
+        assertEquals(FIREHOSE_ROLE_ARN,
+                snsService.getSubscriptionAttributes(sub.getSubscriptionArn(), REGION).get("SubscriptionRoleArn"));
+
+        AwsException ex = assertThrows(AwsException.class, () -> snsService.setSubscriptionAttribute(
+                sub.getSubscriptionArn(), "SubscriptionRoleArn", "not-an-arn", REGION));
+        assertEquals("InvalidParameter", ex.getErrorCode());
+        assertEquals(FIREHOSE_ROLE_ARN,
+                snsService.getSubscriptionAttributes(sub.getSubscriptionArn(), REGION).get("SubscriptionRoleArn"));
+
+        String updated = "arn:aws:iam::000000000000:role/updated-role";
+        snsService.setSubscriptionAttribute(sub.getSubscriptionArn(), "SubscriptionRoleArn", updated, REGION);
+        assertEquals(updated,
+                snsService.getSubscriptionAttributes(sub.getSubscriptionArn(), REGION).get("SubscriptionRoleArn"));
     }
 
     @Test
@@ -746,7 +784,8 @@ class SnsServiceTest {
 
         Topic topic = service.createTopic("firehose-topic", null, null, REGION);
         String streamArn = "arn:aws:firehose:us-east-1:000000000000:deliverystream/test-stream";
-        service.subscribe(topic.getTopicArn(), "firehose", streamArn, REGION, Map.of());
+        service.subscribe(topic.getTopicArn(), "firehose", streamArn, REGION,
+                Map.of("SubscriptionRoleArn", FIREHOSE_ROLE_ARN));
 
         String messageId = service.publish(topic.getTopicArn(), null, "Hello Firehose", "Test Subject", REGION);
         assertNotNull(messageId);
@@ -783,7 +822,7 @@ class SnsServiceTest {
         Topic topic = service.createTopic("firehose-topic-raw", null, null, REGION);
         String streamArn = "arn:aws:firehose:us-east-1:000000000000:deliverystream/test-stream-raw";
         service.subscribe(topic.getTopicArn(), "firehose", streamArn, REGION,
-                Map.of("RawMessageDelivery", "true"));
+                Map.of("RawMessageDelivery", "true", "SubscriptionRoleArn", FIREHOSE_ROLE_ARN));
 
         String message = "{\"raw\":\"payload\"}";
         String messageId = service.publish(topic.getTopicArn(), null, message, null, REGION);
@@ -811,7 +850,7 @@ class SnsServiceTest {
 
         Topic topic = service.createTopic("firehose-bare-topic", null, null, REGION);
         service.subscribe(topic.getTopicArn(), "firehose", "bare-stream", REGION,
-                Map.of("RawMessageDelivery", "true"));
+                Map.of("RawMessageDelivery", "true", "SubscriptionRoleArn", FIREHOSE_ROLE_ARN));
 
         service.publish(topic.getTopicArn(), null, "bare-msg", null, REGION);
 
@@ -838,7 +877,8 @@ class SnsServiceTest {
 
         Topic topic = service.createTopic("firehose-fail-topic", null, null, REGION);
         service.subscribe(topic.getTopicArn(), "firehose",
-                "arn:aws:firehose:us-east-1:000000000000:deliverystream/failing-stream", REGION, Map.of());
+                "arn:aws:firehose:us-east-1:000000000000:deliverystream/failing-stream", REGION,
+                Map.of("SubscriptionRoleArn", FIREHOSE_ROLE_ARN));
 
         // Delivery error is logged and tolerated; publisher receives message ID
         String messageId = service.publish(topic.getTopicArn(), null, "msg", null, REGION);

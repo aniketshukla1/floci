@@ -57,6 +57,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
 @ApplicationScoped
 public class SnsService implements Resettable, ResourceProvider {
@@ -71,6 +72,9 @@ public class SnsService implements Resettable, ResourceProvider {
     private static final int MAX_MAX_MESSAGE_SIZE = 1_048_576;
     /** The only protocols allowed on a topic above {@link #DEFAULT_MAX_MESSAGE_SIZE}. */
     private static final Set<String> LARGE_PAYLOAD_PROTOCOLS = Set.of("sqs", "firehose", "lambda");
+    private static final String SUBSCRIPTION_ROLE_ARN = "SubscriptionRoleArn";
+    private static final Pattern IAM_ROLE_ARN = Pattern.compile(
+            "arn:" + AwsArnUtils.PARTITION_REGEX + ":iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+");
     /** How many subscriptions a topic above {@link #DEFAULT_MAX_MESSAGE_SIZE} may carry. */
     private static final int LARGE_PAYLOAD_SUBSCRIPTION_LIMIT = 100;
     private static final String MAXIMUM_MESSAGE_SIZE = "MaximumMessageSize";
@@ -435,6 +439,9 @@ public class SnsService implements Resettable, ResourceProvider {
                 || ("https".equals(protocol) && endpoint != null && !endpoint.startsWith("https://"))) {
             throw new AwsException("InvalidParameter",
                     "Invalid parameter: Endpoint scheme does not match protocol '" + protocol + "'.", 400);
+        }
+        if ("firehose".equals(protocol)) {
+            requireFirehoseRoleArn(attributes == null ? null : attributes.get(SUBSCRIPTION_ROLE_ARN));
         }
         if (topicMaxMessageSize(topicArn, region) > DEFAULT_MAX_MESSAGE_SIZE) {
             requireLargePayloadProtocol(protocol);
@@ -980,8 +987,19 @@ public class SnsService implements Resettable, ResourceProvider {
         String key = subKey(region, subscriptionArn);
         Subscription sub = subscriptionStore.get(key)
                 .orElseThrow(() -> new AwsException("NotFound", "Subscription does not exist.", 404));
+        if ("firehose".equals(sub.getProtocol()) && SUBSCRIPTION_ROLE_ARN.equals(attributeName)) {
+            requireFirehoseRoleArn(attributeValue);
+        }
         sub.getAttributes().put(attributeName, attributeValue);
         subscriptionStore.put(key, sub);
+    }
+
+    private static void requireFirehoseRoleArn(String roleArn) {
+        if (roleArn == null || !IAM_ROLE_ARN.matcher(roleArn).matches()) {
+            throw new AwsException("InvalidParameter",
+                    "Invalid parameter: SubscriptionRoleArn must be a valid IAM role ARN for firehose subscriptions.",
+                    400);
+        }
     }
 
     public record BatchPublishResult(List<String[]> successful, List<String[]> failed) {

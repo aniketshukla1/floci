@@ -85,7 +85,8 @@ Floci supports real SNS → SQS fan-out. When you publish to a topic, every SQS-
 Supported subscription protocols:
 - `sqs`: delivers to a Floci SQS queue
 - `lambda`: invokes a Floci Lambda function
-- `firehose`: puts records to a Floci Firehose delivery stream
+- `firehose`: puts records to a Floci Firehose delivery stream; `Subscribe` requires a valid IAM
+  `SubscriptionRoleArn` attribute, which is returned by `GetSubscriptionAttributes`
 - `http` / `https`: posts to an HTTP endpoint
 - `application`: fans out to a mobile push platform endpoint (see [Mobile push](#mobile-push-mock))
 
