@@ -358,6 +358,67 @@ class WafV2IntegrationTest {
 
     @Test
     @Order(17)
+    void tagResourcePersistsTagsForRegexPatternSet() {
+        Response created = call("CreateRegexPatternSet",
+                "{\"Name\":\"floci-tagged-regex\",\"Scope\":\"REGIONAL\",\"RegularExpressionList\":[]}");
+        created.then().statusCode(200);
+        String arn = created.jsonPath().getString("Summary.ARN");
+        String id = created.jsonPath().getString("Summary.Id");
+
+        assertTagAndUntagRoundTrip(arn);
+
+        String lockToken = call("GetRegexPatternSet",
+                "{\"Name\":\"floci-tagged-regex\",\"Scope\":\"REGIONAL\",\"Id\":\"" + id + "\"}")
+                .then().statusCode(200).extract().jsonPath().getString("LockToken");
+        call("DeleteRegexPatternSet",
+                "{\"Name\":\"floci-tagged-regex\",\"Scope\":\"REGIONAL\",\"Id\":\"" + id
+                        + "\",\"LockToken\":\"" + lockToken + "\"}")
+                .then().statusCode(200);
+    }
+
+    @Test
+    @Order(18)
+    void tagResourcePersistsTagsForRuleGroup() {
+        Response created = call("CreateRuleGroup",
+                "{\"Name\":\"floci-tagged-rules\",\"Scope\":\"REGIONAL\",\"Capacity\":1,\"Rules\":[]}");
+        created.then().statusCode(200);
+        String arn = created.jsonPath().getString("Summary.ARN");
+        String id = created.jsonPath().getString("Summary.Id");
+
+        assertTagAndUntagRoundTrip(arn);
+
+        String lockToken = call("GetRuleGroup",
+                "{\"Name\":\"floci-tagged-rules\",\"Scope\":\"REGIONAL\",\"Id\":\"" + id + "\"}")
+                .then().statusCode(200).extract().jsonPath().getString("LockToken");
+        call("DeleteRuleGroup",
+                "{\"Name\":\"floci-tagged-rules\",\"Scope\":\"REGIONAL\",\"Id\":\"" + id
+                        + "\",\"LockToken\":\"" + lockToken + "\"}")
+                .then().statusCode(200);
+    }
+
+    private static void assertTagAndUntagRoundTrip(String arn) {
+        call("TagResource", "{\"ResourceARN\":\"" + arn
+                + "\",\"Tags\":[{\"Key\":\"env\",\"Value\":\"test\"},{\"Key\":\"team\",\"Value\":\"waf\"}]}")
+                .then().statusCode(200);
+
+        call("ListTagsForResource", "{\"ResourceARN\":\"" + arn + "\"}")
+                .then().statusCode(200)
+                .body("TagInfoForResource.ResourceARN", equalTo(arn))
+                .body("TagInfoForResource.TagList", hasSize(2))
+                .body("TagInfoForResource.TagList.find { it.Key == 'env' }.Value", equalTo("test"))
+                .body("TagInfoForResource.TagList.find { it.Key == 'team' }.Value", equalTo("waf"));
+
+        call("UntagResource", "{\"ResourceARN\":\"" + arn + "\",\"TagKeys\":[\"team\"]}")
+                .then().statusCode(200);
+
+        call("ListTagsForResource", "{\"ResourceARN\":\"" + arn + "\"}")
+                .then().statusCode(200)
+                .body("TagInfoForResource.TagList", hasSize(1))
+                .body("TagInfoForResource.TagList[0].Key", equalTo("env"));
+    }
+
+    @Test
+    @Order(19)
     void teardown() {
         call("DisassociateWebACL", "{\"ResourceArn\":\"" + API_RESOURCE_ARN + "\"}")
                 .then().statusCode(200);
