@@ -3475,6 +3475,35 @@ class RdsServiceTest {
     }
 
     @Test
+    void restoreClusterFromSnapshotUsesRequestedPortAndReleasesItOnDelete() {
+        clusterSnapshotOfNewCluster("csnap");
+
+        DbCluster restored = rdsService.restoreDbClusterFromSnapshot("restored-cluster", "csnap",
+                "aurora-postgresql", null, 15432, null, null, null, null, null, null,
+                null, "us-east-1");
+        assertEquals(15432, restored.getEndpoint().port());
+        assertEquals(15432, restored.getProxyPort());
+        assertEquals(15432, rdsService.getDbCluster("restored-cluster").getEndpoint().port());
+        verify(proxyManager).startProxy(any(), any(), anyBoolean(), eq(15432), any(), anyInt(),
+                any(), any(), any(), any(), any(), any());
+
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> rdsService.restoreDbClusterFromSnapshot("duplicate-port", "csnap",
+                        "aurora-postgresql", null, 15432, null, null, null, null, null, null,
+                        null, "us-east-1")).getErrorCode());
+        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
+                () -> rdsService.restoreDbClusterFromSnapshot("invalid-port", "csnap",
+                        "aurora-postgresql", null, 1149, null, null, null, null, null, null,
+                        null, "us-east-1")).getErrorCode());
+
+        rdsService.deleteDbCluster("restored-cluster");
+        DbCluster reused = rdsService.restoreDbClusterFromSnapshot("reused-port", "csnap",
+                "aurora-postgresql", null, 15432, null, null, null, null, null, null,
+                null, "us-east-1");
+        assertEquals(15432, reused.getEndpoint().port());
+    }
+
+    @Test
     void clusterSnapshotRestoreAttributeIsSharedLikeAnInstanceSnapshots() {
         clusterSnapshotOfNewCluster("csnap");
 
