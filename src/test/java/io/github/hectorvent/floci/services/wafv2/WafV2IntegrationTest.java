@@ -440,7 +440,7 @@ class WafV2IntegrationTest {
     }
 
     @Test
-    @Order(18)
+    @Order(20)
     void getMissingWebAclReturnsNonexistentItem() {
         call("GetWebACL",
                 "{\"Name\":\"nope\",\"Scope\":\"REGIONAL\",\"Id\":\"00000000-0000-0000-0000-000000000000\"}")
@@ -449,7 +449,7 @@ class WafV2IntegrationTest {
     }
 
     @Test
-    @Order(19)
+    @Order(21)
     void arnLookupsOnMissingResourcesReturnNonexistentItemAs400() {
         String missingArn = "arn:aws:wafv2:us-east-1:000000000000:regional/webacl/nope/"
                 + "00000000-0000-0000-0000-000000000000";
