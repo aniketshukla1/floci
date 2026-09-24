@@ -499,7 +499,10 @@ public class ApiGatewayService {
                                             String httpMethod, String statusCode,
                                             Map<String, Object> request) {
         MethodConfig method = getMethod(region, apiId, resourceId, httpMethod);
-        MethodResponse mr = new MethodResponse(statusCode, new HashMap<>());
+        @SuppressWarnings("unchecked")
+        Map<String, Boolean> responseParameters = (Map<String, Boolean>) request.get("responseParameters");
+        MethodResponse mr = new MethodResponse(statusCode,
+                responseParameters != null ? responseParameters : new HashMap<>());
         method.getMethodResponses().put(statusCode, mr);
         resourceStore.put(resourceKey(region, apiId, resourceId), getResource(region, apiId, resourceId));
         return mr;

@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -102,6 +103,34 @@ class ApiGatewayRestApiCfnProvisionerTest {
         assertEquals("api-1-res-1-GET", r.getPhysicalId());
         verify(api).putMethod(eq("us-east-1"), eq("api-1"), eq("res-1"), eq("GET"), anyMap());
         verify(api).putIntegration(eq("us-east-1"), eq("api-1"), eq("res-1"), eq("GET"), anyMap());
+    }
+
+    @Test
+    void methodProvisionsMockTemplatesAndCorsResponses() throws Exception {
+        StackResource r = resource("AWS::ApiGateway::Method", "Options");
+        provisioner.provision(r, props("""
+                {"RestApiId":"api-1","ResourceId":"res-1","HttpMethod":"OPTIONS",
+                 "MethodResponses":[{"StatusCode":"200","ResponseParameters":{
+                   "method.response.header.Access-Control-Allow-Origin":true}}],
+                 "Integration":{"Type":"MOCK","RequestTemplates":{
+                   "application/json":"{\\\"statusCode\\\":200}"},
+                   "IntegrationResponses":[{"StatusCode":"200","ResponseParameters":{
+                     "method.response.header.Access-Control-Allow-Origin":"'*'"},
+                     "ResponseTemplates":{"application/json":"{}"}}]}}
+                """), ctx());
+
+        verify(api).putMethodResponse("us-east-1", "api-1", "res-1", "OPTIONS", "200",
+                Map.of("responseParameters", Map.of(
+                        "method.response.header.Access-Control-Allow-Origin", true)));
+        verify(api).putIntegration(eq("us-east-1"), eq("api-1"), eq("res-1"), eq("OPTIONS"),
+                org.mockito.ArgumentMatchers.argThat(request -> Map.of(
+                        "application/json", "{\"statusCode\":200}")
+                        .equals(request.get("requestTemplates"))));
+        verify(api).putIntegrationResponse(eq("us-east-1"), eq("api-1"), eq("res-1"), eq("OPTIONS"), eq("200"),
+                org.mockito.ArgumentMatchers.argThat(request ->
+                        Map.of("method.response.header.Access-Control-Allow-Origin", "'*'")
+                                .equals(request.get("responseParameters"))
+                        && Map.of("application/json", "{}").equals(request.get("responseTemplates"))));
     }
 
     @Test
