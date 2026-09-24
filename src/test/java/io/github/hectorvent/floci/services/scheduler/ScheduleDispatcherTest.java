@@ -205,6 +205,69 @@ class ScheduleDispatcherTest {
     }
 
     @Test
+    void rateWithTimezoneStillUsesElapsedHoursAcrossSpringForward() {
+        Schedule s = newSchedule("rate-dst", "rate(1 day)", "ENABLED");
+        s.setScheduleExpressionTimezone("America/Los_Angeles");
+        s.setCreationDate(Instant.parse("2026-03-07T10:30:00Z"));
+        when(schedulerService.listAllSchedules()).thenReturn(List.of(s));
+
+        dispatcher.tick(Instant.parse("2026-03-08T09:30:00Z"));
+        verify(invoker, never()).invoke(any(), any());
+        dispatcher.tick(Instant.parse("2026-03-08T10:30:00Z"));
+        verify(invoker).invoke(s, Instant.parse("2026-03-08T10:30:00Z"));
+    }
+
+    @Test
+    void cronWithTimezoneDispatchesAtLocalTime() {
+        Schedule s = newSchedule("cron-local", "cron(30 8 * * ? *)", "ENABLED");
+        s.setScheduleExpressionTimezone("America/Los_Angeles");
+        when(schedulerService.listAllSchedules()).thenReturn(List.of(s));
+
+        dispatcher.tick(Instant.parse("2026-04-21T15:29:00Z"));
+        verify(invoker, never()).invoke(any(), any());
+        dispatcher.tick(Instant.parse("2026-04-21T15:30:00Z"));
+        verify(invoker).invoke(s, Instant.parse("2026-04-21T15:30:00Z"));
+    }
+
+    @Test
+    void cronWithoutTimezoneDefaultsToUtc() {
+        Schedule s = newSchedule("cron-utc", "cron(30 10 * * ? *)", "ENABLED");
+        when(schedulerService.listAllSchedules()).thenReturn(List.of(s));
+
+        dispatcher.tick(Instant.parse("2026-04-21T10:29:00Z"));
+        verify(invoker, never()).invoke(any(), any());
+        dispatcher.tick(Instant.parse("2026-04-21T10:30:00Z"));
+        verify(invoker).invoke(s, Instant.parse("2026-04-21T10:30:00Z"));
+    }
+
+    @Test
+    void recurringScheduleRespectsInclusiveStartAndEndDates() {
+        Schedule s = newSchedule("bounded", "cron(0 10 * * ? *)", "ENABLED");
+        s.setStartDate(Instant.parse("2026-04-21T10:00:00Z"));
+        s.setEndDate(Instant.parse("2026-04-22T10:00:00Z"));
+        when(schedulerService.listAllSchedules()).thenReturn(List.of(s));
+
+        dispatcher.tick(Instant.parse("2026-04-21T09:59:59Z"));
+        verify(invoker, never()).invoke(any(), any());
+        dispatcher.tick(Instant.parse("2026-04-21T10:00:00Z"));
+        dispatcher.tick(Instant.parse("2026-04-22T10:00:00Z"));
+        dispatcher.tick(Instant.parse("2026-04-23T10:00:00Z"));
+        verify(invoker).invoke(s, Instant.parse("2026-04-21T10:00:00Z"));
+        verify(invoker).invoke(s, Instant.parse("2026-04-22T10:00:00Z"));
+        verify(invoker, times(2)).invoke(eq(s), any());
+    }
+
+    @Test
+    void disabledRecurringScheduleNeverDispatches() {
+        Schedule s = newSchedule("disabled-cron", "cron(0 10 * * ? *)", "DISABLED");
+        when(schedulerService.listAllSchedules()).thenReturn(List.of(s));
+
+        dispatcher.tick(Instant.parse("2026-04-21T10:00:00Z"));
+        dispatcher.tick(Instant.parse("2026-04-22T10:00:00Z"));
+        verify(invoker, never()).invoke(any(), any());
+    }
+
+    @Test
     void unsupportedExpressionIsSkippedNotThrown() {
         Schedule s = newSchedule("weird", "every 5 minutes", "ENABLED");
         when(schedulerService.listAllSchedules()).thenReturn(List.of(s));

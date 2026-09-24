@@ -513,6 +513,27 @@ class SchedulerServiceTest {
     }
 
     @Test
+    void createAndUpdatePreserveRecurringExpressionAndTimezone() {
+        Target target = new Target("arn:t", "arn:r", null, null);
+        FlexibleTimeWindow window = new FlexibleTimeWindow("OFF", null);
+        Schedule created = service.createSchedule(
+                newRequest("recurring", null, "rate(1 day)", window, target), REGION);
+        assertEquals("rate(1 day)", created.getScheduleExpression());
+        assertNull(created.getScheduleExpressionTimezone());
+
+        ScheduleRequest update = newRequest("recurring", null, "cron(30 8 * * ? *)", window, target);
+        update.setScheduleExpressionTimezone("America/Los_Angeles");
+        Schedule updated = service.updateSchedule(update, REGION);
+        Schedule fetched = service.getSchedule("recurring", null, REGION);
+        assertEquals("cron(30 8 * * ? *)", updated.getScheduleExpression());
+        assertEquals("America/Los_Angeles", fetched.getScheduleExpressionTimezone());
+        assertEquals(Instant.parse("2026-04-21T15:30:00Z"),
+                SchedulerExpressionParser.nextCronFire(fetched.getScheduleExpression(),
+                        Instant.parse("2026-04-21T00:00:00Z"),
+                        fetched.getScheduleExpressionTimezone()));
+    }
+
+    @Test
     void updateScheduleNotFoundThrows() {
         AwsException e = assertThrows(AwsException.class, () ->
                 service.updateSchedule(
