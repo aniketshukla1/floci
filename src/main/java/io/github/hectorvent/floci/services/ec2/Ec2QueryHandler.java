@@ -4458,6 +4458,7 @@ public class Ec2QueryHandler {
         }
         xml.end("groupSet")
                 .elem("architecture", inst.getArchitecture())
+                .elem("platformDetails", service.platformDetailsForInstance(inst))
                 .elem("rootDeviceType", inst.getRootDeviceType())
                 .elem("rootDeviceName", inst.getRootDeviceName())
                 .elem("virtualizationType", inst.getVirtualizationType())
