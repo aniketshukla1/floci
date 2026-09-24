@@ -108,12 +108,17 @@ public class AsyncInvokeDestinationRouter {
      *                   {@link LambdaInvocationChain} instead of running forever
      */
     public void route(LambdaFunction fn, byte[] requestPayload, InvokeResult result, int chainDepth) {
+        route(fn, requestPayload, result, chainDepth, null);
+    }
+
+    public void route(LambdaFunction fn, byte[] requestPayload, InvokeResult result, int chainDepth,
+                      String invokedQualifier) {
         // A runtime that never started, timed out, or crashed is reported as a function error by
         // the executor, so this one test covers a handler error and a failed runtime alike.
         boolean failed = result.getFunctionError() != null;
         FunctionEventInvokeConfig.Destination destination;
         try {
-            destination = destinationFor(fn, failed);
+            destination = destinationFor(fn, failed, invokedQualifier);
         } catch (Exception e) {
             LOG.warnv("Could not read the event invoke configuration of {0}: {1}",
                     fn.getFunctionArn(), e.getMessage());
@@ -133,8 +138,11 @@ public class AsyncInvokeDestinationRouter {
         }
     }
 
-    private FunctionEventInvokeConfig.Destination destinationFor(LambdaFunction fn, boolean failed) {
-        FunctionEventInvokeConfig config = lambdaService.get().findEventInvokeConfig(fn).orElse(null);
+    private FunctionEventInvokeConfig.Destination destinationFor(LambdaFunction fn, boolean failed,
+                                                                  String invokedQualifier) {
+        FunctionEventInvokeConfig config = (invokedQualifier == null
+                ? lambdaService.get().findEventInvokeConfig(fn)
+                : lambdaService.get().findEventInvokeConfig(fn, invokedQualifier)).orElse(null);
         if (config == null || config.getDestinationConfig() == null) {
             return null;
         }

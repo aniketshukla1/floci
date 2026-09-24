@@ -339,6 +339,23 @@ class AsyncInvokeDestinationRouterTest {
         assertEquals("3", detail.path("responseContext").path("executedVersion").asText());
     }
 
+    @Test
+    void invokedAliasUsesAliasConfigWhileRecordKeepsExecutedVersion() {
+        fn.setFunctionArn(FUNCTION_ARN + ":3");
+        fn.setVersion("3");
+        configure(BUS_ARN, null);
+        FunctionEventInvokeConfig aliasConfig = lambdaService.findEventInvokeConfig(fn).orElseThrow();
+        when(lambdaService.findEventInvokeConfig(fn)).thenReturn(Optional.empty());
+        when(lambdaService.findEventInvokeConfig(fn, "prod")).thenReturn(Optional.of(aliasConfig));
+
+        router.route(fn, request(), success("{}"), 0, "prod");
+
+        verify(lambdaService).findEventInvokeConfig(fn, "prod");
+        JsonNode detail = detailOf(capturedEventEntry());
+        assertEquals(FUNCTION_ARN + ":3", detail.path("requestContext").path("functionArn").asText());
+        assertEquals("3", detail.path("responseContext").path("executedVersion").asText());
+    }
+
     private void configure(String onSuccess, String onFailure) {
         FunctionEventInvokeConfig config = new FunctionEventInvokeConfig();
         FunctionEventInvokeConfig.DestinationConfig destinations =

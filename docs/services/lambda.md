@@ -95,13 +95,11 @@ type `Lambda Function Invocation Result - Failure`, a `condition` of `RetriesExh
 `functionError` member is present only on a failure record. Since retries are not applied, a
 failure reaches its destination once and `approximateInvokeCount` is always 1.
 
-Three limits are worth knowing:
+An alias-specific destination configuration is used when the alias is invoked. If the alias has
+none, Floci checks the configuration on the version that the alias resolves to.
 
-- **A destination configured on an alias does not fire.** The configuration is matched against the
-  version the invocation actually ran, so one stored for `$LATEST` or for an explicit version is
-  found, while one stored for an alias (`Qualifier: prod`) is not, and nothing is delivered. The
-  CDK `onSuccess` and `onFailure` properties store theirs under `$LATEST`, so a destination
-  declared that way is unaffected.
+Two limits are worth knowing:
+
 - **An S3 `OnFailure` destination is not delivered.** AWS added an S3 bucket as a fifth
   destination kind, on failure only. Floci routes on the service in the destination ARN and has
   no `s3` arm, so such a record is dropped with a warning rather than written to the bucket. The

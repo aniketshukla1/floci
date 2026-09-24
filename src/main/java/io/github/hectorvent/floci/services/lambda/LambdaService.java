@@ -1045,7 +1045,7 @@ public class LambdaService implements ResourceProvider {
         }
         reportCustomResourceLiveness(payload);
         InvokeResult result = executorService.invoke(fn, payload, type,
-                LambdaInvocationChain.currentDepth());
+                LambdaInvocationChain.currentDepth(), qualifier);
         result.setExecutedVersion(fn.getVersion());
         return result;
     }
@@ -1074,7 +1074,7 @@ public class LambdaService implements ResourceProvider {
         LambdaArnUtils.ResolvedFunctionRef ref = LambdaArnUtils.resolve(functionArn);
         LambdaFunction fn = targetResolver.resolveInvokeTargetForAccount(
                 arn.accountId(), arn.region(), ref.name(), ref.qualifier());
-        InvokeResult result = executorService.invoke(fn, payload, type, chainDepth);
+        InvokeResult result = executorService.invoke(fn, payload, type, chainDepth, ref.qualifier());
         result.setExecutedVersion(fn.getVersion());
         return result;
     }
@@ -3218,36 +3218,38 @@ public class LambdaService implements ResourceProvider {
         return result;
     }
 
-    /**
-     * The event invoke configuration that applies to an invocation of {@code fn}, or empty when
-     * the function has none. Unlike {@link #getEventInvokeConfig} this answers a background
-     * worker rather than an API caller, so an absent configuration is a result and not a fault.
-     *
-     * <p>The lookup key is the unqualified function ARN plus the version the invocation actually
-     * ran, which is where a function-level {@code PutFunctionEventInvokeConfig} stores its
-     * settings: that call names {@code $LATEST}, and so does a resolved unpublished function.
-     *
-     * <p>The read runs as the function's owning account. {@code PutFunctionEventInvokeConfig}
-     * stored the configuration in that account's partition of the account-aware backend, and the
-     * background worker calling this carries no request context, so without re-establishing the
-     * account the read would land in the default partition and a function in any other account
-     * would look as though it had no configuration at all.
-     */
     public Optional<FunctionEventInvokeConfig> findEventInvokeConfig(LambdaFunction fn) {
+        return findEventInvokeConfig(fn, null);
+    }
+
+    /**
+     * Finds the asynchronous settings for the qualifier the caller invoked, falling back to the
+     * resolved version when an alias has no configuration of its own. The read runs in the
+     * function owner's account because destination delivery happens on a background thread.
+     */
+    public Optional<FunctionEventInvokeConfig> findEventInvokeConfig(LambdaFunction fn,
+                                                                      String invokedQualifier) {
         if (fn == null || fn.getFunctionArn() == null) {
             return Optional.empty();
         }
-        String qualifier = fn.getVersion() != null ? fn.getVersion() : "$LATEST";
+        String version = fn.getVersion() != null ? fn.getVersion() : "$LATEST";
         String functionArn = fn.getFunctionArn();
-        if (functionArn.endsWith(":" + qualifier)) {
-            functionArn = functionArn.substring(0, functionArn.length() - qualifier.length() - 1);
+        if (functionArn.endsWith(":" + version)) {
+            functionArn = functionArn.substring(0, functionArn.length() - version.length() - 1);
         }
         String region = AwsArnUtils.regionOrDefault(functionArn, null);
-        String key = eventInvokeKey(region, functionArn, qualifier);
+        String baseArn = functionArn;
         String owner = fn.getAccountId() != null
                 ? fn.getAccountId()
                 : AwsArnUtils.accountOrDefault(functionArn, null);
-        return RequestScopes.callAs(owner, () -> Optional.ofNullable(eventInvokeConfigs.get(key)));
+        return RequestScopes.callAs(owner, () -> {
+            FunctionEventInvokeConfig config = invokedQualifier != null && !invokedQualifier.isBlank()
+                    ? eventInvokeConfigs.get(eventInvokeKey(region, baseArn, invokedQualifier)) : null;
+            if (config == null) {
+                config = eventInvokeConfigs.get(eventInvokeKey(region, baseArn, version));
+            }
+            return Optional.ofNullable(config);
+        });
     }
 
     private String eventInvokeKey(String region, String functionArn, String qualifier) {

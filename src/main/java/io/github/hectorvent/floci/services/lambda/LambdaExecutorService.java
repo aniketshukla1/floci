@@ -80,6 +80,11 @@ public class LambdaExecutorService {
      * one a destination chain can re-enter through.
      */
     InvokeResult invoke(LambdaFunction fn, byte[] payload, InvocationType type, int chainDepth) {
+        return invoke(fn, payload, type, chainDepth, null);
+    }
+
+    InvokeResult invoke(LambdaFunction fn, byte[] payload, InvocationType type, int chainDepth,
+                        String invokedQualifier) {
         String requestId = UUID.randomUUID().toString();
 
         if (type == InvocationType.DryRun) {
@@ -105,7 +110,7 @@ public class LambdaExecutorService {
                         permit.close();
                     }
                     if (destinationRouter != null) {
-                        destinationRouter.route(fn, payload, asyncResult, chainDepth);
+                        destinationRouter.route(fn, payload, asyncResult, chainDepth, invokedQualifier);
                     }
                 });
             } catch (RuntimeException e) {

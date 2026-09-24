@@ -27,6 +27,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -74,6 +76,27 @@ class LambdaExecutorServiceTest {
         executor.invoke(fn, "{}".getBytes(), InvocationType.Event, LambdaInvocationChain.MAX_DEPTH - 1);
 
         verify(warmPool, timeout(5000)).acquire(fn);
+    }
+
+    @Test
+    void asyncInvocationPassesInvokedAliasToDestinationRouter() {
+        AsyncInvokeDestinationRouter router = mock(AsyncInvokeDestinationRouter.class);
+        executor.shutdown();
+        executor = new LambdaExecutorService(warmPool, new ObjectMapper(), concurrencyLimiter, router);
+        RuntimeApiServer rtas = mock(RuntimeApiServer.class);
+        ContainerHandle handle = new ContainerHandle("cid-alias", "test-fn", rtas, ContainerState.WARM);
+        when(warmPool.acquire(fn)).thenReturn(handle);
+        doAnswer(inv -> {
+            PendingInvocation invocation = inv.getArgument(0);
+            invocation.getResultFuture().complete(
+                    new InvokeResult(200, null, "{}".getBytes(), null, invocation.getRequestId()));
+            return invocation.getResultFuture();
+        }).when(rtas).enqueue(any(PendingInvocation.class));
+
+        byte[] payload = "{}".getBytes();
+        executor.invoke(fn, payload, InvocationType.Event, 0, "prod");
+
+        verify(router, timeout(5000)).route(eq(fn), eq(payload), any(InvokeResult.class), eq(0), eq("prod"));
     }
 
     @Test
@@ -234,14 +257,14 @@ class LambdaExecutorServiceTest {
         doAnswer(inv -> {
             routed.countDown();
             return null;
-        }).when(router).route(any(), any(), any(), anyInt());
+        }).when(router).route(any(), any(), any(), anyInt(), isNull());
 
         byte[] payload = "{}".getBytes();
         InvokeResult result = routingExecutor.invoke(fn, payload, InvocationType.Event);
 
         assertEquals(202, result.getStatusCode());
         assertTrue(routed.await(5, TimeUnit.SECONDS), "destination routing never ran");
-        verify(router).route(fn, payload, expected, 0);
+        verify(router).route(fn, payload, expected, 0, null);
     }
 
     @Test
