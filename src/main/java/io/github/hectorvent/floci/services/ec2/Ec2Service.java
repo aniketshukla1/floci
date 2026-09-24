@@ -6991,6 +6991,14 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
     public void replaceRoute(String region, String routeTableId, String destinationCidrBlock,
                              String destinationIpv6CidrBlock, String destinationPrefixListId,
                              String gatewayId, String natGatewayId, String vpcPeeringConnectionId) {
+        replaceRoute(region, routeTableId, destinationCidrBlock, destinationIpv6CidrBlock,
+                destinationPrefixListId, gatewayId, natGatewayId, vpcPeeringConnectionId, false);
+    }
+
+    public void replaceRoute(String region, String routeTableId, String destinationCidrBlock,
+                             String destinationIpv6CidrBlock, String destinationPrefixListId,
+                             String gatewayId, String natGatewayId, String vpcPeeringConnectionId,
+                             boolean dryRun) {
         requireExactlyOneDestination("ReplaceRoute", destinationCidrBlock, destinationIpv6CidrBlock,
                 destinationPrefixListId);
         // AWS takes exactly one target. Rejecting both-or-neither also keeps the targets this
@@ -7019,6 +7027,11 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider {
                                     + destinationLabel(canonicalDestinationCidrBlock, destinationIpv6CidrBlock,
                                             destinationPrefixListId)
                                     + " does not exist", 400));
+
+            if (dryRun) {
+                throw new AwsException("DryRunOperation",
+                        "Request would have succeeded, but DryRun flag is set.", 412);
+            }
 
             // The target the request does not name is cleared rather than carried over from the
             // route being replaced.

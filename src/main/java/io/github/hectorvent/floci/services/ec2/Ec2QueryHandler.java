@@ -3651,7 +3651,8 @@ public class Ec2QueryHandler {
             }
             gwId = LOCAL_GATEWAY_ID;
         }
-        service.replaceRoute(region, rtId, dest, destIpv6, destPrefixList, gwId, natGwId, pcxId);
+        service.replaceRoute(region, rtId, dest, destIpv6, destPrefixList, gwId, natGwId, pcxId,
+                Boolean.parseBoolean(p.getFirst("DryRun")));
         return booleanResponse("ReplaceRoute");
     }
 
