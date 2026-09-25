@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.iam;
 
 import io.github.hectorvent.floci.core.common.XmlParser;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.ValidatableResponse;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
@@ -40,6 +41,7 @@ import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.startsWith;
 
 @QuarkusTest
@@ -175,17 +177,32 @@ class AssumeRoleWithSamlValidationIntegrationTest {
     }
 
     @Test
-    void validSignedAssertionReturnsCredentialsAndSamlFields() {
+    void validSignedAssertionPreservesCallerIdentity() {
         String role = createRole(true);
-        assume(role, assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true), PROVIDER)
+        ValidatableResponse assumed = assume(role,
+                assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true), PROVIDER)
                 .statusCode(200)
                 .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Credentials.AccessKeyId", startsWith("ASIA"))
                 .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Issuer", containsString(ISSUER))
                 .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Audience", containsString(AUDIENCE))
                 .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Subject", containsString("saml-subject"));
+
+        String prefix = "AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.";
+        String accessKeyId = assumed.extract().path(prefix + "Credentials.AccessKeyId");
+        String sessionToken = assumed.extract().path(prefix + "Credentials.SessionToken");
+        String assumedRoleArn = assumed.extract().path(prefix + "AssumedRoleUser.Arn");
+        String assumedRoleId = assumed.extract().path(prefix + "AssumedRoleUser.AssumedRoleId");
+        given().contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "GetCallerIdentity")
+                .header("Authorization", "AWS4-HMAC-SHA256 Credential=" + accessKeyId
+                        + "/20260926/us-east-1/sts/aws4_request")
+                .header("X-Amz-Security-Token", sessionToken)
+                .when().post("/").then().statusCode(200)
+                .body("GetCallerIdentityResponse.GetCallerIdentityResult.Arn", equalTo(assumedRoleArn))
+                .body("GetCallerIdentityResponse.GetCallerIdentityResult.UserId", equalTo(assumedRoleId));
     }
 
-    private static io.restassured.response.ValidatableResponse assume(String role, String assertion, String provider) {
+    private static ValidatableResponse assume(String role, String assertion, String provider) {
         return given().contentType("application/x-www-form-urlencoded")
                 .formParam("Action", "AssumeRoleWithSAML")
                 .formParam("RoleArn", role)

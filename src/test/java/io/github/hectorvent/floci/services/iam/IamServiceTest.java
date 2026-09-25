@@ -103,6 +103,7 @@ class IamServiceTest {
         SessionCredential restored = mapper.readValue(mapper.writeValueAsBytes(stored), SessionCredential.class);
         assertEquals("my-custom-session-name", restored.getRoleSessionName());
         assertEquals("AROATESTROLEID:my-custom-session-name", restored.getAssumedRoleId());
+        sessions.put(accessKeyId, restored);
         assertEquals("arn:aws:sts::123456789012:assumed-role/TestRole/my-custom-session-name",
                 service.resolveCallerArn(accessKeyId).orElseThrow());
         assertEquals(restored.getAssumedRoleId(), service.resolveCallerUserId(accessKeyId).orElseThrow());
