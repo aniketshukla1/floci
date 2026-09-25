@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
+import javax.xml.crypto.dsig.CanonicalizationMethod;
 import javax.xml.crypto.dsig.DigestMethod;
 import javax.xml.crypto.dsig.Reference;
 import javax.xml.crypto.dsig.SignatureMethod;
@@ -21,6 +22,10 @@ import javax.xml.crypto.dsig.SignedInfo;
 import javax.xml.crypto.dsig.Transform;
 import javax.xml.crypto.dsig.XMLSignatureFactory;
 import javax.xml.crypto.dsig.dom.DOMSignContext;
+import javax.xml.crypto.dsig.spec.TransformParameterSpec;
+import javax.xml.crypto.dsig.spec.XPathFilter2ParameterSpec;
+import javax.xml.crypto.dsig.spec.XPathFilterParameterSpec;
+import javax.xml.crypto.dsig.spec.XPathType;
 
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.TransformerFactory;
@@ -38,6 +43,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
@@ -113,6 +119,48 @@ class AssumeRoleWithSamlValidationIntegrationTest {
         String altered = tamper(assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true),
                 "saml-subject", "altered-subject");
         assume(role, altered, PROVIDER).statusCode(400).body(containsString("InvalidIdentityToken"));
+    }
+
+    @Test
+    void xpathTransformIsRejectedAsInvalidSignature() {
+        assertSignatureInvalid(factory -> List.of(enveloped(factory),
+                transform(factory, Transform.XPATH, new XPathFilterParameterSpec("true()")),
+                transform(factory, CanonicalizationMethod.EXCLUSIVE, null)));
+    }
+
+    @Test
+    void xpathFilter2TransformIsRejectedAsInvalidSignature() {
+        assertSignatureInvalid(factory -> List.of(enveloped(factory),
+                transform(factory, Transform.XPATH2,
+                        new XPathFilter2ParameterSpec(List.of(new XPathType("/", XPathType.Filter.UNION)))),
+                transform(factory, CanonicalizationMethod.EXCLUSIVE, null)));
+    }
+
+    @Test
+    void inclusiveCanonicalizationTransformIsRejectedAsInvalidSignature() {
+        assertSignatureInvalid(factory -> List.of(enveloped(factory),
+                transform(factory, CanonicalizationMethod.INCLUSIVE, null)));
+    }
+
+    @Test
+    void envelopedAndExclusiveCanonicalizationTransformsAreAccepted() {
+        String role = createRole(true);
+        assume(role, assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true, false,
+                factory -> List.of(enveloped(factory), transform(factory, CanonicalizationMethod.EXCLUSIVE, null))),
+                PROVIDER)
+                .statusCode(200)
+                .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Credentials.AccessKeyId", startsWith("ASIA"));
+    }
+
+    @Test
+    void envelopedAndExclusiveCanonicalizationWithCommentsTransformsAreAccepted() {
+        String role = createRole(true);
+        assume(role, assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true, false,
+                factory -> List.of(enveloped(factory),
+                        transform(factory, CanonicalizationMethod.EXCLUSIVE_WITH_COMMENTS, null))),
+                PROVIDER)
+                .statusCode(200)
+                .body("AssumeRoleWithSAMLResponse.AssumeRoleWithSAMLResult.Credentials.AccessKeyId", startsWith("ASIA"));
     }
 
     @Test
@@ -202,6 +250,27 @@ class AssumeRoleWithSamlValidationIntegrationTest {
                 .body("GetCallerIdentityResponse.GetCallerIdentityResult.UserId", equalTo(assumedRoleId));
     }
 
+    private static void assertSignatureInvalid(Function<XMLSignatureFactory, List<Transform>> transforms) {
+        String role = createRole(true);
+        assume(role, assertion(role, PROVIDER, Instant.now().plusSeconds(300), AUDIENCE, ISSUER, true, false, transforms),
+                PROVIDER)
+                .statusCode(400)
+                .body("ErrorResponse.Error.Code", equalTo("InvalidIdentityToken"))
+                .body("ErrorResponse.Error.Message", equalTo("Response signature invalid"));
+    }
+
+    private static Transform enveloped(XMLSignatureFactory factory) {
+        return transform(factory, Transform.ENVELOPED, null);
+    }
+
+    private static Transform transform(XMLSignatureFactory factory, String algorithm, TransformParameterSpec spec) {
+        try {
+            return factory.newTransform(algorithm, spec);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private static ValidatableResponse assume(String role, String assertion, String provider) {
         return given().contentType("application/x-www-form-urlencoded")
                 .formParam("Action", "AssumeRoleWithSAML")
@@ -258,6 +327,13 @@ class AssumeRoleWithSamlValidationIntegrationTest {
 
     private static String assertion(String role, String provider, Instant expiry, String audience,
                                     String issuer, boolean sign, boolean unrelatedConfirmation) {
+        return assertion(role, provider, expiry, audience, issuer, sign, unrelatedConfirmation,
+                factory -> List.of(enveloped(factory)));
+    }
+
+    private static String assertion(String role, String provider, Instant expiry, String audience,
+                                    String issuer, boolean sign, boolean unrelatedConfirmation,
+                                    Function<XMLSignatureFactory, List<Transform>> transforms) {
         String id = "_" + UUID.randomUUID();
         String extraConfirmation = unrelatedConfirmation
                 ? "<saml:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:sender-vouches\"><saml:SubjectConfirmationData Recipient=\"https://unrelated.example.test\" NotOnOrAfter=\"" + Instant.now().minusSeconds(1) + "\"/></saml:SubjectConfirmation>"
@@ -277,7 +353,7 @@ class AssumeRoleWithSamlValidationIntegrationTest {
             XMLSignatureFactory factory = XMLSignatureFactory.getInstance("DOM");
             Reference reference = factory.newReference("#" + id,
                     factory.newDigestMethod(DigestMethod.SHA256, null),
-                    List.of(factory.newTransform(Transform.ENVELOPED, (javax.xml.crypto.dsig.spec.TransformParameterSpec) null)), null, null);
+                    transforms.apply(factory), null, null);
             SignedInfo signedInfo = factory.newSignedInfo(
                     factory.newCanonicalizationMethod("http://www.w3.org/2001/10/xml-exc-c14n#", (javax.xml.crypto.dsig.spec.C14NMethodParameterSpec) null),
                     factory.newSignatureMethod(SignatureMethod.RSA_SHA256, null), List.of(reference));

@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import java.time.Clock;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -44,7 +45,9 @@ class GlueJsonHandlerEmptyListTest {
         GlueService glueService = new GlueService(
             storageFactory, schemaRegistryService, regionResolver,
             new ResourceGroupsTaggingService(storageFactory), new KmsService(storageFactory, regionResolver));
-        handler = new GlueJsonHandler(glueService, schemaRegistryService, mapper);
+        handler = new GlueJsonHandler(glueService,
+                new GlueJobRunService(new InMemoryStorage<>(), glueService, 0, Clock.systemUTC()),
+                schemaRegistryService, mapper);
     }
 
     @Test

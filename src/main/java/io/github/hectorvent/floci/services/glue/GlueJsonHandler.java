@@ -31,14 +31,17 @@ public class GlueJsonHandler {
     private static final TypeReference<List<Partition>> PARTITION_LIST = new TypeReference<>() {};
 
     private final GlueService glueService;
+    private final GlueJobRunService jobRunService;
     private final GlueSchemaRegistryService schemaRegistryService;
     private final ObjectMapper mapper;
 
     @Inject
     public GlueJsonHandler(GlueService glueService,
+                           GlueJobRunService jobRunService,
                            GlueSchemaRegistryService schemaRegistryService,
                            ObjectMapper mapper) {
         this.glueService = glueService;
+        this.jobRunService = jobRunService;
         this.schemaRegistryService = schemaRegistryService;
         this.mapper = mapper;
     }
@@ -233,9 +236,43 @@ public class GlueJsonHandler {
             }
             case "DeleteJob" -> {
                 DeleteJobRequest req = mapper.treeToValue(request, DeleteJobRequest.class);
+                // Job first, runs second: a StartJobRun that checked the job before it was deleted has
+                // stored its run by the time deleteRuns takes the run service's lock.
                 glueService.deleteJob(req.getJobName(), region);
+                jobRunService.deleteRuns(req.getJobName());
                 yield Response.ok(new DeleteJobResponse(req.getJobName())).build();
             }
+            case "ListJobs" -> {
+                Map<String, String> tags = request.hasNonNull("Tags")
+                        ? mapper.convertValue(request.get("Tags"), STRING_MAP)
+                        : null;
+                GlueService.Page<String> page = glueService.listJobs(
+                        readMaxResults(request), readNextToken(request), tags, region);
+                yield Response.ok(pageResponse("JobNames", page.items(), page.nextToken())).build();
+            }
+            case "BatchGetJobs" -> {
+                List<String> names = request.hasNonNull("JobNames")
+                        ? mapper.convertValue(request.get("JobNames"), STRING_LIST)
+                        : null;
+                GlueService.BatchGetJobsResult result = glueService.batchGetJobs(names);
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("Jobs", result.jobs());
+                response.put("JobsNotFound", result.jobsNotFound());
+                yield Response.ok(response).build();
+            }
+            case "StartJobRun" -> {
+                JobRun run = jobRunService.startJobRun(request.path("JobName").asText(null),
+                        request.path("JobRunId").asText(null), jobRunOverrides(request));
+                yield Response.ok(Map.of("JobRunId", run.getId())).build();
+            }
+            case "GetJobRun" -> Response.ok(Map.of("JobRun", jobRunService.getJobRun(
+                    request.path("JobName").asText(null), request.path("RunId").asText(null)))).build();
+            case "GetJobRuns" -> {
+                GlueService.Page<JobRun> page = jobRunService.getJobRuns(
+                        request.path("JobName").asText(null), readMaxResults(request), readNextToken(request));
+                yield Response.ok(pageResponse("JobRuns", page.items(), page.nextToken())).build();
+            }
+            case "BatchStopJobRun" -> handleBatchStopJobRun(request);
             case "CreateClassifier" -> {
                 Classifier classifier = mapper.treeToValue(request, Classifier.class);
                 glueService.createClassifier(classifier);
@@ -969,6 +1006,72 @@ public class GlueJsonHandler {
                 input.path("ConnectionType").asText(null),
                 properties);
         return Response.ok(Map.of()).build();
+    }
+
+    private JobRun jobRunOverrides(JsonNode request) throws Exception {
+        JobRun overrides = new JobRun();
+        if (request.hasNonNull("Arguments")) {
+            overrides.setArguments(mapper.convertValue(request.get("Arguments"), STRING_MAP));
+        }
+        if (request.hasNonNull("AllocatedCapacity")) {
+            overrides.setAllocatedCapacity(request.get("AllocatedCapacity").asInt());
+        }
+        if (request.hasNonNull("Timeout")) {
+            overrides.setTimeout(request.get("Timeout").asInt());
+        }
+        if (request.hasNonNull("MaxCapacity")) {
+            overrides.setMaxCapacity(request.get("MaxCapacity").asDouble());
+        }
+        if (request.hasNonNull("WorkerType")) {
+            overrides.setWorkerType(request.get("WorkerType").asText());
+        }
+        if (request.hasNonNull("NumberOfWorkers")) {
+            overrides.setNumberOfWorkers(request.get("NumberOfWorkers").asInt());
+        }
+        if (request.hasNonNull("SecurityConfiguration")) {
+            overrides.setSecurityConfiguration(request.get("SecurityConfiguration").asText());
+        }
+        if (request.hasNonNull("NotificationProperty")) {
+            overrides.setNotificationProperty(
+                    mapper.treeToValue(request.get("NotificationProperty"), NotificationProperty.class));
+        }
+        if (request.hasNonNull("ExecutionClass")) {
+            overrides.setExecutionClass(request.get("ExecutionClass").asText());
+        }
+        if (request.hasNonNull("JobRunQueuingEnabled")) {
+            overrides.setJobRunQueuingEnabled(request.get("JobRunQueuingEnabled").asBoolean());
+        }
+        return overrides;
+    }
+
+    private Response handleBatchStopJobRun(JsonNode request) {
+        List<String> runIds = request.hasNonNull("JobRunIds")
+                ? mapper.convertValue(request.get("JobRunIds"), STRING_LIST)
+                : null;
+        GlueJobRunService.StopResult result =
+                jobRunService.batchStopJobRun(request.path("JobName").asText(null), runIds);
+        List<Map<String, Object>> submissions = new ArrayList<>();
+        for (GlueJobRunService.StoppedRun stopped : result.stopped()) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("JobName", stopped.jobName());
+            entry.put("JobRunId", stopped.jobRunId());
+            submissions.add(entry);
+        }
+        List<Map<String, Object>> errors = new ArrayList<>();
+        for (GlueJobRunService.StopError error : result.errors()) {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("ErrorCode", error.errorCode());
+            detail.put("ErrorMessage", error.errorMessage());
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("JobName", error.jobName());
+            entry.put("JobRunId", error.jobRunId());
+            entry.put("ErrorDetail", detail);
+            errors.add(entry);
+        }
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("SuccessfulSubmissions", submissions);
+        response.put("Errors", errors);
+        return Response.ok(response).build();
     }
 
     private Response handleGetTags(JsonNode request, String region) {

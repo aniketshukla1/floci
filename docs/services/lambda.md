@@ -95,13 +95,11 @@ type `Lambda Function Invocation Result - Failure`, a `condition` of `RetriesExh
 `functionError` member is present only on a failure record. Since retries are not applied, a
 failure reaches its destination once and `approximateInvokeCount` is always 1.
 
-Three limits are worth knowing:
+An alias-specific destination configuration is used when the alias is invoked. If the alias has
+none, Floci checks the configuration on the version that the alias resolves to.
 
-- **A destination configured on an alias does not fire.** The configuration is matched against the
-  version the invocation actually ran, so one stored for `$LATEST` or for an explicit version is
-  found, while one stored for an alias (`Qualifier: prod`) is not, and nothing is delivered. The
-  CDK `onSuccess` and `onFailure` properties store theirs under `$LATEST`, so a destination
-  declared that way is unaffected.
+Two limits are worth knowing:
+
 - **An S3 `OnFailure` destination is not delivered.** AWS added an S3 bucket as a fifth
   destination kind, on failure only. Floci routes on the service in the destination ARN and has
   no `s3` arm, so such a record is dropped with a warning rather than written to the bucket. The
@@ -835,6 +833,8 @@ aws lambda update-function-code \
 Connect Lambda to SQS, Kinesis, or DynamoDB Streams. Self-managed Apache Kafka event source mappings are accepted, validated, persisted, and returned on the wire, but Floci does not run an active Kafka consumer poller:
 
 For DynamoDB Streams mappings, Floci retries failed batches with exponential backoff, honors `MaximumRetryAttempts` and `MaximumRecordAgeInSeconds`, and sends discarded batches to configured SQS, SNS, or S3 `DestinationConfig.OnFailure` destinations. With `BisectBatchOnFunctionError`, a batch that fails with a function error is split in half and retried, narrowing it down to the failing record, which then follows the normal retry and record age rules. Splits do not count as retry attempts, and only function errors split: throttles do not, and a partial batch response retries from the reported record. If the OnFailure destination refuses a discarded batch, Floci keeps the checkpoint and retries the send with backoff instead of advancing past the batch.
+
+A DynamoDB Streams mapping created with `StartingPosition: LATEST` delivers only records written after it is created, so a stream that is empty at creation delivers everything written later. After a restart it still resumes from the trim horizon, because native stream records are volatile. Deleting or disabling a mapping stops any poll that has not yet invoked the function. An invocation already running completes, but its checkpoint is not saved: a deleted mapping is never recreated and its result is dropped, and a disabled mapping re-reads that batch when it is enabled again.
 
 ```bash
 # SQS trigger

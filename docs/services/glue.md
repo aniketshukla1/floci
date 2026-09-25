@@ -140,8 +140,23 @@ retroactively.
 | CreateJob | Creates a new job definition. |
 | GetJob | Retrieves an existing job definition. |
 | GetJobs | Retrieves all current job definitions. |
+| ListJobs | Lists job names, optionally only those carrying every given tag. |
+| BatchGetJobs | Retrieves several job definitions by name and reports the names not found. |
 | UpdateJob | Updates an existing job definition. |
-| DeleteJob | Deletes a specified job definition. |
+| DeleteJob | Deletes a specified job definition and its runs. |
+| StartJobRun | Starts a run of a job, with per-run arguments and capacity overrides. |
+| GetJobRun | Retrieves one run of a job. |
+| GetJobRuns | Lists a job's runs, newest first. |
+| BatchStopJobRun | Stops running runs of a job and reports the rest in `Errors`. |
+
+Job runs do not execute the job's script. A run follows Glue's state machine and response shape: it
+takes the job's worker type, worker count, timeout and Glue version unless the request overrides them,
+and `MaxConcurrentRuns` (1 when unset) rejects a start with `ConcurrentRunsExceededException` unless
+`JobRunQueuingEnabled` is set. With the default `job-run-duration-seconds` of 0 a run is `SUCCEEDED` as
+soon as it starts. A positive value keeps each run `RUNNING` for that many seconds, so a test can observe
+`BatchStopJobRun` (the run ends `STOPPED`) and the concurrency limit; a run whose duration exceeds the job
+timeout ends `TIMEOUT` when the timeout is reached. Queued runs are admitted straight away rather than
+waiting in `WAITING`.
 
 #### Crawlers
 
@@ -215,6 +230,7 @@ Supported schema formats are `AVRO`, `JSON`, and `PROTOBUF`. Compatibility modes
 | Variable | Default | Description |
 |---|---|---|
 | `FLOCI_SERVICES_GLUE_ENABLED` | `true` | Enable or disable the service |
+| `FLOCI_SERVICES_GLUE_JOB_RUN_DURATION_SECONDS` | `0` | Seconds a job run stays `RUNNING` before it succeeds; `0` finishes it as soon as it starts |
 
 ## Integration with Athena
 

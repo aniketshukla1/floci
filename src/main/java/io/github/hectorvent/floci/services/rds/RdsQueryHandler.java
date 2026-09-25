@@ -2238,6 +2238,7 @@ public class RdsQueryHandler {
         if (s.getKmsKeyId() != null && !s.getKmsKeyId().isBlank()) {
             xml.elem("KmsKeyId", s.getKmsKeyId());
         }
+        xml.elem("Encrypted", s.isStorageEncrypted());
         if (s.getAvailabilityZone() != null) xml.elem("AvailabilityZone", s.getAvailabilityZone());
         if (s.getVpcId() != null) xml.elem("VpcId", s.getVpcId());
         xml.elem("InstanceCreateTime", s.getInstanceCreateTime() != null ? s.getInstanceCreateTime().toString() : "")

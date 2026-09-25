@@ -54,6 +54,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -1728,6 +1729,46 @@ public class GlueService {
         return paginate(all, maxResults, nextToken);
     }
 
+    public Page<String> listJobs(Integer maxResults, String nextToken, Map<String, String> tags, String region) {
+        List<String> names = new ArrayList<>();
+        for (Job job : jobStore.scan(k -> true)) {
+            if (tags == null || tags.isEmpty() || hasTags(jobArn(region, job.getName()), tags, region)) {
+                names.add(job.getName());
+            }
+        }
+        names.sort(Comparator.naturalOrder());
+        return paginate(names, maxResults, nextToken);
+    }
+
+    public BatchGetJobsResult batchGetJobs(List<String> names) {
+        if (names == null || names.isEmpty()) {
+            throw new AwsException("InvalidInputException", "JobNames is required.", 400);
+        }
+        List<Job> jobs = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();
+        for (String name : names) {
+            Optional<Job> job = name == null ? Optional.empty() : jobStore.get(name);
+            if (job.isPresent()) {
+                jobs.add(job.get());
+            } else {
+                notFound.add(name);
+            }
+        }
+        return new BatchGetJobsResult(jobs, notFound);
+    }
+
+    public record BatchGetJobsResult(List<Job> jobs, List<String> jobsNotFound) {}
+
+    private boolean hasTags(String arn, Map<String, String> wanted, String region) {
+        Map<String, String> actual = resourceGroupsTaggingService.getTagsForResource(region, arn);
+        for (Map.Entry<String, String> tag : wanted.entrySet()) {
+            if (!Objects.equals(actual.get(tag.getKey()), tag.getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void updateJob(String name, JobUpdate update) {
         validateRequired(name, "JobName");
         validateRequired(update, "JobUpdate");
@@ -2476,7 +2517,7 @@ public class GlueService {
 
     public record Page<T>(List<T> items, String nextToken) {}
 
-    private <T> Page<T> paginate(List<T> all, Integer maxResults, String nextToken) {
+    <T> Page<T> paginate(List<T> all, Integer maxResults, String nextToken) {
         if (maxResults != null && (maxResults < 1 || maxResults > 1000)) {
             throw new AwsException("InvalidInputException", "MaxResults must be between 1 and 1000", 400);
         }

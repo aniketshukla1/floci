@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
+import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.glue.schemaregistry.GlueSchemaRegistryService;
 import io.github.hectorvent.floci.services.kms.KmsService;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 
@@ -44,7 +46,9 @@ class GlueJsonHandlerTest {
         GlueService glueService = new GlueService(
                 storageFactory, schemaRegistryService, regionResolver, new ResourceGroupsTaggingService(storageFactory),
                 new KmsService(storageFactory, regionResolver));
-        handler = new GlueJsonHandler(glueService, schemaRegistryService, mapper);
+        handler = new GlueJsonHandler(glueService,
+                new GlueJobRunService(new InMemoryStorage<>(), glueService, 0, Clock.systemUTC()),
+                schemaRegistryService, mapper);
     }
 
     private void createDatabaseAndTable(String dbName, String tableName) throws Exception {
@@ -792,5 +796,83 @@ class GlueJsonHandlerTest {
         assertTrue(after.get("ConnectionPasswordEncryption").get("ReturnConnectionPasswordEncrypted").asBoolean());
         assertEquals("alias/glue", after.get("ConnectionPasswordEncryption").get("AwsKmsKeyId").asText());
         assertEquals("DISABLED", after.get("EncryptionAtRest").get("CatalogEncryptionMode").asText());
+    }
+
+    private void createJobWithTags(String name, Map<String, String> tags) throws Exception {
+        ObjectNode create = mapper.createObjectNode();
+        create.put("Name", name);
+        create.put("Role", "arn:aws:iam::000000000000:role/glue");
+        create.putObject("Command").put("Name", "glueetl");
+        ObjectNode tagNode = create.putObject("Tags");
+        tags.forEach(tagNode::put);
+        assertEquals(200, handler.handle("CreateJob", create, REGION).getStatus());
+    }
+
+    /**
+     * The wire shape a job run client reads: StartJobRun answers with the run id alone, GetJobRun
+     * nests the run under "JobRun" with numeric timestamps, and stopping a finished run is an entry
+     * in Errors rather than a failed request.
+     */
+    @Test
+    void jobRunOperationsAnswerWithTheDocumentedBodies() throws Exception {
+        createJobWithTags("nightly", Map.of());
+
+        ObjectNode start = mapper.createObjectNode();
+        start.put("JobName", "nightly");
+        start.putObject("Arguments").put("--day", "2026-09-25");
+        JsonNode started = mapper.valueToTree(handler.handle("StartJobRun", start, REGION).getEntity());
+        assertEquals(1, started.size());
+        String runId = started.get("JobRunId").asText();
+
+        ObjectNode get = mapper.createObjectNode().put("JobName", "nightly").put("RunId", runId);
+        JsonNode run = mapper.valueToTree(handler.handle("GetJobRun", get, REGION).getEntity()).get("JobRun");
+        assertEquals(runId, run.get("Id").asText());
+        assertEquals("nightly", run.get("JobName").asText());
+        assertEquals("SUCCEEDED", run.get("JobRunState").asText());
+        assertEquals("2026-09-25", run.get("Arguments").get("--day").asText());
+        assertTrue(run.get("StartedOn").isNumber());
+        assertTrue(run.get("CompletedOn").isNumber());
+        assertFalse(run.has("ErrorMessage"));
+
+        JsonNode runs = mapper.valueToTree(handler.handle(
+                "GetJobRuns", mapper.createObjectNode().put("JobName", "nightly"), REGION).getEntity());
+        assertEquals(1, runs.get("JobRuns").size());
+        assertFalse(runs.has("NextToken"));
+
+        ObjectNode stop = mapper.createObjectNode().put("JobName", "nightly");
+        stop.putArray("JobRunIds").add(runId);
+        JsonNode stopped = mapper.valueToTree(handler.handle("BatchStopJobRun", stop, REGION).getEntity());
+        assertEquals(0, stopped.get("SuccessfulSubmissions").size());
+        JsonNode error = stopped.get("Errors").get(0);
+        assertEquals("nightly", error.get("JobName").asText());
+        assertEquals(runId, error.get("JobRunId").asText());
+        assertEquals("InvalidInputException", error.get("ErrorDetail").get("ErrorCode").asText());
+
+        handler.handle("DeleteJob", mapper.createObjectNode().put("JobName", "nightly"), REGION);
+        AwsException gone = assertThrows(AwsException.class, () -> handler.handle(
+                "GetJobRuns", mapper.createObjectNode().put("JobName", "nightly"), REGION));
+        assertEquals("EntityNotFoundException", gone.getErrorCode());
+    }
+
+    @Test
+    void listJobsFiltersOnTagsAndBatchGetJobsReportsMissingNames() throws Exception {
+        createJobWithTags("tagged", Map.of("team", "data"));
+        createJobWithTags("plain", Map.of());
+
+        JsonNode all = mapper.valueToTree(handler.handle("ListJobs", mapper.createObjectNode(), REGION).getEntity());
+        assertEquals(List.of("plain", "tagged"), mapper.convertValue(all.get("JobNames"), List.class));
+        assertFalse(all.has("NextToken"));
+
+        ObjectNode filtered = mapper.createObjectNode();
+        filtered.putObject("Tags").put("team", "data");
+        JsonNode byTag = mapper.valueToTree(handler.handle("ListJobs", filtered, REGION).getEntity());
+        assertEquals(List.of("tagged"), mapper.convertValue(byTag.get("JobNames"), List.class));
+
+        ObjectNode batch = mapper.createObjectNode();
+        batch.putArray("JobNames").add("tagged").add("absent");
+        JsonNode got = mapper.valueToTree(handler.handle("BatchGetJobs", batch, REGION).getEntity());
+        assertEquals(1, got.get("Jobs").size());
+        assertEquals("tagged", got.get("Jobs").get(0).get("Name").asText());
+        assertEquals("absent", got.get("JobsNotFound").get(0).asText());
     }
 }

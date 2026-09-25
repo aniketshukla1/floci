@@ -1,13 +1,16 @@
 package io.github.hectorvent.floci.services.lambda;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import java.time.Instant;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.services.eventbridge.EventBridgeService;
 import io.github.hectorvent.floci.services.lambda.model.FunctionEventInvokeConfig;
 import io.github.hectorvent.floci.services.lambda.model.InvokeResult;
 import io.github.hectorvent.floci.services.lambda.model.LambdaFunction;
+import io.github.hectorvent.floci.services.lambda.zip.CodeStore;
+import io.github.hectorvent.floci.services.lambda.zip.ZipExtractor;
 import io.github.hectorvent.floci.services.sns.SnsService;
 import io.github.hectorvent.floci.services.sqs.SqsService;
 import jakarta.enterprise.inject.Instance;
@@ -20,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -337,6 +342,45 @@ class AsyncInvokeDestinationRouterTest {
         JsonNode detail = detailOf(capturedEventEntry());
         assertEquals(FUNCTION_ARN + ":3", detail.path("requestContext").path("functionArn").asText());
         assertEquals("3", detail.path("responseContext").path("executedVersion").asText());
+    }
+
+    @Test
+    void realAliasConfigDeliversToAliasBusAndFallsBackToVersionBus() {
+        String versionBusArn = "arn:aws:events:us-east-1:000000000000:event-bus/version-bus";
+        LambdaService realService = new LambdaService(
+                new LambdaFunctionStore(new InMemoryStorage<>()),
+                new WarmPool(),
+                new CodeStore(Path.of("target/test-data/lambda-code")),
+                new ZipExtractor(),
+                new RegionResolver("us-east-1", "000000000000"));
+        realService.createFunction("us-east-1", Map.of(
+                "FunctionName", "bank-pawnshop",
+                "PackageType", "Image",
+                "Role", "arn:aws:iam::000000000000:role/test-role",
+                "Code", Map.of("ImageUri", "public.ecr.aws/lambda/nodejs:20")));
+        LambdaFunction version = realService.publishVersion("us-east-1", "bank-pawnshop", null);
+        realService.putEventInvokeConfig("us-east-1", "bank-pawnshop", version.getVersion(), Map.of(
+                "DestinationConfig", Map.of("OnSuccess", Map.of("Destination", versionBusArn))));
+        realService.putEventInvokeConfig("us-east-1", "bank-pawnshop", "prod", Map.of(
+                "DestinationConfig", Map.of("OnSuccess", Map.of("Destination", BUS_ARN))));
+        AsyncInvokeDestinationRouter realRouter = new AsyncInvokeDestinationRouter(
+                instanceOf(realService), instanceOf(eventBridgeService), instanceOf(sqsService),
+                instanceOf(snsService), MAPPER, config);
+
+        realRouter.route(version, request(), success("{}"), 0, "prod");
+        realRouter.route(version, request(), success("{}"), 0, "other");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Map<String, Object>>> entries = ArgumentCaptor.forClass(List.class);
+        verify(eventBridgeService, times(2)).putEvents(entries.capture(), eq("us-east-1"), eq(null));
+        JsonNode aliasEntry = MAPPER.valueToTree(entries.getAllValues().get(0).get(0));
+        JsonNode versionEntry = MAPPER.valueToTree(entries.getAllValues().get(1).get(0));
+        assertEquals(BUS_ARN, aliasEntry.path("EventBusName").asText());
+        assertEquals(versionBusArn, versionEntry.path("EventBusName").asText());
+        assertEquals(version.getFunctionArn(), detailOf(aliasEntry)
+                .path("requestContext").path("functionArn").asText());
+        assertEquals(version.getVersion(), detailOf(aliasEntry)
+                .path("responseContext").path("executedVersion").asText());
     }
 
     private void configure(String onSuccess, String onFailure) {

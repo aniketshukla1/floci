@@ -842,6 +842,7 @@ public class RdsService implements Resettable, ResourceProvider {
         snapshot.setDbName(instance.getDbName());
         snapshot.setSnapshotType("manual");
         snapshot.setOptionGroupName(instance.getOptionGroupName());
+        snapshot.setStorageEncrypted(instance.isStorageEncrypted());
         snapshot.setKmsKeyId(instance.getKmsKeyId());
         snapshot.setTags(tags != null ? new java.util.LinkedHashMap<>(tags) : new java.util.LinkedHashMap<>());
         snapshot.setDbSnapshotArn(regionResolver.buildArn("rds", effectiveRegion, "snapshot:" + snapshotId));
@@ -897,14 +898,22 @@ public class RdsService implements Resettable, ResourceProvider {
         String accountId = currentAccountId();
         SnapshotReference sourceReference = resolveSnapshotReference(sourceIdentifier, targetRegion);
         DbSnapshot source = sourceReference.snapshot();
+        boolean crossRegion = !Objects.equals(sourceReference.region(), targetRegion);
         if (!"available".equalsIgnoreCase(source.getStatus())) {
             throw new AwsException("InvalidDBSnapshotState",
                     "DBSnapshot " + source.getDbSnapshotIdentifier() + " is not in an available state.", 400);
+        }
+        if (crossRegion && source.isStorageEncrypted()
+                && (kmsKeyId == null || kmsKeyId.isBlank())) {
+            throw new AwsException("InvalidParameterCombination",
+                    "KmsKeyId is required when copying an encrypted DBSnapshot across Regions.", 400);
         }
         if (findSnapshotForScope(accountId, targetRegion, targetIdentifier) != null) {
             throw new AwsException("DBSnapshotAlreadyExists",
                     "DBSnapshot " + targetIdentifier + " already exists.", 400);
         }
+        String targetKmsKeyId = crossRegion && kmsKeyId != null && !kmsKeyId.isBlank()
+                ? resolveKmsKeyArn(kmsKeyId, targetRegion) : kmsKeyId;
         String sourceData = getSnapshotDataForScope(
                 sourceReference.accountId(), sourceReference.region(), source.getDbSnapshotIdentifier())
                 .orElseThrow(() -> new AwsException("DBSnapshotNotFound",
@@ -916,10 +925,13 @@ public class RdsService implements Resettable, ResourceProvider {
         copy.setSnapshotCreateTime(Instant.now());
         copy.setStatus("available");
         copy.setSnapshotType("manual");
-        copy.setSourceDbSnapshotIdentifier(source.getDbSnapshotArn());
+        copy.setSourceDbSnapshotIdentifier(crossRegion ? source.getDbSnapshotArn() : null);
         copy.setOptionGroupName(optionGroupName != null && !optionGroupName.isBlank()
                 ? optionGroupName : source.getOptionGroupName());
-        copy.setKmsKeyId(kmsKeyId != null && !kmsKeyId.isBlank() ? kmsKeyId : source.getKmsKeyId());
+        copy.setStorageEncrypted(source.isStorageEncrypted()
+                || (targetKmsKeyId != null && !targetKmsKeyId.isBlank()));
+        copy.setKmsKeyId(targetKmsKeyId != null && !targetKmsKeyId.isBlank()
+                ? targetKmsKeyId : source.getKmsKeyId());
         copy.setRestoreAccountIds(new ArrayList<>());
         Map<String, String> copiedTags = new LinkedHashMap<>();
         if (copyTags) {
@@ -989,6 +1001,7 @@ public class RdsService implements Resettable, ResourceProvider {
         copy.setDbName(source.getDbName());
         copy.setDbInstanceClass(source.getDbInstanceClass());
         copy.setOptionGroupName(source.getOptionGroupName());
+        copy.setStorageEncrypted(source.isStorageEncrypted());
         copy.setKmsKeyId(source.getKmsKeyId());
         copy.setTags(new LinkedHashMap<>(source.getTags()));
         copy.setRestoreAccountIds(new ArrayList<>(source.getRestoreAccountIds()));
@@ -1075,17 +1088,20 @@ public class RdsService implements Resettable, ResourceProvider {
             targetClass = "db.t3.micro";
         }
         // Use the parameters from the snapshot
+        DbInstanceSettings restoreSettings = new DbInstanceSettings(
+                snapshot.isStorageEncrypted(), snapshot.getKmsKeyId(), null, null, null, null);
         DbInstance instance = createDbInstance(instanceId, snapshot.getEngine().name().toLowerCase(), snapshot.getEngineVersion(),
                 snapshot.getMasterUsername(), snapshot.getMasterPassword(),
                 snapshot.getDbName(), targetClass, snapshot.getAllocatedStorage(), snapshot.isIamDatabaseAuthenticationEnabled(),
-                null, dbSubnetGroupName, null, availabilityZone, multiAz, false, null, tags, vpcSecurityGroupIds);
+                null, dbSubnetGroupName, null, availabilityZone, multiAz, false, null, tags,
+                vpcSecurityGroupIds, null, effectiveRegion, true, restoreSettings);
 
         if (!config.services().rds().mock()) {
             try {
                 containerManager.restorePostgresSnapshot(instance.getContainerId(), instance.getMasterUsername(), sqlDump);
             } catch (Exception e) {
                 try {
-                    deleteDbInstance(instanceId);
+                    deleteDbInstance(instanceId, effectiveRegion);
                 } catch (Exception cleanupError) {
                     e.addSuppressed(cleanupError);
                 }
