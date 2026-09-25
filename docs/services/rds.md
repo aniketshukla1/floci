@@ -159,6 +159,14 @@ checked against the instance's other window. Modifications apply immediately —
 
 RDS requires the Docker socket and port range exposure. For private registry authentication and other Docker settings see [Docker Configuration](../configuration/docker.md).
 
+`CreateDBInstance`, `CreateDBCluster`, `RestoreDBInstanceFromDBSnapshot`, and
+`RestoreDBClusterFromSnapshot` honor a requested `Port` only when it is free within the
+configured RDS proxy range. Otherwise Floci assigns the next free port in that range and
+returns the assigned port in the endpoint. This differs from AWS because Floci's local
+proxy must use a published host port; for example, requesting `5432` with the default
+`7001`-`7099` range returns a port in that range. Ports outside AWS's valid
+`1150`-`65535` interval are rejected.
+
 When Docker publishes RDS proxy ports dynamically, set `FLOCI_SERVICES_RDS_ENDPOINT_HOST` to the
 hostname used by clients. Floci inspects its own container through the Docker socket and returns the
 corresponding published port from `DescribeDBInstances` and `DescribeDBClusters`. Leave the setting

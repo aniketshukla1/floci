@@ -587,6 +587,29 @@ public class RdsService implements Resettable, ResourceProvider {
                                        boolean autoMinorVersionUpgrade,
                                        DbInstanceSettings settings,
                                        Boolean publiclyAccessible) {
+        return createDbInstance(id, engineParam, engineVersion, masterUsername, masterPassword,
+                dbName, dbInstanceClass, allocatedStorage, iamEnabled, paramGroupName,
+                dbSubnetGroupName, dbClusterIdentifier, availabilityZone, multiAz,
+                manageMasterUserPassword, masterUserSecretKmsKeyId, tags, vpcSecurityGroupIds,
+                optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible, null);
+    }
+
+    public DbInstance createDbInstance(String id, String engineParam, String engineVersion,
+                                       String masterUsername, String masterPassword,
+                                       String dbName, String dbInstanceClass,
+                                       int allocatedStorage, boolean iamEnabled,
+                                       String paramGroupName, String dbSubnetGroupName,
+                                       String dbClusterIdentifier, String availabilityZone,
+                                       boolean multiAz, boolean manageMasterUserPassword,
+                                       String masterUserSecretKmsKeyId,
+                                       Map<String, String> tags,
+                                       List<String> vpcSecurityGroupIds,
+                                       String optionGroupName,
+                                       String region,
+                                       boolean autoMinorVersionUpgrade,
+                                       DbInstanceSettings settings,
+                                       Boolean publiclyAccessible,
+                                       Integer requestedPort) {
         validateInstanceSettings(settings);
         String provisioningKey = "instance:" + currentAccountId() + ":"
                 + dbResourceKey(effectiveRegion(region), id);
@@ -600,7 +623,7 @@ public class RdsService implements Resettable, ResourceProvider {
                     paramGroupName, dbSubnetGroupName, dbClusterIdentifier, availabilityZone,
                     multiAz, manageMasterUserPassword, masterUserSecretKmsKeyId, tags,
                     vpcSecurityGroupIds, optionGroupName, region, autoMinorVersionUpgrade,
-                    settings, publiclyAccessible);
+                    settings, publiclyAccessible, requestedPort);
         } finally {
             provisioningIds.remove(provisioningKey);
         }
@@ -620,7 +643,7 @@ public class RdsService implements Resettable, ResourceProvider {
                                           String region,
                                           boolean autoMinorVersionUpgrade,
                                           DbInstanceSettings settings,
-                                          Boolean publiclyAccessible) {
+                                          Boolean publiclyAccessible, Integer requestedPort) {
         String effectiveRegion = effectiveRegion(region);
         String dbiResourceId = "db-" + java.util.UUID.randomUUID().toString()
                 .replace("-", "").substring(0, 24).toUpperCase();
@@ -650,7 +673,7 @@ public class RdsService implements Resettable, ResourceProvider {
         boolean mock = config.services().rds().mock();
         // Always reserve a unique port (even in mock) so endpoints stay distinct and usedPorts
         // is consistent; mock mode only skips starting the container and auth proxy.
-        int proxyPort = allocateProxyPort();
+        int proxyPort = reserveProxyPort(requestedPort);
         if (masterUsername == null || masterUsername.isBlank()) {
             masterUsername = "root";
         } else if (masterUsername.length() > engine.maxMasterUsernameLength()
@@ -1058,6 +1081,15 @@ public class RdsService implements Resettable, ResourceProvider {
                                                        String availabilityZone, boolean multiAz, String dbSubnetGroupName,
                                                        java.util.List<String> vpcSecurityGroupIds,
                                                        java.util.Map<String, String> tags, String region) {
+        return restoreDbInstanceFromDbSnapshot(instanceId, snapshotId, dbInstanceClass,
+                availabilityZone, multiAz, dbSubnetGroupName, vpcSecurityGroupIds, tags, region, null);
+    }
+
+    public DbInstance restoreDbInstanceFromDbSnapshot(String instanceId, String snapshotId, String dbInstanceClass,
+                                                       String availabilityZone, boolean multiAz, String dbSubnetGroupName,
+                                                       java.util.List<String> vpcSecurityGroupIds,
+                                                       java.util.Map<String, String> tags, String region,
+                                                       Integer requestedPort) {
         String effectiveRegion = effectiveRegion(region);
         DbSnapshot snapshot = Optional.ofNullable(findSnapshotForScope(currentAccountId(), effectiveRegion, snapshotId))
                 .orElseThrow(() -> new AwsException("DBSnapshotNotFound", "DBSnapshot " + snapshotId + " not found.", 404));
@@ -1073,7 +1105,8 @@ public class RdsService implements Resettable, ResourceProvider {
         DbInstance instance = createDbInstance(instanceId, snapshot.getEngine().name().toLowerCase(), snapshot.getEngineVersion(),
                 snapshot.getMasterUsername(), snapshot.getMasterPassword(),
                 snapshot.getDbName(), targetClass, snapshot.getAllocatedStorage(), snapshot.isIamDatabaseAuthenticationEnabled(),
-                null, dbSubnetGroupName, null, availabilityZone, multiAz, false, null, tags, vpcSecurityGroupIds);
+                null, dbSubnetGroupName, null, availabilityZone, multiAz, false, null, tags, vpcSecurityGroupIds,
+                null, effectiveRegion, true, DbInstanceSettings.defaults(), null, requestedPort);
 
         if (!config.services().rds().mock()) {
             try {
@@ -3363,11 +3396,27 @@ public class RdsService implements Resettable, ResourceProvider {
                                      Integer serverlessV2SecondsUntilAutoPause,
                                      boolean manageMasterUserPassword, String masterUserSecretKmsKeyId,
                                      String engineMode, boolean storageEncrypted) {
-        return createDbClusterWithPort(id, engineParam, engineVersion, masterUsername, masterPassword,
+        return createDbCluster(id, engineParam, engineVersion, masterUsername, masterPassword,
                 databaseName, iamEnabled, paramGroupName, dbSubnetGroupName, availabilityZone,
                 multiAz, region, serverlessV2MinCapacity, serverlessV2MaxCapacity,
                 serverlessV2SecondsUntilAutoPause, manageMasterUserPassword, masterUserSecretKmsKeyId,
                 engineMode, storageEncrypted, null);
+    }
+
+    public DbCluster createDbCluster(String id, String engineParam, String engineVersion,
+                                     String masterUsername, String masterPassword,
+                                     String databaseName, boolean iamEnabled,
+                                     String paramGroupName, String dbSubnetGroupName,
+                                     String availabilityZone, boolean multiAz, String region,
+                                     Double serverlessV2MinCapacity, Double serverlessV2MaxCapacity,
+                                     Integer serverlessV2SecondsUntilAutoPause,
+                                     boolean manageMasterUserPassword, String masterUserSecretKmsKeyId,
+                                     String engineMode, boolean storageEncrypted, Integer requestedPort) {
+        return createDbClusterWithPort(id, engineParam, engineVersion, masterUsername, masterPassword,
+                databaseName, iamEnabled, paramGroupName, dbSubnetGroupName, availabilityZone,
+                multiAz, region, serverlessV2MinCapacity, serverlessV2MaxCapacity,
+                serverlessV2SecondsUntilAutoPause, manageMasterUserPassword, masterUserSecretKmsKeyId,
+                engineMode, storageEncrypted, requestedPort);
     }
 
     private DbCluster createDbClusterWithPort(String id, String engineParam, String engineVersion,
@@ -4068,6 +4117,23 @@ public class RdsService implements Resettable, ResourceProvider {
                                                     Integer serverlessV2SecondsUntilAutoPause,
                                                     boolean manageMasterUserPassword, String masterUserSecretKmsKeyId,
                                                     String engineMode, boolean storageEncrypted) {
+        return createDbClusterInGlobalCluster(globalClusterIdentifier, id, engineParam, engineVersion,
+                masterUsername, masterPassword, databaseName, iamEnabled, paramGroupName,
+                dbSubnetGroupName, availabilityZone, multiAz, region, serverlessV2MinCapacity,
+                serverlessV2MaxCapacity, serverlessV2SecondsUntilAutoPause, manageMasterUserPassword,
+                masterUserSecretKmsKeyId, engineMode, storageEncrypted, null);
+    }
+
+    public DbCluster createDbClusterInGlobalCluster(String globalClusterIdentifier, String id,
+                                                    String engineParam, String engineVersion,
+                                                    String masterUsername, String masterPassword,
+                                                    String databaseName, boolean iamEnabled,
+                                                    String paramGroupName, String dbSubnetGroupName,
+                                                    String availabilityZone, boolean multiAz, String region,
+                                                    Double serverlessV2MinCapacity, Double serverlessV2MaxCapacity,
+                                                    Integer serverlessV2SecondsUntilAutoPause,
+                                                    boolean manageMasterUserPassword, String masterUserSecretKmsKeyId,
+                                                    String engineMode, boolean storageEncrypted, Integer requestedPort) {
         String effectiveRegion = effectiveRegion(region);
         String accountId = currentAccountId();
         GlobalCluster global = requireGlobalCluster(accountId, globalClusterIdentifier);
@@ -4088,7 +4154,7 @@ public class RdsService implements Resettable, ResourceProvider {
                     paramGroupName, dbSubnetGroupName, availabilityZone, multiAz, effectiveRegion,
                     serverlessV2MinCapacity, serverlessV2MaxCapacity, serverlessV2SecondsUntilAutoPause,
                     manageMasterUserPassword, masterUserSecretKmsKeyId, engineMode,
-                    storageEncrypted || global.isStorageEncrypted());
+                    storageEncrypted || global.isStorageEncrypted(), requestedPort);
         } else {
             if (hasText(masterUsername) || hasText(masterPassword) || manageMasterUserPassword) {
                 throw new AwsException("InvalidParameterCombination",
@@ -4123,7 +4189,7 @@ public class RdsService implements Resettable, ResourceProvider {
                     primary.getDatabaseName(), iamEnabled, paramGroupName, dbSubnetGroupName,
                     availabilityZone, multiAz, effectiveRegion, serverlessV2MinCapacity,
                     serverlessV2MaxCapacity, serverlessV2SecondsUntilAutoPause, false, null,
-                    engineMode, primary.isStorageEncrypted());
+                    engineMode, primary.isStorageEncrypted(), requestedPort);
         }
         try {
             attachToGlobalCluster(accountId, global.getGlobalClusterIdentifier(), cluster, primary == null);
@@ -6289,11 +6355,12 @@ public class RdsService implements Resettable, ResourceProvider {
         if (requestedPort < 1150 || requestedPort > 65535) {
             throw new AwsException("InvalidParameterValue", "Port must be between 1150 and 65535.", 400);
         }
-        if (!usedPorts.add(requestedPort)) {
-            throw new AwsException("InvalidParameterValue",
-                    "Port " + requestedPort + " is already in use by another RDS resource.", 400);
+        int base = config.services().rds().proxyBasePort();
+        int max = config.services().rds().proxyMaxPort();
+        if (requestedPort >= base && requestedPort <= max && usedPorts.add(requestedPort)) {
+            return requestedPort;
         }
-        return requestedPort;
+        return allocateProxyPort();
     }
 
     private int allocateProxyPort() {

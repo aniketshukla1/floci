@@ -215,7 +215,8 @@ public class RdsQueryHandler {
                     masterPassword, dbName, dbInstanceClass, allocatedStorage, iamEnabled,
                     paramGroupName, dbSubnetGroupName, dbClusterIdentifier, availabilityZone, multiAz,
                     manageMasterUserPassword, masterUserSecretKmsKeyId, tags, vpcSecurityGroupIds,
-                    optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible);
+                    optionGroupName, region, autoMinorVersionUpgrade, settings, publiclyAccessible,
+                    parseIntegerParam(params, "Port"));
             String result = dbInstanceXml(instance);
             return Response.ok(AwsQueryResponse.envelope("CreateDBInstance", AwsNamespaces.RDS, result)).build();
         } catch (AwsException e) {
@@ -801,18 +802,21 @@ public class RdsQueryHandler {
             Double serverlessV2Max = parseDoubleParam(params, "ServerlessV2ScalingConfiguration.MaxCapacity");
             Integer serverlessV2SecondsUntilAutoPause = parseIntegerParam(
                     params, "ServerlessV2ScalingConfiguration.SecondsUntilAutoPause");
+            Integer requestedPort = parseIntegerParam(params, "Port");
             String globalClusterIdentifier = params.getFirst("GlobalClusterIdentifier");
             DbCluster cluster = globalClusterIdentifier != null && !globalClusterIdentifier.isBlank()
                     ? service.createDbClusterInGlobalCluster(globalClusterIdentifier, id, engine,
                             params.getFirst("EngineVersion"), masterUsername, masterPassword, databaseName,
                             iamEnabled, paramGroupName, dbSubnetGroupName, availabilityZone, multiAz, region,
                             serverlessV2Min, serverlessV2Max, serverlessV2SecondsUntilAutoPause,
-                            manageMasterUserPassword, masterUserSecretKmsKeyId, engineMode, storageEncrypted)
+                            manageMasterUserPassword, masterUserSecretKmsKeyId, engineMode, storageEncrypted,
+                            requestedPort)
                     : service.createDbCluster(id, engine, engineVersion, masterUsername,
                             masterPassword, databaseName, iamEnabled, paramGroupName,
                             dbSubnetGroupName, availabilityZone, multiAz, region,
                             serverlessV2Min, serverlessV2Max, serverlessV2SecondsUntilAutoPause,
-                            manageMasterUserPassword, masterUserSecretKmsKeyId, engineMode, storageEncrypted);
+                            manageMasterUserPassword, masterUserSecretKmsKeyId, engineMode, storageEncrypted,
+                            requestedPort);
             String result = dbClusterXml(cluster);
             return Response.ok(AwsQueryResponse.envelope("CreateDBCluster", AwsNamespaces.RDS, result)).build();
         } catch (AwsException e) {
@@ -1484,7 +1488,9 @@ public class RdsQueryHandler {
         java.util.Map<String, String> tags = parseTags(params);
 
         try {
-            DbInstance instance = service.restoreDbInstanceFromDbSnapshot(instanceId, snapshotId, dbInstanceClass, availabilityZone, multiAz, dbSubnetGroupName, vpcSecurityGroupIds, tags, region);
+            DbInstance instance = service.restoreDbInstanceFromDbSnapshot(instanceId, snapshotId,
+                    dbInstanceClass, availabilityZone, multiAz, dbSubnetGroupName,
+                    vpcSecurityGroupIds, tags, region, parseIntegerParam(params, "Port"));
             String result = dbInstanceXml(instance);
             return Response.ok(AwsQueryResponse.envelope("RestoreDBInstanceFromDBSnapshot", AwsNamespaces.RDS, result)).build();
         } catch (AwsException e) {

@@ -3479,18 +3479,26 @@ class RdsServiceTest {
         clusterSnapshotOfNewCluster("csnap");
 
         DbCluster restored = rdsService.restoreDbClusterFromSnapshot("restored-cluster", "csnap",
-                "aurora-postgresql", null, 15432, null, null, null, null, null, null,
+                "aurora-postgresql", null, 7005, null, null, null, null, null, null,
                 null, "us-east-1");
-        assertEquals(15432, restored.getEndpoint().port());
-        assertEquals(15432, restored.getProxyPort());
-        assertEquals(15432, rdsService.getDbCluster("restored-cluster").getEndpoint().port());
-        verify(proxyManager).startProxy(any(), any(), anyBoolean(), eq(15432), any(), anyInt(),
+        assertEquals(7005, restored.getEndpoint().port());
+        assertEquals(7005, restored.getProxyPort());
+        assertEquals(7005, rdsService.getDbCluster("restored-cluster").getEndpoint().port());
+        verify(proxyManager).startProxy(any(), any(), anyBoolean(), eq(7005), any(), anyInt(),
                 any(), any(), any(), any(), any(), any());
 
-        assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
-                () -> rdsService.restoreDbClusterFromSnapshot("duplicate-port", "csnap",
-                        "aurora-postgresql", null, 15432, null, null, null, null, null, null,
-                        null, "us-east-1")).getErrorCode());
+        DbCluster duplicate = rdsService.restoreDbClusterFromSnapshot("duplicate-port", "csnap",
+                "aurora-postgresql", null, 7005, null, null, null, null, null, null,
+                null, "us-east-1");
+        assertNotEquals(7005, duplicate.getProxyPort());
+        assertTrue(duplicate.getProxyPort() >= 7000 && duplicate.getProxyPort() <= 7099);
+
+        DbCluster outsideRange = rdsService.restoreDbClusterFromSnapshot("outside-range", "csnap",
+                "aurora-postgresql", null, 5432, null, null, null, null, null, null,
+                null, "us-east-1");
+        assertNotEquals(5432, outsideRange.getProxyPort());
+        assertTrue(outsideRange.getProxyPort() >= 7000 && outsideRange.getProxyPort() <= 7099);
+        assertNotEquals(duplicate.getProxyPort(), outsideRange.getProxyPort());
         assertEquals("InvalidParameterValue", assertThrows(AwsException.class,
                 () -> rdsService.restoreDbClusterFromSnapshot("invalid-port", "csnap",
                         "aurora-postgresql", null, 1149, null, null, null, null, null, null,
@@ -3498,9 +3506,9 @@ class RdsServiceTest {
 
         rdsService.deleteDbCluster("restored-cluster");
         DbCluster reused = rdsService.restoreDbClusterFromSnapshot("reused-port", "csnap",
-                "aurora-postgresql", null, 15432, null, null, null, null, null, null,
+                "aurora-postgresql", null, 7005, null, null, null, null, null, null,
                 null, "us-east-1");
-        assertEquals(15432, reused.getEndpoint().port());
+        assertEquals(7005, reused.getEndpoint().port());
     }
 
     @Test
