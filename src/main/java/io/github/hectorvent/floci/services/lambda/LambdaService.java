@@ -72,11 +72,13 @@ public class LambdaService implements ResourceProvider {
     private static final String QUALIFIER_PATTERN = "\\$(LATEST(\\.PUBLISHED)?)|[a-zA-Z0-9-_$]+";
     private static final Pattern QUALIFIER = Pattern.compile(QUALIFIER_PATTERN);
     private static final Pattern EFS_ACCESS_POINT_ARN = Pattern.compile(
-            "^arn:aws[a-zA-Z-]*:elasticfilesystem:(?:eusc-)?[a-z]{2}"
+            "^arn:" + AwsArnUtils.PARTITION_REGEX + ":elasticfilesystem:(?:eusc-)?[a-z]{2}"
                     + "(?:(?:-gov)|(?:-iso(?:b)?))?-[a-z]+-\\d:"
                     + "\\d{12}:access-point/fsap-[a-f0-9]{17}$");
     private static final Pattern FILE_SYSTEM_LOCAL_MOUNT_PATH = Pattern.compile("^/mnt/[A-Za-z0-9._-]+$");
     private static final Pattern LOG_GROUP_PATTERN = Pattern.compile("[.\\-_/#A-Za-z0-9]+");
+    // The model's own Role pattern, which AWS quotes verbatim in its validation message; it
+    // already accepts every partition.
     private static final Pattern ROLE_ARN_PATTERN = Pattern.compile(
             "arn:(aws[a-zA-Z-]*)?:iam::\\d{12}:role/?[a-zA-Z_0-9+=,.@\\-_/]+");
     private static final Pattern HANDLER_PATTERN = Pattern.compile("\\S+");

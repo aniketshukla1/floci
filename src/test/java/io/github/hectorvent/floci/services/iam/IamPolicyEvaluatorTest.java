@@ -547,6 +547,29 @@ class IamPolicyEvaluatorTest {
         assertEquals(ResourcePolicyDecision.NEUTRAL, evaluator.evaluateResourcePolicy(
                 List.of(rolePolicy), "arn:aws:sts::123456789012:assumed-role/other/sess", "s3:GetObject", "arn:aws:s3:::b/k", null));
 
+        // The same in the China partition: the session's role and the root principal are matched
+        // in the partition the ARNs carry, not a fixed arn:aws:
+        String chinaRolePolicy = """
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws-cn:iam::123456789012:role/r"},"Action":"s3:*","Resource":"*"}]}""";
+        assertEquals(ResourcePolicyDecision.ALLOW, evaluator.evaluateResourcePolicy(
+                List.of(chinaRolePolicy), "arn:aws-cn:sts::123456789012:assumed-role/r/sess", "s3:GetObject", "arn:aws-cn:s3:::b/k", null));
+        assertEquals(ResourcePolicyDecision.NEUTRAL, evaluator.evaluateResourcePolicy(
+                List.of(rolePolicy), "arn:aws-cn:sts::123456789012:assumed-role/r/sess", "s3:GetObject", "arn:aws-cn:s3:::b/k", null));
+        String chinaRootPolicy = """
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws-cn:iam::123456789012:root"},"Action":"s3:*","Resource":"*"}]}""";
+        assertEquals(ResourcePolicyDecision.ALLOW, evaluator.evaluateResourcePolicy(
+                List.of(chinaRootPolicy), "arn:aws-cn:iam::123456789012:user/alice", "s3:GetObject", "arn:aws-cn:s3:::b/k", null));
+        assertEquals(ResourcePolicyDecision.NEUTRAL, evaluator.evaluateResourcePolicy(
+                List.of(chinaRootPolicy), "arn:aws-cn:iam::999999999999:user/bob", "s3:GetObject", "arn:aws-cn:s3:::b/k", null));
+        // An account id is scoped to its partition: the China root grant does not reach the
+        // commercial account of the same number, nor the other way round.
+        assertEquals(ResourcePolicyDecision.NEUTRAL, evaluator.evaluateResourcePolicy(
+                List.of(chinaRootPolicy), "arn:aws:iam::123456789012:user/alice", "s3:GetObject", "arn:aws:s3:::b/k", null));
+        String commercialRootPolicy = """
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":"s3:*","Resource":"*"}]}""";
+        assertEquals(ResourcePolicyDecision.NEUTRAL, evaluator.evaluateResourcePolicy(
+                List.of(commercialRootPolicy), "arn:aws-cn:iam::123456789012:user/alice", "s3:GetObject", "arn:aws-cn:s3:::b/k", null));
+
         // 12-digit account ID and root ARN match account principals
         String acctPolicy = """
             {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"123456789012"},"Action":"s3:*","Resource":"*"}]}""";

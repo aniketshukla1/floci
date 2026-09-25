@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.timestreaminfluxdb;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 
 import java.util.ArrayList;
@@ -17,7 +18,7 @@ final class TimestreamInfluxDbValidation {
     static final Pattern CLUSTER_NAME = Pattern.compile("[a-zA-z][a-zA-Z0-9]*(-[a-zA-Z0-9]+)*");
     static final Pattern IDENTIFIER = Pattern.compile("[a-zA-Z0-9]+");
     static final Pattern ARN = Pattern.compile(
-            "arn:aws[a-z\\-]*:timestream\\-influxdb:([a-z0-9\\-]+):([0-9]{12}):(db\\-instance|db\\-cluster|db\\-parameter\\-group|db\\-backup)/([a-zA-Z0-9]{3,64})");
+            "arn:" + AwsArnUtils.PARTITION_REGEX + ":timestream\\-influxdb:([a-z0-9\\-]+):([0-9]{12}):(db\\-instance|db\\-cluster|db\\-parameter\\-group|db\\-backup)/([a-zA-Z0-9]{3,64})");
 
     static final List<String> INSTANCE_TYPES = List.of("db.influx.medium", "db.influx.large", "db.influx.xlarge",
             "db.influx.2xlarge", "db.influx.4xlarge", "db.influx.8xlarge", "db.influx.12xlarge",

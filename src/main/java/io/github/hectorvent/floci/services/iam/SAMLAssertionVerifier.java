@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.iam;
 
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.services.iam.model.SAMLProvider;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -132,9 +133,9 @@ final class SAMLAssertionVerifier {
                     if (pair.length != 2) {
                         throw invalid("role pair format");
                     }
-                    if (pair[0].startsWith("arn:aws:iam::") && pair[1].contains(":saml-provider/")) {
+                    if (AwsArnUtils.isArnFor(pair[0], "iam") && pair[1].contains(":saml-provider/")) {
                         roles.add(new RolePair(pair[0], pair[1]));
-                    } else if (pair[1].startsWith("arn:aws:iam::") && pair[0].contains(":saml-provider/")) {
+                    } else if (AwsArnUtils.isArnFor(pair[1], "iam") && pair[0].contains(":saml-provider/")) {
                         roles.add(new RolePair(pair[1], pair[0]));
                     } else {
                         throw invalid("role pair ARN");

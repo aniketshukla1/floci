@@ -46,6 +46,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import static io.github.hectorvent.floci.services.iot.IotMqttEnabledIntegrationTest.AWS_MAX_PAYLOAD;
+import static io.github.hectorvent.floci.services.iot.IotMqttEnabledIntegrationTest.randomPayload;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -232,6 +234,38 @@ public class IotMqttWebSocketIntegrationTest {
     }
 
     @Test
+    void publishOfTheAwsMaximumPayloadIsDeliveredOverWss() throws Exception {
+        String topic = "ws/limit/" + System.nanoTime();
+        byte[] payload = randomPayload(AWS_MAX_PAYLOAD);
+
+        try (WsClient subscriber = WsClient.connect(wss("/mqtt"), "ws-limit-sub-" + System.nanoTime(), null, null)) {
+            subscriber.subscribe(topic);
+            try (WsClient publisher = WsClient.connect(wss("/mqtt"), "ws-limit-pub-" + System.nanoTime(), null, null)) {
+                publisher.publish(topic, payload, 1);
+            }
+            assertArrayEquals(payload, subscriber.takePayload());
+        }
+    }
+
+    @Test
+    void publishAboveTheAwsMaximumPayloadDisconnectsOverWss() throws Exception {
+        String topic = "ws/over-limit/" + System.nanoTime();
+        byte[] after = "after".getBytes(StandardCharsets.UTF_8);
+
+        try (WsClient subscriber = WsClient.connect(wss("/mqtt"), "ws-over-sub-" + System.nanoTime(), null, null)) {
+            subscriber.subscribe(topic);
+            try (WsClient publisher = WsClient.connect(wss("/mqtt"), "ws-over-pub-" + System.nanoTime(), null, null)) {
+                assertThrows(MqttException.class, () -> publisher.publish(topic, randomPayload(AWS_MAX_PAYLOAD + 1), 1));
+                assertTrue(publisher.awaitConnectionLost(10, TimeUnit.SECONDS));
+            }
+            try (WsClient next = WsClient.connect(wss("/mqtt"), "ws-over-next-" + System.nanoTime(), null, null)) {
+                next.publish(topic, after, 0);
+            }
+            assertArrayEquals(after, subscriber.takePayload(), "the oversized publish is never delivered");
+        }
+    }
+
+    @Test
     void manyConcurrentWebSocketClientsEachReceiveThePublish() throws Exception {
         String topic = "ws/fanout/" + System.nanoTime();
         byte[] payload = "to everyone".getBytes(StandardCharsets.UTF_8);
@@ -364,6 +398,7 @@ public class IotMqttWebSocketIntegrationTest {
 
         static WsClient connect(String url, String clientId, String username, String password) throws Exception {
             MqttClient client = new MqttClient(url, clientId, new MemoryPersistence());
+            client.setTimeToWait(10_000);
             WsClient wsClient = new WsClient(client);
             client.setCallback(new MqttCallback() {
                 @Override

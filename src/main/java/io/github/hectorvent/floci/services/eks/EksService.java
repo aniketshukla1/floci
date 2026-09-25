@@ -148,6 +148,12 @@ public class EksService implements TagHandler, ResourceProvider {
         backfillOidcIdentities();
         backfillClusterSecurityGroups();
         backfillLogging();
+        if (clusterManager != null && ec2Service != null) {
+            clusterManager.addNodeRegistrationListener(nodeInst -> {
+                String reg = nodeInst.getRegion() != null ? nodeInst.getRegion() : regionResolver.getRegion();
+                ec2Service.restoreAttachedVolumesForInstance(reg, nodeInst);
+            });
+        }
         if (!config.services().eks().mock()) {
             restorePersistedClusters();
             startReadinessPoller();

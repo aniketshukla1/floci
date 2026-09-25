@@ -35,6 +35,7 @@ import io.github.hectorvent.floci.services.rds.model.DbClusterParameterGroup;
 import io.github.hectorvent.floci.services.rds.model.DbClusterSnapshot;
 import io.github.hectorvent.floci.services.rds.model.DbEndpoint;
 import io.github.hectorvent.floci.services.rds.model.DbInstance;
+import io.github.hectorvent.floci.services.rds.model.EventSubscription;
 import io.github.hectorvent.floci.services.kms.KmsService;
 import io.github.hectorvent.floci.services.kms.model.KmsKey;
 import io.github.hectorvent.floci.services.rds.model.DbInstanceScalingChanges;
@@ -167,6 +168,7 @@ public class RdsService implements Resettable, ResourceProvider {
     private final StorageBackend<String, GlobalCluster> globalClusters;
     private final StorageBackend<String, String> snapshotData;
     private StorageBackend<String, RdsEvent> events = new InMemoryStorage<>();
+    private final StorageBackend<String, EventSubscription> eventSubscriptions;
     private final RdsContainerManager containerManager;
     private final RdsProxyManager proxyManager;
     // CreateDBCluster/CreateDBInstance register the new resource only after the
@@ -237,6 +239,8 @@ public class RdsService implements Resettable, ResourceProvider {
         this.metricsService = metricsService;
         this.instances = storageFactory.create("rds", "rds-instances.json",
                 new TypeReference<Map<String, DbInstance>>() {});
+        this.eventSubscriptions = storageFactory.create("rds", "rds-event-subscriptions.json",
+                new TypeReference<Map<String, EventSubscription>>() {});
         this.clusters = storageFactory.create("rds", "rds-clusters.json",
                 new TypeReference<Map<String, DbCluster>>() {});
         this.parameterGroups = storageFactory.create("rds", "rds-parameter-groups.json",
@@ -397,6 +401,7 @@ public class RdsService implements Resettable, ResourceProvider {
         this.snapshots = new io.github.hectorvent.floci.core.storage.InMemoryStorage<>();
         this.clusterSnapshots = new InMemoryStorage<>();
         this.snapshotData = new io.github.hectorvent.floci.core.storage.InMemoryStorage<>();
+        this.eventSubscriptions = new InMemoryStorage<>();
     }
 
     public void restorePersistedRuntime() {
@@ -1991,6 +1996,16 @@ public class RdsService implements Resettable, ResourceProvider {
                 yield new TagHandle(snapshot.getTags(), updated -> {
                     snapshot.setTags(updated);
                     putSnapshotForScope(currentAccountId(), effectiveRegion, resourceId, snapshot);
+                });
+            }
+            case "es" -> {
+                EventSubscription subscription = eventSubscriptions
+                        .get(eventSubscriptionKey(effectiveRegion, resourceId))
+                        .orElseThrow(() -> new AwsException("SubscriptionNotFound",
+                                "Subscription " + resourceId + " not found.", 404));
+                yield new TagHandle(subscription.getTags(), updated -> {
+                    subscription.setTags(updated);
+                    eventSubscriptions.put(eventSubscriptionKey(effectiveRegion, resourceId), subscription);
                 });
             }
             case "db-proxy" -> {
@@ -8570,4 +8585,212 @@ public class RdsService implements Resettable, ResourceProvider {
                 new SupportedResourceType("rds:db", "rds", true),
                 new SupportedResourceType("rds:cluster", "rds", true));
     }
+    // ── Event notification subscriptions ────────────────────────────────────
+
+    /** The model's SourceType valid values. */
+    private static final Set<String> EVENT_SOURCE_TYPES = Set.of(
+            "db-instance", "db-cluster", "db-parameter-group", "db-security-group", "db-snapshot",
+            "db-cluster-snapshot", "db-proxy", "zero-etl", "custom-engine-version",
+            "blue-green-deployment");
+    private static final int MAX_SUBSCRIPTION_NAME = 255;
+    /** The model documents MaxRecords as minimum 20, maximum 100, default 100. */
+    private static final int MIN_MAX_RECORDS = 20;
+    private static final int MAX_MAX_RECORDS = 100;
+    private static final int DEFAULT_MAX_RECORDS = 100;
+
+    /**
+     * Nothing is published to the topic. The subscription is stored and reported back so a client
+     * can manage it, and no RDS event reaches SNS through it.
+     */
+    public synchronized EventSubscription createEventSubscription(String region, String subscriptionName,
+                                                     String snsTopicArn, String sourceType,
+                                                     List<String> sourceIds,
+                                                     List<String> eventCategories, Boolean enabled,
+                                                     Map<String, String> tags) {
+        if (subscriptionName == null || subscriptionName.isBlank()) {
+            throw new AwsException("InvalidParameterValue", "SubscriptionName is required.", 400);
+        }
+        if (subscriptionName.length() >= MAX_SUBSCRIPTION_NAME) {
+            throw new AwsException("InvalidParameterValue",
+                    "SubscriptionName must be less than " + MAX_SUBSCRIPTION_NAME + " characters.", 400);
+        }
+        if (snsTopicArn == null || snsTopicArn.isBlank()) {
+            throw new AwsException("SNSTopicArnNotFound",
+                    "SnsTopicArn is required and must name an existing topic.", 404);
+        }
+        if (sourceType != null && !EVENT_SOURCE_TYPES.contains(sourceType)) {
+            throw new AwsException("InvalidParameterValue",
+                    "SourceType must be one of " + EVENT_SOURCE_TYPES + ".", 400);
+        }
+        // CreateEventSubscriptionMessage.SourceIds carries the coupling in its own member
+        // documentation, not in the operation's: "Constraints: If SourceIds are supplied,
+        // SourceType must also be provided." The operation docs walk through both specified,
+        // SourceType alone, and neither, and never mention SourceIds alone, so the member doc is
+        // the only place it is stated.
+        if (sourceIds != null && !sourceIds.isEmpty() && (sourceType == null || sourceType.isBlank())) {
+            throw new AwsException("InvalidParameterCombination",
+                    "SourceType must be provided when SourceIds are supplied.", 400);
+        }
+        String key = eventSubscriptionKey(region, subscriptionName);
+        if (eventSubscriptions.get(key).isPresent()) {
+            throw new AwsException("SubscriptionAlreadyExist",
+                    "Subscription " + subscriptionName + " already exists.", 400);
+        }
+        String accountId = regionResolver.getAccountId();
+        EventSubscription subscription = new EventSubscription();
+        subscription.setCustomerAwsId(accountId);
+        subscription.setCustSubscriptionId(subscriptionName);
+        subscription.setSnsTopicArn(snsTopicArn);
+        subscription.setStatus("active");
+        subscription.setSubscriptionCreationTime(Instant.now().toString());
+        subscription.setSourceType(sourceType);
+        subscription.setSourceIdsList(sourceIds == null ? new ArrayList<>() : new ArrayList<>(sourceIds));
+        subscription.setEventCategoriesList(
+                eventCategories == null ? new ArrayList<>() : new ArrayList<>(eventCategories));
+        // The model documents the subscription as created but inactive when Enabled is false, and
+        // says nothing about a default, so an omitted Enabled activates it as the console does.
+        subscription.setEnabled(enabled == null || enabled);
+        subscription.setEventSubscriptionArn(AwsArnUtils.Arn.of("rds", region, accountId,
+                "es:" + subscriptionName).toString());
+        subscription.setTags(tags == null ? new LinkedHashMap<>() : new LinkedHashMap<>(tags));
+        eventSubscriptions.put(key, subscription);
+        return subscription;
+    }
+
+    /** ModifyEventSubscription applies only the members the request names. */
+    public synchronized EventSubscription modifyEventSubscription(String region, String subscriptionName,
+                                                     String snsTopicArn, String sourceType,
+                                                     List<String> eventCategories, Boolean enabled) {
+        EventSubscription subscription = requireEventSubscription(region, subscriptionName);
+        // Validated before anything is applied. The store hands back the live instance, so setting
+        // the topic first would leave it written when a later member is rejected, and a describe
+        // would report a change the request was answered 400 for.
+        if (sourceType != null && !sourceType.isBlank() && !EVENT_SOURCE_TYPES.contains(sourceType)) {
+            throw new AwsException("InvalidParameterValue",
+                    "SourceType must be one of " + EVENT_SOURCE_TYPES + ".", 400);
+        }
+        if (snsTopicArn != null && !snsTopicArn.isBlank()) {
+            subscription.setSnsTopicArn(snsTopicArn);
+        }
+        if (sourceType != null && !sourceType.isBlank()) {
+            subscription.setSourceType(sourceType);
+        }
+        if (eventCategories != null && !eventCategories.isEmpty()) {
+            subscription.setEventCategoriesList(new ArrayList<>(eventCategories));
+        }
+        if (enabled != null) {
+            subscription.setEnabled(enabled);
+        }
+        eventSubscriptions.put(eventSubscriptionKey(region, subscriptionName), subscription);
+        return subscription;
+    }
+
+    /**
+     * AddSourceIdentifierToSubscription. The list is otherwise write-once, because
+     * ModifyEventSubscription carries no SourceIds member.
+     *
+     * <p>Adding an id the subscription already carries is a no-op rather than an error. The model
+     * declares only SourceNotFoundFault and SubscriptionNotFoundFault for this operation, so there
+     * is no fault to raise for a duplicate.
+     */
+    public synchronized EventSubscription addSourceIdentifierToSubscription(
+            String region, String subscriptionName, String sourceIdentifier) {
+        requireSourceIdentifierRequest(subscriptionName, sourceIdentifier);
+        EventSubscription subscription = requireEventSubscription(region, subscriptionName);
+        List<String> ids = new ArrayList<>(subscription.getSourceIdsList());
+        if (!ids.contains(sourceIdentifier)) {
+            ids.add(sourceIdentifier);
+            subscription.setSourceIdsList(ids);
+            eventSubscriptions.put(eventSubscriptionKey(region, subscriptionName), subscription);
+        }
+        return subscription;
+    }
+
+    /**
+     * RemoveSourceIdentifierFromSubscription. An id the subscription does not carry is
+     * SourceNotFound, which is the fault the model declares and the only one that fits.
+     */
+    public synchronized EventSubscription removeSourceIdentifierFromSubscription(
+            String region, String subscriptionName, String sourceIdentifier) {
+        requireSourceIdentifierRequest(subscriptionName, sourceIdentifier);
+        EventSubscription subscription = requireEventSubscription(region, subscriptionName);
+        List<String> ids = new ArrayList<>(subscription.getSourceIdsList());
+        if (!ids.remove(sourceIdentifier)) {
+            throw new AwsException("SourceNotFound",
+                    "Source " + sourceIdentifier + " not found in subscription " + subscriptionName + ".", 404);
+        }
+        subscription.setSourceIdsList(ids);
+        eventSubscriptions.put(eventSubscriptionKey(region, subscriptionName), subscription);
+        return subscription;
+    }
+
+    /**
+     * Both members are required by the model, so both fail the same way. Letting a missing
+     * SubscriptionName fall through to the lookup would answer SubscriptionNotFound, which tells
+     * the caller the subscription does not exist when the request simply did not name one.
+     */
+    private static void requireSourceIdentifierRequest(String subscriptionName, String sourceIdentifier) {
+        if (subscriptionName == null || subscriptionName.isBlank()) {
+            throw new AwsException("InvalidParameterValue", "SubscriptionName is required.", 400);
+        }
+        if (sourceIdentifier == null || sourceIdentifier.isBlank()) {
+            throw new AwsException("InvalidParameterValue", "SourceIdentifier is required.", 400);
+        }
+    }
+
+    public synchronized EventSubscription deleteEventSubscription(String region, String subscriptionName) {
+        EventSubscription subscription = requireEventSubscription(region, subscriptionName);
+        eventSubscriptions.delete(eventSubscriptionKey(region, subscriptionName));
+        return subscription;
+    }
+
+    /** Every subscription in the region, or the one the request names. */
+    /** One page of subscriptions, plus the marker to continue from, or null at the end. */
+    public record EventSubscriptionPage(List<EventSubscription> subscriptions, String marker) {}
+
+    public synchronized EventSubscriptionPage describeEventSubscriptions(
+            String region, String subscriptionName, Integer maxRecords, String marker) {
+        // Ahead of the named-subscription shortcut, so a bad page size is rejected whether or not
+        // the request also names a subscription. Request validation does not depend on which branch
+        // serves the read.
+        if (maxRecords != null && (maxRecords < MIN_MAX_RECORDS || maxRecords > MAX_MAX_RECORDS)) {
+            throw new AwsException("InvalidParameterValue",
+                    "MaxRecords must be between " + MIN_MAX_RECORDS + " and " + MAX_MAX_RECORDS + ".", 400);
+        }
+        if (subscriptionName != null && !subscriptionName.isBlank()) {
+            return new EventSubscriptionPage(
+                    List.of(requireEventSubscription(region, subscriptionName)), null);
+        }
+        String prefix = eventSubscriptionKey(region, "");
+        List<EventSubscription> all = eventSubscriptions.scan(k -> k.startsWith(prefix)).stream()
+                .sorted(Comparator.comparing(EventSubscription::getCustSubscriptionId))
+                .toList();
+        // The marker is the last name of the previous page and the next page starts after it.
+        // Resuming at the first name strictly greater than the marker rather than at the marker's
+        // own index means a subscription deleted between calls does not restart the walk, which an
+        // exact-match lookup would do by silently leaving the offset at zero.
+        int from = 0;
+        if (marker != null && !marker.isBlank()) {
+            while (from < all.size() && all.get(from).getCustSubscriptionId().compareTo(marker) <= 0) {
+                from++;
+            }
+        }
+        int limit = maxRecords == null ? DEFAULT_MAX_RECORDS : maxRecords;
+        int to = Math.min(all.size(), from + limit);
+        List<EventSubscription> page = all.subList(Math.min(from, all.size()), to);
+        String next = to < all.size() && !page.isEmpty()
+                ? page.get(page.size() - 1).getCustSubscriptionId() : null;
+        return new EventSubscriptionPage(page, next);
+    }
+
+    private EventSubscription requireEventSubscription(String region, String subscriptionName) {
+        return eventSubscriptions.get(eventSubscriptionKey(region, subscriptionName))
+                .orElseThrow(() -> new AwsException("SubscriptionNotFound",
+                        "Subscription " + subscriptionName + " not found.", 404));
+    }
+
+    private static String eventSubscriptionKey(String region, String subscriptionName) {
+        return "es::" + region + "::" + subscriptionName;
+    }
+
 }

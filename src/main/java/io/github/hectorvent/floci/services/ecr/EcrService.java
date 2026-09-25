@@ -47,7 +47,7 @@ public class EcrService implements ResourceProvider {
                     + "(?:(?:\\.|_|__|-+)[a-z0-9]+)*)*/?|ROOT)");
     private static final Pattern REGISTRY_ID = Pattern.compile("[0-9]{12}");
     private static final Pattern CREDENTIAL_ARN = Pattern.compile(
-            "arn:aws(?:-\\w+)*:secretsmanager:[a-zA-Z0-9-:]+:secret:ecr-pullthroughcache/"
+            "arn:" + AwsArnUtils.PARTITION_REGEX + ":secretsmanager:[a-zA-Z0-9-:]+:secret:ecr-pullthroughcache/"
                     + "[a-zA-Z0-9/_+=.@-]+");
     private static final Set<String> UPSTREAM_REGISTRIES = Set.of(
             "ecr", "ecr-public", "quay", "k8s", "docker-hub",
@@ -183,6 +183,43 @@ public class EcrService implements ResourceProvider {
                 .orElseThrow(() -> pullThroughCacheRuleNotFound(prefix, account));
         pullThroughCacheRuleStore.delete(key);
         return rule;
+    }
+
+    public PullThroughCacheRule updatePullThroughCacheRule(String ecrRepositoryPrefix,
+                                                           String registryId,
+                                                           String credentialArn,
+                                                           String customRoleArn,
+                                                           String region) {
+        String prefix = normalizePullThroughCachePrefix(ecrRepositoryPrefix);
+        validatePullThroughCachePrefix(prefix, "ecrRepositoryPrefix");
+        String account = effectiveAccount(registryId);
+        validateRegistryId(account);
+        validateCredentialArn(credentialArn);
+        validateCustomRoleArn(customRoleArn);
+
+        String key = pullThroughCacheRuleKey(region, account, prefix);
+        PullThroughCacheRule rule = pullThroughCacheRuleStore.get(key)
+                .orElseThrow(() -> pullThroughCacheRuleNotFound(prefix, account));
+        if (credentialArn != null) {
+            rule.setCredentialArn(credentialArn);
+        }
+        if (customRoleArn != null) {
+            rule.setCustomRoleArn(customRoleArn);
+        }
+        rule.setUpdatedAt(Instant.now());
+        pullThroughCacheRuleStore.put(key, rule);
+        return rule;
+    }
+
+    public PullThroughCacheRule validatePullThroughCacheRule(String ecrRepositoryPrefix,
+                                                             String registryId,
+                                                             String region) {
+        String prefix = normalizePullThroughCachePrefix(ecrRepositoryPrefix);
+        validatePullThroughCachePrefix(prefix, "ecrRepositoryPrefix");
+        String account = effectiveAccount(registryId);
+        validateRegistryId(account);
+        return pullThroughCacheRuleStore.get(pullThroughCacheRuleKey(region, account, prefix))
+                .orElseThrow(() -> pullThroughCacheRuleNotFound(prefix, account));
     }
 
     /**
@@ -954,7 +991,7 @@ public class EcrService implements ResourceProvider {
         if (host.equals("registry-1.docker.io")) {
             return "docker-hub";
         }
-        if (host.equals("public.ecr.aws")) {
+        if (host.equals("public.ecr.aws")) { // partition-literal: ECR Public's fixed registry host; the service exists only in the commercial partition
             return "ecr-public";
         }
         if (host.equals("quay.io")) {

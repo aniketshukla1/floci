@@ -15,6 +15,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -179,15 +180,63 @@ public class ApiGatewayRestApiCfnProvisioner implements CfnResourceProvisioner {
         apiGatewayService.putMethod(region, apiId, resourceId, httpMethod, req);
         r.setPhysicalId(apiId + "-" + resourceId + "-" + httpMethod);
 
+        if (props != null && props.has("MethodResponses")) {
+            JsonNode responses = engine.resolveNode(props.get("MethodResponses"));
+            if (responses != null && responses.isArray()) {
+                for (JsonNode response : responses) {
+                    String statusCode = ctx.resolveOptional(response, "StatusCode");
+                    Map<String, Object> responseReq = new HashMap<>();
+                    Map<String, Boolean> responseParameters = new LinkedHashMap<>();
+                    JsonNode parameters = engine.resolveNode(response.path("ResponseParameters"));
+                    if (parameters != null && parameters.isObject()) {
+                        parameters.fields().forEachRemaining(entry -> responseParameters.put(
+                                entry.getKey(), Boolean.parseBoolean(engine.resolve(entry.getValue()))));
+                    }
+                    responseReq.put("responseParameters", responseParameters);
+                    apiGatewayService.putMethodResponse(region, apiId, resourceId, httpMethod,
+                            statusCode, responseReq);
+                }
+            }
+        }
+
         if (props != null && props.has("Integration")) {
             JsonNode integNode = engine.resolveNode(props.get("Integration"));
             Map<String, Object> integReq = new HashMap<>();
             integReq.put("type", ctx.resolveOptional(integNode, "Type"));
             integReq.put("httpMethod", ctx.resolveOptional(integNode, "IntegrationHttpMethod"));
             integReq.put("uri", ctx.resolveOptional(integNode, "Uri"));
+            integReq.put("requestTemplates", resolveStringMap(integNode, "RequestTemplates", engine));
+            integReq.put("requestParameters", resolveStringMap(integNode, "RequestParameters", engine));
+            integReq.put("passthroughBehavior", ctx.resolveOptional(integNode, "PassthroughBehavior"));
+            integReq.put("contentHandling", ctx.resolveOptional(integNode, "ContentHandling"));
 
             apiGatewayService.putIntegration(region, apiId, resourceId, httpMethod, integReq);
+
+            JsonNode responses = engine.resolveNode(integNode.path("IntegrationResponses"));
+            if (responses != null && responses.isArray()) {
+                for (JsonNode response : responses) {
+                    String statusCode = ctx.resolveOptional(response, "StatusCode");
+                    Map<String, Object> responseReq = new HashMap<>();
+                    responseReq.put("responseParameters", resolveStringMap(response, "ResponseParameters", engine));
+                    responseReq.put("responseTemplates", resolveStringMap(response, "ResponseTemplates", engine));
+                    responseReq.put("selectionPattern", ctx.resolveOptional(response, "SelectionPattern"));
+                    responseReq.put("contentHandling", ctx.resolveOptional(response, "ContentHandling"));
+                    apiGatewayService.putIntegrationResponse(region, apiId, resourceId, httpMethod,
+                            statusCode, responseReq);
+                }
+            }
         }
+    }
+
+    private Map<String, String> resolveStringMap(JsonNode props, String name,
+                                                  CloudFormationTemplateEngine engine) {
+        Map<String, String> result = new LinkedHashMap<>();
+        JsonNode node = engine.resolveNode(props.path(name));
+        if (node != null && node.isObject()) {
+            node.fields().forEachRemaining(entry ->
+                    result.put(entry.getKey(), engine.resolve(entry.getValue())));
+        }
+        return result;
     }
 
     private void provisionDeployment(StackResource r, JsonNode props, ProvisionContext ctx) {

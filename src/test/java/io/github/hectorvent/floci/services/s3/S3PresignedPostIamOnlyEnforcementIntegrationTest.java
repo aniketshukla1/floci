@@ -1,7 +1,7 @@
 package io.github.hectorvent.floci.services.s3;
 
+import io.github.hectorvent.floci.testing.IamEnforcementProfile;
 import io.quarkus.test.junit.QuarkusTest;
-import io.quarkus.test.junit.QuarkusTestProfile;
 import io.quarkus.test.junit.TestProfile;
 import org.junit.jupiter.api.Test;
 
@@ -9,7 +9,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Map;
 import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
@@ -27,7 +26,7 @@ import static org.hamcrest.Matchers.equalTo;
  * {@code S3PresignedPostAuthEnforcementIntegrationTest} cannot exercise.
  */
 @QuarkusTest
-@TestProfile(S3PresignedPostIamOnlyEnforcementIntegrationTest.IamOnlyProfile.class)
+@TestProfile(IamEnforcementProfile.class)
 class S3PresignedPostIamOnlyEnforcementIntegrationTest {
 
     private static final String REGION = "us-east-1";
@@ -208,14 +207,5 @@ class S3PresignedPostIamOnlyEnforcementIntegrationTest {
         String amzDate = AMZ_DATE_FMT.format(Instant.now()).substring(0, 8);
         return "AWS4-HMAC-SHA256 Credential=" + accessKeyId + "/" + amzDate + "/" + REGION + "/" + service
                 + "/aws4_request, SignedHeaders=host, Signature=abc";
-    }
-
-    public static final class IamOnlyProfile implements QuarkusTestProfile {
-        @Override
-        public Map<String, String> getConfigOverrides() {
-            return Map.of(
-                    "floci.services.iam.enforcement-enabled", "true",
-                    "floci.services.s3.enforce-auth", "false");
-        }
     }
 }

@@ -8297,6 +8297,55 @@ class CloudFormationIntegrationTest {
     }
 
     @Test
+    void createStack_apiGatewayV2AuthorizerRejectsOutOfRangeResultTtl() {
+        String template = """
+            {
+              "Resources": {
+                "HttpApi": {
+                  "Type": "AWS::ApiGatewayV2::Api",
+                  "Properties": { "Name": "cfn-apigwv2-authz-ttl-api", "ProtocolType": "HTTP" }
+                },
+                "Authorizer": {
+                  "Type": "AWS::ApiGatewayV2::Authorizer",
+                  "Properties": {
+                    "ApiId": { "Ref": "HttpApi" },
+                    "Name": "cfn-request-authorizer-ttl",
+                    "AuthorizerType": "REQUEST",
+                    "AuthorizerUri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/arn:aws:lambda:us-east-1:000000000000:function:auth/invocations",
+                    "AuthorizerPayloadFormatVersion": "2.0",
+                    "IdentitySource": ["$request.header.Authorization"],
+                    "AuthorizerResultTtlInSeconds": 3601
+                  }
+                }
+              }
+            }
+            """;
+
+        String stackName = "cfn-apigwv2-authorizer-ttl-stack";
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "CreateStack")
+            .formParam("StackName", stackName)
+            .formParam("TemplateBody", template)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200);
+
+        given()
+            .contentType("application/x-www-form-urlencoded")
+            .formParam("Action", "DescribeStackEvents")
+            .formParam("StackName", stackName)
+        .when()
+            .post("/")
+        .then()
+            .statusCode(200)
+            .body(containsString("ROLLBACK_COMPLETE"))
+            .body(containsString("authorizerResultTtlInSeconds must be an integer between 0 and 3600"));
+    }
+
+    @Test
     void createStack_apiGatewayV2RouteResolvesAuthorizerIdViaGetAtt() {
         // Ref already resolved AuthorizerId via the physical id (covered above); Fn::GetAtt reads
         // a separate attributes map that provisionApiGatewayV2Authorizer must also populate, or

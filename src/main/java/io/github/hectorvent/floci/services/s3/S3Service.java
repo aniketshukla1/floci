@@ -1123,14 +1123,11 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     private static String extractAccountId(String arn) {
-        if (arn == null || !arn.startsWith("arn:aws:")) {
+        if (!AwsArnUtils.isArn(arn)) {
             return null;
         }
-        String[] parts = arn.split(":");
-        if (parts.length > 4 && parts[4].matches("\\d{12}")) {
-            return parts[4];
-        }
-        return null;
+        String account = AwsArnUtils.parse(arn).accountId();
+        return account.matches("\\d{12}") ? account : null;
     }
 
     private static AwsException accessDeniedException(String bucketName, String key) {

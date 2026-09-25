@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
@@ -766,7 +767,7 @@ public class ControlTowerService {
     }
 
     private static boolean isArn(String value) {
-        return value.length() >= 20 && value.matches("^arn:aws[0-9a-zA-Z_\\-:\\/]+$");
+        return value.length() >= 20 && value.matches("^arn:" + AwsArnUtils.PARTITION_REGEX + "[0-9a-zA-Z_\\-:\\/]+$");
     }
 
     private static List<String> readRemediationTypes(JsonNode request) {

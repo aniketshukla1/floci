@@ -65,7 +65,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Manages the Docker lifecycle of k3s containers for real-mode EKS clusters.
@@ -133,6 +135,11 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
     private final ContainerLogStreamer logStreamer;
     private final Map<String, ClusterNodeRecord> clusterNodeInstances = new ConcurrentHashMap<>();
     private final Map<String, Closeable> clusterLogHandles = new ConcurrentHashMap<>();
+    private final List<Consumer<Instance>> nodeRegistrationListeners = new CopyOnWriteArrayList<>();
+
+    public void addNodeRegistrationListener(Consumer<Instance> listener) {
+        this.nodeRegistrationListeners.add(listener);
+    }
 
     record ClusterNodeRecord(String accountId, String region, Instance instance) {}
 
@@ -325,6 +332,17 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
         } catch (Exception e) {
             String clusterName = cluster != null ? cluster.getName() : "unknown";
             LOG.warnv("EKS node provider ID injection disabled for cluster {0}: could not derive provider ID: {1}",
+                    clusterName, e.getMessage());
+        }
+
+        try {
+            String region = clusterRegion(cluster);
+            String az = deriveClusterNodeAvailabilityZone(cluster, region);
+            serverArgs.add("--kubelet-arg=node-labels=topology.kubernetes.io/zone=" + az
+                    + ",topology.kubernetes.io/region=" + region);
+        } catch (Exception e) {
+            String clusterName = cluster != null ? cluster.getName() : "unknown";
+            LOG.warnv("EKS node topology labels injection disabled for cluster {0}: could not derive topology labels: {1}",
                     clusterName, e.getMessage());
         }
 
@@ -1402,7 +1420,7 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
                     clusterName, e.getMessage());
             return;
         }
-        List<String> regions = new ArrayList<>(AwsRegions.ALL);
+        List<String> regions = new ArrayList<>(AwsRegions.advertised(AwsRegions.partitionFor(config.defaultRegion())));
         if (!regions.contains(config.defaultRegion())) {
             regions.add(config.defaultRegion());
         }
@@ -1633,7 +1651,16 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
             String region = clusterRegion(cluster);
             ContainerIps containerIps = resolveContainerIps(containerId);
             Instance nodeInstance = synthesizeClusterNodeInstance(cluster, containerIps.primaryIp(), region, accountId);
+            nodeInstance.setDockerContainerId(containerId);
             clusterNodeInstances.put(clusterResourceName(cluster), new ClusterNodeRecord(accountId, region, nodeInstance));
+            for (Consumer<Instance> listener : nodeRegistrationListeners) {
+                try {
+                    listener.accept(nodeInstance);
+                } catch (Exception e) {
+                    LOG.warnv("Node registration listener failed for cluster {0}: {1}",
+                            cluster.getName(), e.getMessage());
+                }
+            }
         } catch (Exception e) {
             LOG.warnv("Could not register cluster node instance for EKS cluster {0}: {1}",
                     cluster.getName(), e.getMessage());
@@ -1652,7 +1679,10 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
                 String accountId = resolveClusterAccountId(cluster);
                 String region = clusterRegion(cluster);
                 nodeInstance = synthesizeClusterNodeInstance(cluster, containerIps.primaryIp(), region, accountId);
+                nodeInstance.setDockerContainerId(containerId);
                 clusterNodeInstances.put(clusterResourceName(cluster), new ClusterNodeRecord(accountId, region, nodeInstance));
+            } else if (nodeInstance.getDockerContainerId() == null) {
+                nodeInstance.setDockerContainerId(containerId);
             }
 
             if (metadataServer != null) {
@@ -1769,6 +1799,10 @@ public class EksClusterManager implements ClusterNodeInstanceProvider {
     String deriveClusterNodeAvailabilityZone(Cluster cluster, String region) {
         String safeRegion = (region != null && !region.isBlank()) ? region : clusterRegion(cluster);
         return safeRegion + "a";
+    }
+
+    String deriveClusterNodeAvailabilityZone(Cluster cluster) {
+        return deriveClusterNodeAvailabilityZone(cluster, clusterRegion(cluster));
     }
 
     String deriveClusterNodeInstanceId(Cluster cluster, String region, String accountId) {

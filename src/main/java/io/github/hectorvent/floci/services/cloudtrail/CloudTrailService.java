@@ -34,6 +34,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 @ApplicationScoped
 public class CloudTrailService {
@@ -737,20 +738,21 @@ public class CloudTrailService {
         return values == null || values.isEmpty();
     }
 
+    private static final Pattern BARE_S3_ARN = Pattern.compile("arn:" + AwsArnUtils.PARTITION_REGEX + ":s3");
+
     // Package-private for unit testing.
     static boolean matchesS3DataResourceArn(String configured, String bucketName, String key) {
         if (configured == null) return false;
-        // "arn:aws:s3" (bare, no ":::") is shorthand for all buckets + all objects.
-        if (configured.equals("arn:aws:s3")) return true;
-        // Forms accepted:
+        // "arn:<partition>:s3" (bare, no ":::") is shorthand for all buckets + all objects.
+        if (BARE_S3_ARN.matcher(configured).matches()) return true;
+        // Forms accepted, in any partition:
         //   arn:aws:s3:::                    → all buckets, all keys
         //   arn:aws:s3:::*                   → all buckets (wildcard)
         //   arn:aws:s3:::bucket/             → all keys in bucket
         //   arn:aws:s3:::bucket/prefix       → keys with the given prefix in bucket
         //   arn:aws:s3:::*/*                 → all objects (wildcard bucket + any key)
-        String prefix = "arn:aws:s3:::";
-        if (!configured.startsWith(prefix)) return false;
-        String tail = configured.substring(prefix.length());
+        String tail = AwsArnUtils.resourceIfArnFor(configured, "s3").orElse(null);
+        if (tail == null) return false;
         if (tail.isEmpty() || tail.equals("/")) {
             return true;
         }

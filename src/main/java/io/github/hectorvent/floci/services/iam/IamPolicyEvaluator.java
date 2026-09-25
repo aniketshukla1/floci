@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.iam;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.services.iam.model.CallerContext;
 import io.github.hectorvent.floci.services.iam.model.PolicyStatement;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -40,6 +41,10 @@ import java.util.regex.Pattern;
  */
 @ApplicationScoped
 public class IamPolicyEvaluator {
+
+    /** An account's root principal ({@code arn:<partition>:iam::<account>:root}) in any partition. */
+    private static final Pattern ROOT_PRINCIPAL_ARN =
+            Pattern.compile("arn:" + AwsArnUtils.PARTITION_REGEX + ":iam::\\d{12}:root");
 
     public enum Decision { ALLOW, DENY }
 
@@ -582,9 +587,12 @@ public class IamPolicyEvaluator {
                         if (pattern.equals(accountId)) {
                             return true;
                         }
-                    } else if (pattern.matches("arn:aws:iam::\\d{12}:root")) {
-                        String patternAcct = pattern.substring(13, 25);
-                        if (patternAcct.equals(accountId)) {
+                    } else if (ROOT_PRINCIPAL_ARN.matcher(pattern).matches()) {
+                        // An account id is scoped to its partition: arn:aws-cn:iam::123:root names
+                        // the China account 123, which is not the commercial account 123.
+                        AwsArnUtils.Arn root = AwsArnUtils.parse(pattern);
+                        if (root.accountId().equals(accountId)
+                                && root.partition().equals(AwsArnUtils.parse(principalArn).partition())) {
                             return true;
                         }
                     } else if (globMatches(pattern, principalArn)) {
@@ -605,27 +613,27 @@ public class IamPolicyEvaluator {
     }
 
     private static String extractAccountId(String arn) {
-        if (arn == null || !arn.startsWith("arn:aws:")) {
+        if (!AwsArnUtils.isArn(arn)) {
             return null;
         }
-        String[] parts = arn.split(":");
-        if (parts.length > 4 && parts[4].matches("\\d{12}")) {
-            return parts[4];
-        }
-        return null;
+        String account = AwsArnUtils.parse(arn).accountId();
+        return account.matches("\\d{12}") ? account : null;
     }
 
+    /**
+     * The role an assumed-role session ARN was minted from, in the session's own partition:
+     * {@code arn:aws-cn:sts::1:assumed-role/r/s} names {@code arn:aws-cn:iam::1:role/r}.
+     */
     private static String extractRoleArnFromAssumedRole(String arn) {
-        if (arn == null || !arn.startsWith("arn:aws:sts:")) {
+        if (!AwsArnUtils.isArnFor(arn, "sts")) {
             return null;
         }
-        String[] parts = arn.split(":");
-        if (parts.length >= 6 && parts[5].startsWith("assumed-role/")) {
-            String accountId = parts[4];
-            String sessionPath = parts[5].substring("assumed-role/".length());
+        AwsArnUtils.Arn parsed = AwsArnUtils.parse(arn);
+        if (parsed.resource().startsWith("assumed-role/")) {
+            String sessionPath = parsed.resource().substring("assumed-role/".length());
             int nextSlash = sessionPath.indexOf('/');
             String roleName = nextSlash > 0 ? sessionPath.substring(0, nextSlash) : sessionPath;
-            return "arn:aws:iam::" + accountId + ":role/" + roleName;
+            return AwsArnUtils.Arn.global(parsed.partition(), "iam", parsed.accountId(), "role/" + roleName).toString();
         }
         return null;
     }

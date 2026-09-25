@@ -3,6 +3,7 @@ package io.github.hectorvent.floci.services.securityhub;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
@@ -498,7 +499,12 @@ public class SecurityHubService implements Resettable {
     }
 
     private void validateResourceArn(String region, String arn) {
-        if (arn == null || !arn.startsWith("arn:aws:securityhub:" + region + ":" + regionResolver.getAccountId() + ":")) {
+        if (!AwsArnUtils.isArnFor(arn, "securityhub")) {
+            throw notFound("The specified Security Hub resource was not found.");
+        }
+        AwsArnUtils.Arn parsed = AwsArnUtils.parse(arn);
+        if (!regionResolver.getPartition().equals(parsed.partition())
+                || !region.equals(parsed.region()) || !regionResolver.getAccountId().equals(parsed.accountId())) {
             throw notFound("The specified Security Hub resource was not found.");
         }
     }

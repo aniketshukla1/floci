@@ -102,12 +102,8 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
     // expression there and the deny list above stops applying once the walk enters one.
     private static final Set<String> JSONATA_PAYLOAD_FIELDS = Set.of(
             "Output", "Assign", "Arguments", "ItemSelector", "BatchInput");
-    private static final Set<String> ITEM_READER_RESOURCES = Set.of(
-            "arn:aws:states:::s3:getObject",
-            "arn:aws:states:::s3:listObjectsV2");
     private static final Set<String> ITEM_READER_INPUT_TYPES = Set.of(
             "MANIFEST", "JSON", "CSV", "JSONL", "PARQUET");
-    private static final String RESULT_WRITER_RESOURCE = "arn:aws:states:::s3:putObject";
     private static final Set<String> RESULT_WRITER_TRANSFORMATIONS = Set.of("NONE", "COMPACT", "FLATTEN");
     private static final Set<String> RESULT_WRITER_OUTPUT_TYPES = Set.of("JSON", "JSONL");
     // Measured against real AWS: TimeoutSeconds is accepted on Task only, Catch and Retry are
@@ -2740,11 +2736,21 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
         return true;
     }
 
+    private static boolean isItemReaderResource(String resource) {
+        return StatesIntegration.parse(resource)
+                .filter(integration -> integration.is("s3", "getObject") || integration.is("s3", "listObjectsV2"))
+                .isPresent();
+    }
+
+    private static boolean isResultWriterResource(String resource) {
+        return StatesIntegration.parse(resource).filter(integration -> integration.is("s3", "putObject")).isPresent();
+    }
+
     private void validateItemReader(String statePath, JsonNode stateDef, boolean jsonata,
                                     List<String> errors) {
         JsonNode itemReader = stateDef.get("ItemReader");
         String resource = itemReader.path("Resource").asText(null);
-        if (resource != null && !ITEM_READER_RESOURCES.contains(resource)) {
+        if (resource != null && !isItemReaderResource(resource)) {
             errors.add("The field 'Resource' does not match any of the allowed values. Examples: "
                     + "[arn:<partition>:states:::s3:getObject, arn:<partition>:states:::s3:listObjectsV2]"
                     + " at " + statePath + "/ItemReader/Resource");
@@ -2801,9 +2807,9 @@ public class StepFunctionsService implements Resettable, ResourceProvider {
         }
 
         if (hasResource && (!writer.get("Resource").isTextual()
-                || !RESULT_WRITER_RESOURCE.equals(writer.get("Resource").asText()))) {
+                || !isResultWriterResource(writer.get("Resource").asText()))) {
             errors.add("The field 'Resource' does not match the allowed value "
-                    + RESULT_WRITER_RESOURCE + " at " + writerPath);
+                    + "arn:<partition>:states:::s3:putObject at " + writerPath);
         }
 
         if (hasDestination && !destinationIsExpression) {

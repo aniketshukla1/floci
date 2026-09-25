@@ -128,6 +128,8 @@ curl -s -H "x-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/instance-id
 ```
 
+As on AWS, the token TTL must be an integer from 1 to 21600 seconds, or the `PUT` returns `400`. A metadata request that presents an unknown or expired token returns `401`, which tells the SDK to fetch a new token. A token is valid only on the instance that requested it: presenting it from another instance returns `401`. A request without a token header still uses IMDSv1; Floci does not enforce `HttpTokens=required`.
+
 ### Supported IMDS endpoints
 
 | Endpoint | Returns |
@@ -691,8 +693,24 @@ A standalone ENI created via `CreateNetworkInterface` can also be handed to `Run
 | CreateVolume | Creates an EBS volume record. |
 | DescribeVolumes | Lists or returns stored EBS volume records. |
 | DeleteVolume | Deletes an EBS volume record. |
+| ModifyVolume | Modifies size, type, IOPS, throughput, or multi-attach settings of an EBS volume record. |
+| DescribeVolumesModifications | Reports the current modification state for EBS volumes, filterable by volume ID and state. |
 | AttachVolume | Attaches a volume to an instance at the requested device; returns the attachment in `attaching` state. |
 | DetachVolume | Detaches a volume from an instance, optionally forced; returns the attachment in `detaching` state. |
+
+When `floci.services.ec2.volume-block-devices` is enabled (the default), attached EBS volumes are backed by real Linux loop devices inside running instance containers and synthesized EKS cluster node containers:
+- **Storage mechanism**: Backing sparse raw image files are allocated in Floci storage under `floci-aws-ec2-volumes` (named volume or host path). A privileged helper container (`floci-aws-ec2-volume-helper`, running `floci.services.ec2.volume-helper-image`, default `alpine:3.21`) manages Linux loop devices via `losetup`.
+- **Target device nodes**: Inside privileged target instance containers, the corresponding device node is created at the requested path (for example `/dev/xvdf` or `/dev/sdf`) using `mknod` or a symlink to the loop device, matching the exact size specified during volume creation. Target containers can format filesystems (such as ext4 or xfs), mount them, and persist data across detach and reattach.
+- **Restart reconciliation**: When an instance container stops and starts, or when Floci restarts, attached volume device nodes are automatically restored inside the target container. Backing raw files remain preserved across reboots in persistent storage.
+- **Graceful degradation**: If Docker is unavailable, the target instance container is not running, or the container is not privileged, volume attachments degrade gracefully to metadata-only tracking without failing the API call.
+- **Platform requirements**: Requires a Linux Docker environment (native Linux Docker daemon, or Colima / Docker Desktop with a Linux virtual machine) and privileged instance containers.
+- **Unmodeled aspects**: Multi-attach is tracked at metadata level only. Automated filesystem formatting (volumes start unformatted like real EBS block devices), volume encryption at the block layer, and live resizing of underlying raw backing files are not modeled. `ModifyVolume` updates recorded metadata and reports completion without resizing the backing raw image.
+
+Validation matches AWS behavior:
+- Unknown volumes are rejected with `InvalidVolume.NotFound`.
+- Decreasing volume size is rejected with `InvalidParameterValue`.
+- Unsupported parameters (such as `Throughput` on non-gp3 volumes or `Iops` on non-provisioned IOPS volume types) are rejected with `InvalidParameterCombination`.
+- When querying `DescribeVolumesModifications` with an explicit volume ID for an unmodified volume, the request fails with `InvalidVolumeModification.NotFound`. Listing or filtering without explicit IDs returns only modified volumes.
 
 ### Snapshots
 

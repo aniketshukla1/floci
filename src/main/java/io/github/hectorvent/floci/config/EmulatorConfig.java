@@ -64,6 +64,17 @@ public interface EmulatorConfig {
     @WithDefault("000000000000")
     String defaultAccountId();
 
+    PartitionsConfig partitions();
+
+    /**
+     * Which AWS partition the deployment serves. Normally derived from {@link #defaultRegion()}
+     * ({@code cn-north-1} means {@code aws-cn}); {@code id} pins it explicitly, and startup
+     * refuses a value that names no partition or contradicts the default region.
+     */
+    interface PartitionsConfig {
+        Optional<String> id();
+    }
+
     /**
      * Path to a shared mock-response configuration file used by the fixed-stub AI services
      * (Textract, Comprehend, Rekognition) to return a caller-configured response instead of
@@ -782,6 +793,7 @@ public interface EmulatorConfig {
         ControlTowerServiceConfig controltower();
         ConnectServiceConfig connect();
         AppIntegrationsServiceConfig appintegrations();
+        DlmServiceConfig dlm();
         CognitoIdentityServiceConfig cognitoidentity();
         GlobalAcceleratorServiceConfig globalaccelerator();
         DataSyncServiceConfig datasync();
@@ -813,6 +825,15 @@ public interface EmulatorConfig {
 
         @WithDefault("dzikoysk/reposilite:3.6.3")
         String mavenImage();
+
+        /**
+         * Image used for the per-repository Verdaccio container backing the {@code npm} format.
+         * No URL/token override like {@link #mavenUrl()}: unlike Reposilite's one shared instance,
+         * npm gets one container per CodeArtifact repository, so there is no single external
+         * instance to point at.
+         */
+        @WithDefault("verdaccio/verdaccio:6.10.4")
+        String npmImage();
     }
 
     interface ConnectServiceConfig {
@@ -821,6 +842,11 @@ public interface EmulatorConfig {
     }
 
     interface AppIntegrationsServiceConfig {
+        @WithDefault("true")
+        boolean enabled();
+    }
+
+    interface DlmServiceConfig {
         @WithDefault("true")
         boolean enabled();
     }
@@ -1215,6 +1241,10 @@ public interface EmulatorConfig {
     interface CodePipelineServiceConfig {
         @WithDefault("true")
         boolean enabled();
+
+        /** How often, in milliseconds, S3 sources are polled for a new object revision. */
+        @WithDefault("500")
+        long sourcePollIntervalMs();
     }
 
     interface SsmServiceConfig {
@@ -2865,6 +2895,17 @@ public interface EmulatorConfig {
         /** Image used for the socat sidecar that forwards published security-group ports. */
         @WithDefault("alpine/socat")
         String socatImage();
+
+        /**
+         * When true, EBS volumes are backed by real storage and attached as block devices
+         * inside target containers. When false or unavailable, attachment remains metadata-only.
+         */
+        @WithDefault("true")
+        boolean volumeBlockDevices();
+
+        /** Image used for the helper container that manages volume loop devices and storage. */
+        @WithDefault("alpine:3.21")
+        String volumeHelperImage();
 
         /** When true, instances go straight to RUNNING without launching Docker containers. */
         @WithDefault("false")

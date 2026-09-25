@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.eks;
 
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.ec2.model.Instance;
@@ -81,7 +82,11 @@ class EksWorkerAuthentication {
 
     private boolean profileMatches(Instance instance, String account, String roleName) {
         String arn = instance.getIamInstanceProfileArn();
-        if (arn == null || !arn.startsWith("arn:aws:iam::" + account + ":instance-profile/")) {
+        if (!AwsArnUtils.isArnFor(arn, "iam")) {
+            return false;
+        }
+        AwsArnUtils.Arn parsed = AwsArnUtils.parse(arn);
+        if (!account.equals(parsed.accountId()) || !parsed.resource().startsWith("instance-profile/")) {
             return false;
         }
         return iam.findInstanceProfile(account, arn.substring(arn.lastIndexOf('/') + 1))

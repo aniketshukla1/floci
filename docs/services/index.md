@@ -59,6 +59,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [Amazon Detective](detective.md) | `/orgs/*`, `/graphs/list`, `/graph/*` | REST JSON | 8 |
 | [Amazon Connect](connect.md) | `/instance`, `/instance/{instanceId}/*`, `/tags/*` | REST JSON | 15 |
 | [Amazon AppIntegrations](appintegrations.md) | `/eventIntegrations/*`, `/dataIntegrations/*`, `/tags/*` | REST JSON | 14 |
+| [Amazon Data Lifecycle Manager](dlm.md) | `/policies`, `/policies/{policyId}`, `/tags/{resourceArn}` | REST JSON | 8 |
 | [ElastiCache](elasticache.md) | `POST /` with `Action=` param + TCP proxy | Query + RESP | 8 |
 | [MemoryDB](memorydb.md) | `POST /` + `X-Amz-Target: AmazonMemoryDB.*` + TCP proxy | JSON 1.1 + RESP | 7 |
 | [RDS](rds.md) | `POST /` with `Action=` param + TCP proxy | Query + wire | 14 |
@@ -120,7 +121,7 @@ Operation counts are exact. For dispatch-table services (Query and JSON 1.1) eac
 | [AWS Backup](backup.md) | `/backup-vaults/*`, `/backup/plans/*`, `/backup-jobs/*`, `/supported-resource-types` | REST JSON | 20 |
 | [AWS FIS](fis.md) | `/experimentTemplates/*`, `/experiments/*`, `/actions/*`, `/targetResourceTypes/*`, `/safetyLevers/*`, `/tags/*` | REST JSON | 26 |
 | [CodeGuru Reviewer](codegurureviewer.md) | `/associations`, `/associations/{associationArn}`, `/tags/*` | REST JSON | 7 |
-| [CodeArtifact](codeartifact.md) | `/v1/domain*`, `/v1/repository*`, `/v1/package/version*`, `/v1/tag*`, `/v1/authorization-token`, `/codeartifact/maven/*` | REST JSON | 26 |
+| [CodeArtifact](codeartifact.md) | `/v1/domain*`, `/v1/repository*`, `/v1/package/version*`, `/v1/tag*`, `/v1/authorization-token`, `/codeartifact/maven/*`, `/codeartifact/npm/*` | REST JSON | 26 |
 | [CloudFront](cloudfront.md) | `/2020-05-31/distribution/*`, `/2020-05-31/cache-policy/*`, `/2020-05-31/function/*` | REST XML | 50 |
 | [Route53](route53.md) | `/2013-04-01/hostedzone/*`, `/2013-04-01/healthcheck/*`, `/2013-04-01/change/*` | REST XML | 25 |
 | [Route 53 Resolver](route53resolver.md) | `POST /` + `X-Amz-Target: Route53Resolver.*` | JSON 1.1 | 18 |

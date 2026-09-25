@@ -1034,8 +1034,8 @@ class DynamoDbJsonHandlerTest {
                     "StreamSpecification": {"StreamEnabled": false, "StreamViewType": "NEW_AND_OLD_IMAGES"}
                 }
                 """));
-        assertEquals("One or more parameter values were invalid: "
-                + "StreamViewType cannot be specified when StreamEnabled is false", ex.getMessage());
+        assertEquals("One or more parameter values were invalid: Table is being created with a stream "
+                + "disabled, UpdateViewType should not be specified", ex.getMessage());
     }
 
     @Test
@@ -1348,6 +1348,23 @@ class DynamoDbJsonHandlerTest {
 
         var response = handler.handle("UpdateItem", request, "eu-west-1");
         assertEquals(200, response.getStatus());
+    }
+
+    @Test
+    void putItemNamesTheSetTypeWhenABinarySetHasDuplicates() {
+        createUsersTable("eu-west-1");
+        ObjectNode request = mapper.createObjectNode();
+        request.put("TableName", "Users");
+        ObjectNode item = item("userId", "u1");
+        ObjectNode binarySet = mapper.createObjectNode();
+        binarySet.putArray("BS").add("").add("");
+        item.set("bad", binarySet);
+        request.set("Item", item);
+
+        AwsException ex = assertThrows(AwsException.class,
+                () -> handler.handle("PutItem", request, "eu-west-1"));
+        assertEquals("One or more parameter values were invalid: "
+                + "Input collection [, ]of type BS contains duplicates.", ex.getMessage());
     }
 
     @Test

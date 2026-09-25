@@ -38,6 +38,7 @@ import io.github.hectorvent.floci.services.ses.SesConfigurationSetController;
 import io.github.hectorvent.floci.services.ses.SesContactController;
 import io.github.hectorvent.floci.services.ses.SesCvetController;
 import io.github.hectorvent.floci.services.ses.SesDedicatedIpController;
+import io.github.hectorvent.floci.services.ses.SesExportJobController;
 import io.github.hectorvent.floci.services.ses.SesIdentityController;
 import io.github.hectorvent.floci.services.ses.SesImportJobController;
 import io.github.hectorvent.floci.services.ses.SesInsightsController;
@@ -58,6 +59,7 @@ import io.github.hectorvent.floci.services.securityhub.SecurityHubController;
 import io.github.hectorvent.floci.services.ssooidc.SsoOidcController;
 import io.github.hectorvent.floci.services.ssoportal.SsoPortalController;
 import io.github.hectorvent.floci.services.detective.DetectiveController;
+import io.github.hectorvent.floci.services.dlm.DlmController;
 import io.github.hectorvent.floci.services.aps.ApsController;
 import io.github.hectorvent.floci.services.controlcatalog.ControlCatalogController;
 import io.github.hectorvent.floci.services.controltower.ControlTowerControlController;
@@ -306,7 +308,8 @@ public class ResolvedServiceCatalog {
                         Set.of(), Set.of("email", "ses", "sesv2"), Set.of(),
                         Set.of(SesAccountController.class, SesConfigurationSetController.class,
                                 SesContactController.class, SesCvetController.class,
-                                SesDedicatedIpController.class, SesIdentityController.class,
+                                SesDedicatedIpController.class, SesExportJobController.class,
+                                SesIdentityController.class,
                                 SesInsightsController.class, SesMetricsController.class,
                                 SesSendController.class,
                                 SesSuppressionController.class, SesTagController.class,
@@ -674,6 +677,10 @@ public class ResolvedServiceCatalog {
                         protocols(ServiceProtocol.REST_JSON),
                         Set.of(), Set.of("app-integrations"), Set.of(),
                         Set.of(io.github.hectorvent.floci.services.appintegrations.AppIntegrationsController.class)),
+                descriptor("dlm", "dlm", config.services().dlm().enabled(), true,
+                        "dlm", config.storage().mode(), 5000L, null, ServiceProtocol.REST_JSON,
+                        protocols(ServiceProtocol.REST_JSON),
+                        Set.of(), Set.of("dlm"), Set.of(), Set.of(DlmController.class)),
                 descriptor("cognito-identity", "cognitoidentity",
                         config.services().cognitoidentity().enabled(), true,
                         "cognitoidentity", config.storage().mode(), 5000L, null, ServiceProtocol.JSON,

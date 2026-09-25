@@ -4,8 +4,11 @@ import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.AwsErrorResponse;
+import io.github.hectorvent.floci.core.common.AwsPartition;
+import io.github.hectorvent.floci.core.common.AwsPartitions;
 import io.github.hectorvent.floci.core.common.CsvParser;
 import io.github.hectorvent.floci.core.common.CustomResourceLiveness;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.RequestContext;
 import io.github.hectorvent.floci.core.common.XmlParser;
 import io.github.hectorvent.floci.services.cloudformation.CloudFormationQueryHandler;
@@ -184,9 +187,6 @@ public class AslExecutor {
             Set.of("MD5", "SHA-1", "SHA-256", "SHA-384", "SHA-512");
 
     private static final String QUERY_LANGUAGE_JSONATA = "JSONata";
-    private static final String AWS_SDK_RDS_DATA_PREFIX = "arn:aws:states:::aws-sdk:rdsdata:";
-    private static final String AWS_SDK_SFN_PREFIX = "arn:aws:states:::aws-sdk:sfn:";
-    private static final String AWS_SDK_SCHEDULER_PREFIX = "arn:aws:states:::aws-sdk:scheduler:";
 
     /**
      * A timestamp inside an {@code aws-sdk:} Task result is the SDK's ISO-8601 rendering of an
@@ -1067,12 +1067,13 @@ public class AslExecutor {
         String functionRef = null;
         JsonNode lambdaPayload = input;
         boolean optimizedLambdaInvoke = false;
+        StatesIntegration integration = StatesIntegration.parse(resource).orElse(null);
 
         if (resource.contains(":lambda:") && resource.contains(":function:")) {
-            // Direct Lambda ARN: arn:aws:lambda:region:account:function:name[:qualifier]
+            // Direct Lambda ARN: arn:<partition>:lambda:region:account:function:name[:qualifier]
             functionRef = resource;
             functionName = extractLambdaFunctionName(resource);
-        } else if (resource.equals("arn:aws:states:::lambda:invoke")) {
+        } else if (integration != null && integration.is("lambda", "invoke")) {
             // Optimized Lambda integration — function name and payload come from resolved input
             optimizedLambdaInvoke = true;
             String fnRef = input.path("FunctionName").asText(null);
@@ -1087,7 +1088,7 @@ public class AslExecutor {
         }
 
         if (functionName != null) {
-            // Extract region from the state machine ARN: arn:aws:states:REGION:...
+            // Extract region from the state machine ARN: arn:<partition>:states:REGION:...
             String region = extractRegionFromArn(sm.getStateMachineArn());
             LambdaFunction fn = resolveLambdaFunction(region, functionName, extractLambdaQualifier(functionRef));
             if (fn == null) {
@@ -1122,9 +1123,13 @@ public class AslExecutor {
             return invokeResponse;
         }
 
+        if (integration == null) {
+            return invokeNonIntegrationResource(resource, input, taskToken);
+        }
+
         // DynamoDB optimized integrations (4 actions)
-        if (resource.startsWith("arn:aws:states:::dynamodb:")) {
-            String operation = resource.substring("arn:aws:states:::dynamodb:".length());
+        if (integration.isOptimizedService("dynamodb")) {
+            String operation = integration.api();
             String region = extractRegionFromArn(sm.getStateMachineArn());
             try {
                 return invokeDynamoDb(operation, input, region);
@@ -1134,110 +1139,114 @@ public class AslExecutor {
         }
 
         // AWS SDK service integrations: DynamoDB
-        if (resource.startsWith("arn:aws:states:::aws-sdk:dynamodb:")) {
-            String camelCaseAction = resource.substring("arn:aws:states:::aws-sdk:dynamodb:".length());
+        if (integration.isSdkService("dynamodb")) {
+            String camelCaseAction = integration.api();
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeAwsSdkDynamoDb(camelCaseAction, input, region);
         }
 
         // AWS SDK service integration: RDS Data API ExecuteStatement
-        if (resource.startsWith(AWS_SDK_RDS_DATA_PREFIX)) {
-            String action = resource.substring(AWS_SDK_RDS_DATA_PREFIX.length());
+        if (integration.isSdkService("rdsdata")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
-            return invokeAwsSdkRdsData(action, input, region);
+            return invokeAwsSdkRdsData(integration, input, region);
         }
 
         // SQS optimized integration
-        if (resource.equals("arn:aws:states:::sqs:sendMessage")) {
+        if (integration.is("sqs", "sendMessage")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeOptimizedSqsSendMessage(input, region);
         }
 
         // HTTP optimized integration
-        if (resource.equals("arn:aws:states:::http:invoke")) {
+        if (integration.is("http", "invoke")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeHttp(input, region);
         }
 
         // AWS SDK service integration: SQS SendMessage
-        if (resource.equals("arn:aws:states:::aws-sdk:sqs:sendMessage")) {
+        if (integration.isSdk("sqs", "sendMessage")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeAwsSdkSqsSendMessage(input, region);
         }
 
         // SNS optimized integration
-        if (resource.equals("arn:aws:states:::sns:publish")) {
+        if (integration.is("sns", "publish")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeSnsPublish(input, region, "SNS.");
         }
 
         // AWS SDK service integration: SNS Publish
-        if (resource.equals("arn:aws:states:::aws-sdk:sns:publish")) {
+        if (integration.isSdk("sns", "publish")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeSnsPublish(input, region, "Sns.");
         }
 
         // AWS SDK service integration: CloudFormation (query protocol → JSON)
-        if (resource.startsWith("arn:aws:states:::aws-sdk:cloudformation:")) {
-            String action = resource.substring("arn:aws:states:::aws-sdk:cloudformation:".length());
+        if (integration.isSdkService("cloudformation")) {
+            String action = integration.api();
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeAwsSdkCloudFormation(action, input, region);
         }
 
         // AWS SDK service integration: EC2 DescribeRegions
-        if (resource.equals("arn:aws:states:::aws-sdk:ec2:describeRegions")) {
+        if (integration.isSdk("ec2", "describeRegions")) {
             return invokeAwsSdkEc2DescribeRegions();
         }
 
         // S3 PutObject — optimized and aws-sdk integrations
-        if (resource.equals("arn:aws:states:::s3:putObject")
-                || resource.equals("arn:aws:states:::aws-sdk:s3:putObject")) {
+        if (integration.is("s3", "putObject") || integration.isSdk("s3", "putObject")) {
             return invokeS3PutObject(input);
         }
 
-        // ECS optimized integration: arn:aws:states:::ecs:runTask (request-response, .sync, .waitForTaskToken).
+        // ECS optimized integration: arn:<partition>:states:::ecs:runTask (request-response, .sync, .waitForTaskToken).
         // The .waitForTaskToken suffix is already stripped by executeTaskState, so a waitForTaskToken
         // variant arrives here as the bare runTask resource and simply launches the task while the token
         // future blocks for SendTaskSuccess.
-        if (resource.startsWith("arn:aws:states:::ecs:runTask")) {
+        if (integration.isAnySuffix("ecs", "runTask")) {
             // A non-null taskToken means the original resource ended with .waitForTaskToken (stripped
             // upstream). Its failure semantics match .sync — a task placement failure fails the state —
             // whereas request-response returns the {Tasks,Failures} envelope without failing the state.
             String mode = taskToken != null
                     ? ".waitForTaskToken"
-                    : resource.substring("arn:aws:states:::ecs:runTask".length());
+                    : integration.suffix();
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeEcsRunTask(mode, input, region, executionDeadlineNanos);
         }
 
         // AWS SDK service integrations: Step Functions
-        if (resource.startsWith(AWS_SDK_SFN_PREFIX)) {
-            String action = resource.substring(AWS_SDK_SFN_PREFIX.length());
+        if (integration.isSdkService("sfn")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
-            return invokeAwsSdkSfn(action, input, region);
+            return invokeAwsSdkSfn(integration, input, region);
         }
 
         // AWS SDK service integrations: EventBridge Scheduler
-        if (resource.startsWith(AWS_SDK_SCHEDULER_PREFIX)) {
-            String action = resource.substring(AWS_SDK_SCHEDULER_PREFIX.length());
+        if (integration.isSdkService("scheduler")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
-            return invokeAwsSdkScheduler(action, input, region);
+            return invokeAwsSdkScheduler(integration, input, region);
         }
 
         // EventBridge optimized integration
-        if (resource.equals("arn:aws:states:::events:putEvents")) {
+        if (integration.is("events", "putEvents")) {
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeOptimizedPutEvents(input, region);
         }
 
         // Nested state machine integration
-        if (resource.startsWith("arn:aws:states:::states:startExecution")) {
-            String mode = resource.substring("arn:aws:states:::states:startExecution".length());
+        if (integration.isAnySuffix("states", "startExecution")) {
+            String mode = integration.suffix();
             String region = extractRegionFromArn(sm.getStateMachineArn());
             return invokeNestedStateMachine(mode, input, region, executionDeadlineNanos, rawParameters);
         }
 
-        // Activity resource: arn:aws:states:{region}:{account}:activity:{name}
+        throw new FailStateException("States.TaskFailed", "Unsupported resource: " + resource);
+    }
+
+    /**
+     * A Task resource that is not a service-integration id: an activity ARN, or something this
+     * emulator does not implement.
+     */
+    private JsonNode invokeNonIntegrationResource(String resource, JsonNode input, String taskToken) throws Exception {
+        // Activity resource: arn:<partition>:states:{region}:{account}:activity:{name}
         if (isActivityArn(resource)) {
             if (taskToken == null) {
                 throw new FailStateException("States.TaskFailed",
@@ -1289,10 +1298,12 @@ public class AslExecutor {
     private JsonNode invokeAwsSdkEc2DescribeRegions() {
         ObjectNode result = objectMapper.createObjectNode();
         ArrayNode regions = objectMapper.createArrayNode();
-        for (String name : ec2Service.describeRegions()) {
+        AwsPartition partition = AwsPartitions.byId(
+                RegionResolver.effectivePartition(config.defaultRegion(), config.partitions().id()));
+        for (AwsPartition.Region name : ec2Service.describeRegions(partition, false)) {
             ObjectNode region = objectMapper.createObjectNode();
-            region.put("RegionName", name);
-            region.put("Endpoint", "ec2." + name + ".amazonaws.com");
+            region.put("RegionName", name.id());
+            region.put("Endpoint", partition.regionalHostname("ec2", name.id()));
             region.put("OptInStatus", "opt-in-not-required");
             regions.add(region);
         }
@@ -1360,15 +1371,15 @@ public class AslExecutor {
      * {@code aws-sdk:sfn:startExecution} from the optimized {@code states:startExecution}
      * handled by {@link #invokeNestedStateMachine}.
      */
-    private JsonNode invokeAwsSdkSfn(String action, JsonNode input, String region) throws Exception {
-        return switch (action) {
+    private JsonNode invokeAwsSdkSfn(StatesIntegration integration, JsonNode input, String region) throws Exception {
+        return switch (integration.api()) {
             case "startExecution" -> invokeAwsSdkSfnStartExecution(input, region);
             case "startSyncExecution" -> invokeAwsSdkSfnStartSyncExecution(input, region);
             case "sendTaskSuccess" -> invokeAwsSdkSfnSendTaskSuccess(input);
             case "sendTaskFailure" -> invokeAwsSdkSfnSendTaskFailure(input);
             case "describeMapRun" -> invokeAwsSdkSfnDescribeMapRun(input);
             default -> throw new FailStateException("States.TaskFailed",
-                    "Unsupported resource: " + AWS_SDK_SFN_PREFIX + action);
+                    "Unsupported resource: " + integration.withoutSuffix());
         };
     }
 
@@ -1488,12 +1499,13 @@ public class AslExecutor {
      * Service and parsing failures stay inside the translation that makes them reachable for
      * {@code Retry} and {@code Catch}.
      */
-    private JsonNode invokeAwsSdkScheduler(String action, JsonNode input, String region) {
+    private JsonNode invokeAwsSdkScheduler(StatesIntegration integration, JsonNode input, String region) {
+        String action = integration.api();
         boolean deleting = "deleteSchedule".equals(action);
         boolean creating = "createSchedule".equals(action);
         if (!creating && !deleting && !"updateSchedule".equals(action)) {
             throw new FailStateException("States.TaskFailed",
-                    "Unsupported resource: " + AWS_SDK_SCHEDULER_PREFIX + action);
+                    "Unsupported resource: " + integration.withoutSuffix());
         }
         try {
             if (deleting) {
@@ -2081,10 +2093,10 @@ public class AslExecutor {
         return objectMapper.createObjectNode();
     }
 
-    private JsonNode invokeAwsSdkRdsData(String action, JsonNode input, String region) {
-        if (!"executeStatement".equals(action)) {
+    private JsonNode invokeAwsSdkRdsData(StatesIntegration integration, JsonNode input, String region) {
+        if (!"executeStatement".equals(integration.api())) {
             throw new FailStateException("States.TaskFailed",
-                    "Unsupported resource: " + AWS_SDK_RDS_DATA_PREFIX + action);
+                    "Unsupported resource: " + integration.withoutSuffix());
         }
         try {
             JsonNode request = recaseKeys(objectMapper, input, false);
@@ -3305,10 +3317,11 @@ public class AslExecutor {
                                                     JsonNode context, boolean jsonata,
                                                     ObjectNode variables) throws Exception {
         String resource = itemReader.path("Resource").asText(null);
-        if ("arn:aws:states:::s3:listObjectsV2".equals(resource)) {
+        StatesIntegration integration = StatesIntegration.parse(resource).orElse(null);
+        if (integration != null && integration.is("s3", "listObjectsV2")) {
             return resolveListObjectsItems(itemReader, input, context, jsonata, variables);
         }
-        if (!"arn:aws:states:::s3:getObject".equals(resource)) {
+        if (integration == null || !integration.is("s3", "getObject")) {
             throw new FailStateException("States.Runtime", "Unsupported ItemReader resource: " + resource);
         }
 
@@ -5169,9 +5182,9 @@ public class AslExecutor {
         if (resource.contains(":lambda:") && resource.contains(":function:")) {
             return new TaskEventProfile("LambdaFunction", null, resource);
         }
-        if (resource.startsWith("arn:aws:states:::")) {
-            var tail = resource.substring("arn:aws:states:::".length());
-            var idx = tail.lastIndexOf(':');
+        String tail = StatesIntegration.tail(resource).orElse(null);
+        if (tail != null) {
+            int idx = tail.lastIndexOf(':');
             if (idx < 0) {
                 return new TaskEventProfile("Task", tail, tail);
             }

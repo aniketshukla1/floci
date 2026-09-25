@@ -365,9 +365,7 @@ public class ApiGatewayV2Service {
 
         auth.setAuthorizerUri((String) request.get("authorizerUri"));
         auth.setAuthorizerPayloadFormatVersion((String) request.get("authorizerPayloadFormatVersion"));
-        if (request.get("authorizerResultTtlInSeconds") != null) {
-            auth.setAuthorizerResultTtlInSeconds(((Number) request.get("authorizerResultTtlInSeconds")).intValue());
-        }
+        auth.setAuthorizerResultTtlInSeconds(authorizerResultTtl(request.get("authorizerResultTtlInSeconds")));
         if (request.get("enableSimpleResponses") != null) {
             auth.setEnableSimpleResponses(Boolean.parseBoolean(String.valueOf(request.get("enableSimpleResponses"))));
         }
@@ -412,6 +410,8 @@ public class ApiGatewayV2Service {
     public Authorizer updateAuthorizer(String region, String apiId, String authorizerId,
                                        Map<String, Object> request) {
         Authorizer auth = getAuthorizer(region, apiId, authorizerId);
+        // Validated before any field changes: the store hands back the live authorizer.
+        Integer ttl = authorizerResultTtl(request.get("authorizerResultTtlInSeconds"));
 
         if (request.containsKey("name") && request.get("name") != null) {
             auth.setName((String) request.get("name"));
@@ -443,8 +443,8 @@ public class ApiGatewayV2Service {
         if (request.containsKey("authorizerPayloadFormatVersion") && request.get("authorizerPayloadFormatVersion") != null) {
             auth.setAuthorizerPayloadFormatVersion((String) request.get("authorizerPayloadFormatVersion"));
         }
-        if (request.containsKey("authorizerResultTtlInSeconds") && request.get("authorizerResultTtlInSeconds") != null) {
-            auth.setAuthorizerResultTtlInSeconds(((Number) request.get("authorizerResultTtlInSeconds")).intValue());
+        if (ttl != null) {
+            auth.setAuthorizerResultTtlInSeconds(ttl);
         }
         if (request.containsKey("enableSimpleResponses") && request.get("enableSimpleResponses") != null) {
             auth.setEnableSimpleResponses(Boolean.parseBoolean(String.valueOf(request.get("enableSimpleResponses"))));
@@ -452,6 +452,19 @@ public class ApiGatewayV2Service {
 
         authorizerStore.put(authorizerKey(region, apiId, authorizerId), auth);
         return auth;
+    }
+
+    // AuthorizerResultTtlInSeconds is modeled as an integer in [0, 3600]. doubleValue() keeps the
+    // bounds check exact for a Long or BigInteger body value that intValue() would wrap into range.
+    static Integer authorizerResultTtl(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Number ttl) || ttl.doubleValue() < 0 || ttl.doubleValue() > 3600) {
+            throw new AwsException("BadRequestException",
+                    "authorizerResultTtlInSeconds must be an integer between 0 and 3600", 400);
+        }
+        return ttl.intValue();
     }
 
     // ──────────────────────────── Route CRUD ────────────────────────────

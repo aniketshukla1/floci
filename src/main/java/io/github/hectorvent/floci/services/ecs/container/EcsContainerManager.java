@@ -1110,6 +1110,9 @@ public class EcsContainerManager {
         // period its container definition asked for.
         Set<String> terminatedContainerIds = new HashSet<>();
         for (Map.Entry<String, String> entry : handle.getContainerIds().entrySet()) {
+            if (handle.isContainerRemoved(entry.getKey())) {
+                continue;
+            }
             String dockerId = entry.getValue();
             try {
                 lifecycleManager.getDockerClient().stopContainerCmd(dockerId)
@@ -1126,24 +1129,38 @@ public class EcsContainerManager {
         // Phase 2: inspect exit codes, then remove.
         for (Map.Entry<String, String> entry : handle.getContainerIds().entrySet()) {
             String name = entry.getKey();
+            if (handle.isContainerRemoved(name)) {
+                exitCodes.put(name, handle.getRecordedExitCode(name));
+                continue;
+            }
             String dockerId = entry.getValue();
-            exitCodes.put(name, getExitCodeIfStopped(dockerId));
+            Integer exitCode = handle.getRecordedExitCode(name);
+            if (exitCode == null) {
+                exitCode = getExitCodeIfStopped(dockerId);
+                handle.recordExitCode(name, exitCode);
+            }
+            exitCodes.put(name, exitCode);
             // Read before the removal below, which is the last moment the daemon still knows it.
             handle.recordFinishedAt(name, getFinishedAtIfStopped(dockerId));
             try {
                 lifecycleManager.getDockerClient().removeContainerCmd(dockerId).withForce(true).exec();
                 terminatedContainerIds.add(dockerId);
+                handle.recordContainerRemoved(name);
             } catch (NotFoundException ignored) {
                 terminatedContainerIds.add(dockerId);
+                handle.recordContainerRemoved(name);
             } catch (Exception e) {
                 LOG.warnv("Error removing ECS container {0}: {1}", dockerId, e.getMessage());
+                exitCodes.put(name, null);
             }
         }
         // A force removal terminates Docker's follow-log transport even when the preceding stop failed.
         // Preserve handles for any container that still may be running after both operations failed.
         terminatedContainerIds.forEach(dockerId -> finalizeLogStream(handle, dockerId));
-        cleanupProtectedNetwork(handle);
-        removeFirelensVolume(handle);
+        if (handle.allContainersRemoved()) {
+            cleanupProtectedNetwork(handle);
+            removeFirelensVolume(handle);
+        }
         return exitCodes;
     }
 

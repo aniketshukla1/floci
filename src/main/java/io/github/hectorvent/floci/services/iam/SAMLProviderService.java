@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.iam;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import io.github.hectorvent.floci.core.common.AwsArnUtils;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
@@ -17,7 +18,8 @@ import java.util.regex.Pattern;
 /** Minimal IAM SAML provider registry used by STS assertion verification. */
 @ApplicationScoped
 public class SAMLProviderService {
-    private static final Pattern ARN = Pattern.compile("^arn:aws:iam::(\\d{12}):saml-provider/[A-Za-z0-9+=,.@_-]{1,128}$");
+    private static final Pattern ARN = Pattern.compile(
+            "^arn:" + AwsArnUtils.PARTITION_REGEX + ":iam::(\\d{12}):saml-provider/[A-Za-z0-9+=,.@_-]{1,128}$");
     private final StorageBackend<String, SAMLProvider> providers;
     private final Object providerLock = new Object();
 

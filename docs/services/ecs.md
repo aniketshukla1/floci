@@ -266,6 +266,10 @@ applied without rolling anything. An update replaces only the members it names: 
 `placementStrategy` alone leaves a `placementConstraints` stored earlier in place, and an empty
 array clears a member the way AWS clears it.
 
+When a service replaces or stops a task in Docker mode, the task remains `STOPPING` until its
+containers are removed. A failed Docker removal is retried on later reconciliation ticks, so the
+task is not reported as `STOPPED` while its container may still be serving.
+
 Every `awsvpc` task gets a real ENI in the subnet it asked for, in Docker and in mock mode alike,
 and reports it as an `attachments` entry with its `networkInterfaceId`, `privateIPv4Address` and
 `subnetId`; the task's containers report the same interface in `networkInterfaces`. A subnet that
