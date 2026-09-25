@@ -2227,9 +2227,19 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
     public void registerSession(String sessionAccessKeyId, String secretAccessKey, String sessionToken,
                                 String roleArn, java.time.Instant expiration, String sessionPolicyDocument,
                                 String originAccountId) {
-        sessions.put(sessionAccessKeyId,
-                new SessionCredential(sessionAccessKeyId, secretAccessKey, sessionToken, roleArn, expiration,
-                        sessionPolicyDocument, originAccountId));
+        registerSession(sessionAccessKeyId, secretAccessKey, sessionToken, roleArn, expiration,
+                sessionPolicyDocument, originAccountId, null, null);
+    }
+
+    /** Stores the identity returned to the caller when STS creates an assumed-role session. */
+    public void registerSession(String sessionAccessKeyId, String secretAccessKey, String sessionToken,
+                                String roleArn, java.time.Instant expiration, String sessionPolicyDocument,
+                                String originAccountId, String roleSessionName, String assumedRoleId) {
+        SessionCredential session = new SessionCredential(sessionAccessKeyId, secretAccessKey, sessionToken,
+                roleArn, expiration, sessionPolicyDocument, originAccountId);
+        session.setRoleSessionName(roleSessionName);
+        session.setAssumedRoleId(assumedRoleId);
+        sessions.put(sessionAccessKeyId, session);
     }
 
     /** Stores a temporary session in an explicit account namespace. */
@@ -2532,11 +2542,29 @@ public class IamService implements SessionAccountLookup, ResourceProvider {
             }
             String roleName = roleArn.contains("/") ? roleArn.substring(roleArn.lastIndexOf('/') + 1) : "UnknownRole";
             String accountId = AwsArnUtils.accountOrDefault(roleArn, regionResolver.getAccountId());
+            String sessionName = session.getRoleSessionName();
+            if (sessionName == null) {
+                sessionName = session.getEc2InstanceId() != null
+                        ? session.getEc2InstanceId() : "floci-session";
+            }
             return Optional.of(AwsArnUtils.Arn.of("sts", "", accountId, "assumed-role/" + roleName + "/"
-                    + (session.getEc2InstanceId() != null ? session.getEc2InstanceId() : "floci-session")).toString());
+                    + sessionName).toString());
         }
 
         return Optional.empty();
+    }
+
+    public Optional<String> resolveCallerUserId(String accessKeyId) {
+        Optional<SessionCredential> sessionOpt = findSessionForCallerContext(accessKeyId);
+        if (sessionOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        SessionCredential session = sessionOpt.get();
+        if (session.getExpiration() != null && session.getExpiration().isBefore(Instant.now())) {
+            deleteSession(accessKeyId, session);
+            return Optional.empty();
+        }
+        return Optional.ofNullable(session.getAssumedRoleId());
     }
 
     /** Temporary credentials are the ones STS mints, distinguished by the {@code ASIA} prefix. */
