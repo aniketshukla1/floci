@@ -180,10 +180,11 @@ they belong to, as the model requires. An omitted `Enabled` activates the subscr
 RDS requires the Docker socket and port range exposure. For private registry authentication and other Docker settings see [Docker Configuration](../configuration/docker.md).
 
 `CreateDBInstance`, `CreateDBCluster`, `RestoreDBInstanceFromDBSnapshot`, and
-`RestoreDBClusterFromSnapshot` honor a requested `Port` only when it is free within the
-configured RDS proxy range. Otherwise Floci assigns the next free port in that range and
-returns the assigned port in the endpoint. This differs from AWS because Floci's local
-proxy must use a published host port; for example, requesting `5432` with the default
+`RestoreDBClusterFromSnapshot` honor a requested `Port` only within the configured
+RDS proxy range. A port outside that range causes Floci to assign the next free port
+and return it in the endpoint. A port inside the range that is already in use is
+rejected. This differs from AWS because Floci's local proxy must use a published
+host port; for example, requesting `5432` with the default
 `7001`-`7099` range returns a port in that range. Ports outside AWS's valid
 `1150`-`65535` interval are rejected.
 

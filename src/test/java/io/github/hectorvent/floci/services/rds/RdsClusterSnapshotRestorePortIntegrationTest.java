@@ -19,6 +19,7 @@ class RdsClusterSnapshotRestorePortIntegrationTest {
     private static final String SOURCE = "restore-port-source";
     private static final String SNAPSHOT = "restore-port-snapshot";
     private static final String RESTORED = "restore-port-target";
+    private static final String COLLISION = "restore-port-collision";
     private static final String INSTANCE = "restore-port-instance";
     private static final String INSTANCE_SNAPSHOT = "restore-port-instance-snapshot";
     private static final String RESTORED_INSTANCE = "restore-port-instance-target";
@@ -40,7 +41,7 @@ class RdsClusterSnapshotRestorePortIntegrationTest {
         }
         rds("DeleteDBSnapshot").formParam("DBSnapshotIdentifier", INSTANCE_SNAPSHOT)
                 .when().post("/");
-        for (String id : new String[]{RESTORED, SOURCE}) {
+        for (String id : new String[]{COLLISION, RESTORED, SOURCE}) {
             rds("DeleteDBCluster").formParam("DBClusterIdentifier", id)
                     .formParam("SkipFinalSnapshot", "true").when().post("/");
         }
@@ -74,6 +75,14 @@ class RdsClusterSnapshotRestorePortIntegrationTest {
                 .formParam("DBClusterIdentifier", RESTORED)
                 .when().post("/").then().statusCode(200)
                 .body(containsString("<Port>7005</Port>"));
+
+        rds("RestoreDBClusterFromSnapshot")
+                .formParam("DBClusterIdentifier", COLLISION)
+                .formParam("SnapshotIdentifier", SNAPSHOT)
+                .formParam("Engine", "aurora-postgresql")
+                .formParam("Port", "7005")
+                .when().post("/").then().statusCode(400)
+                .body(containsString("<Code>InvalidParameterValue</Code>"));
     }
 
     @Test

@@ -676,9 +676,6 @@ public class RdsService implements Resettable, ResourceProvider {
         DbInstanceSettings.validateMonitoringPairOnCreate(
                 settings.monitoringInterval(), settings.monitoringRoleArn());
         boolean mock = config.services().rds().mock();
-        // Always reserve a unique port (even in mock) so endpoints stay distinct and usedPorts
-        // is consistent; mock mode only skips starting the container and auth proxy.
-        int proxyPort = reserveProxyPort(requestedPort);
         if (masterUsername == null || masterUsername.isBlank()) {
             masterUsername = "root";
         } else if (masterUsername.length() > engine.maxMasterUsernameLength()
@@ -689,6 +686,9 @@ public class RdsService implements Resettable, ResourceProvider {
         if (manageMasterUserPassword && (masterPassword == null || masterPassword.isBlank())) {
             masterPassword = generatedMasterPassword();
         }
+        // Always reserve a unique port (even in mock) so endpoints stay distinct and usedPorts
+        // is consistent; mock mode only skips starting the container and auth proxy.
+        int proxyPort = reserveProxyPort(requestedPort);
 
         String backendHost = null;
         int backendPort = 0;
@@ -1077,23 +1077,23 @@ public class RdsService implements Resettable, ResourceProvider {
 
     private record SnapshotReference(String accountId, String region, DbSnapshot snapshot) {}
 
-    public DbInstance restoreDbInstanceFromDbSnapshot(String instanceId, String snapshotId, String dbInstanceClass, String availabilityZone, boolean multiAz, String dbSubnetGroupName, java.util.List<String> vpcSecurityGroupIds, java.util.Map<String, String> tags) {
+    public DbInstance restoreDbInstanceFromDbSnapshot(String instanceId, String snapshotId, String dbInstanceClass, String availabilityZone, boolean multiAz, String dbSubnetGroupName, List<String> vpcSecurityGroupIds, Map<String, String> tags) {
         return restoreDbInstanceFromDbSnapshot(instanceId, snapshotId, dbInstanceClass, availabilityZone,
                 multiAz, dbSubnetGroupName, vpcSecurityGroupIds, tags, regionResolver.getDefaultRegion());
     }
 
     public DbInstance restoreDbInstanceFromDbSnapshot(String instanceId, String snapshotId, String dbInstanceClass,
                                                        String availabilityZone, boolean multiAz, String dbSubnetGroupName,
-                                                       java.util.List<String> vpcSecurityGroupIds,
-                                                       java.util.Map<String, String> tags, String region) {
+                                                       List<String> vpcSecurityGroupIds,
+                                                       Map<String, String> tags, String region) {
         return restoreDbInstanceFromDbSnapshot(instanceId, snapshotId, dbInstanceClass,
                 availabilityZone, multiAz, dbSubnetGroupName, vpcSecurityGroupIds, tags, region, null);
     }
 
     public DbInstance restoreDbInstanceFromDbSnapshot(String instanceId, String snapshotId, String dbInstanceClass,
                                                        String availabilityZone, boolean multiAz, String dbSubnetGroupName,
-                                                       java.util.List<String> vpcSecurityGroupIds,
-                                                       java.util.Map<String, String> tags, String region,
+                                                       List<String> vpcSecurityGroupIds,
+                                                       Map<String, String> tags, String region,
                                                        Integer requestedPort) {
         String effectiveRegion = effectiveRegion(region);
         DbSnapshot snapshot = Optional.ofNullable(findSnapshotForScope(currentAccountId(), effectiveRegion, snapshotId))
@@ -6372,7 +6372,11 @@ public class RdsService implements Resettable, ResourceProvider {
         }
         int base = config.services().rds().proxyBasePort();
         int max = config.services().rds().proxyMaxPort();
-        if (requestedPort >= base && requestedPort <= max && usedPorts.add(requestedPort)) {
+        if (requestedPort >= base && requestedPort <= max) {
+            if (!usedPorts.add(requestedPort)) {
+                throw new AwsException("InvalidParameterValue",
+                        "Port " + requestedPort + " is already in use by another RDS resource.", 400);
+            }
             return requestedPort;
         }
         return allocateProxyPort();
