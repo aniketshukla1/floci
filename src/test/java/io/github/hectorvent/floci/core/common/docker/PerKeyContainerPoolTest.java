@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -145,6 +146,40 @@ class PerKeyContainerPoolTest {
 
         // The container was tracked (by ensureReady, before stopContainer could run) and then
         // removed (by stopContainer, once it got the lock): the race does not orphan it.
+        verify(lifecycleManager).stopAndRemove("container-1", null);
+    }
+
+    @Test
+    void ensureReadyStopsItsOwnContainerWhenStopAllRunsWhileItWasStarting() throws Exception {
+        CountDownLatch starterEntered = new CountDownLatch(1);
+        CountDownLatch releaseStarter = new CountDownLatch(1);
+        ExecutorService pool2 = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> startFuture = pool2.submit(() -> assertThrows(IllegalStateException.class,
+                    () -> pool.ensureReady("key-1", () -> {
+                        starterEntered.countDown();
+                        try {
+                            assertTrue(releaseStarter.await(5, TimeUnit.SECONDS));
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return new StartedContainer("container-1", "http://127.0.0.1:1");
+                    })));
+            // stopAll() has no single key to lock, so it cannot serialize against an in-flight
+            // start the way stopContainer() does: this is what forces the exact race that would
+            // otherwise let the container this start commits to outlive the reset that was
+            // supposed to remove it.
+            assertTrue(starterEntered.await(5, TimeUnit.SECONDS));
+
+            pool.stopAll();
+            releaseStarter.countDown();
+
+            startFuture.get(5, TimeUnit.SECONDS);
+        } finally {
+            pool2.shutdown();
+            assertTrue(pool2.awaitTermination(30, TimeUnit.SECONDS));
+        }
+
         verify(lifecycleManager).stopAndRemove("container-1", null);
     }
 

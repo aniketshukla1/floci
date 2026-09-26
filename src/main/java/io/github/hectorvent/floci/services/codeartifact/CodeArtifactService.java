@@ -326,11 +326,7 @@ public class CodeArtifactService implements Resettable {
     /**
      * Generic over whatever formats a repository actually has sidecar ids for: adding the next
      * format's sidecar needs no change here, only a new {@link RepositorySidecarManager}
-     * implementation that {@link CodeArtifactSidecarRegistry} discovers. Shared by
-     * {@link #deleteRepository} and {@link #beforeReset}, both of which forget the repository's
-     * record right after calling this and so must not leave its sidecar storage (a Docker
-     * container, for a per-repository sidecar such as Verdaccio) running with nothing left able to
-     * ever release it again.
+     * implementation that {@link CodeArtifactSidecarRegistry} discovers.
      */
     private void releaseSidecarStorage(CodeArtifactRepository r, String domain, String repository) {
         r.getSidecarContainerIds().forEach((format, containerId) ->
@@ -757,18 +753,6 @@ public class CodeArtifactService implements Resettable {
         }
         return requireRepository(ref.owner(), repositoryKey(ref.region(), ref.domain(), ref.repository()),
                 ref.repository()).getTags();
-    }
-
-    /**
-     * Releases every repository's sidecar storage before {@link #clear} wipes the records that
-     * name it. Without this, an emulator reset forgets which sidecar container backs a repository
-     * without ever stopping it: harmless for Maven's one shared Reposilite instance, but a real
-     * Docker container leak for a per-repository sidecar such as Verdaccio, one abandoned
-     * container per repository that existed at reset time.
-     */
-    @Override
-    public void beforeReset() {
-        repositories.scanAllAccounts().forEach(r -> releaseSidecarStorage(r, r.getDomainName(), r.getName()));
     }
 
     @Override

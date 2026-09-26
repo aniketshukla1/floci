@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.codeartifact;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.ContainerTeardown;
 import io.github.hectorvent.floci.core.common.docker.ContainerBuilder;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager.ContainerInfo;
@@ -8,9 +9,7 @@ import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager.E
 import io.github.hectorvent.floci.core.common.docker.ContainerSpec;
 import io.github.hectorvent.floci.core.common.docker.ContainerStorageHelper;
 import io.github.hectorvent.floci.core.common.docker.PerKeyContainerPool;
-import io.quarkus.runtime.ShutdownEvent;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
@@ -35,9 +34,15 @@ import java.nio.charset.StandardCharsets;
  * real CodeArtifact authorization check happens once at Floci's proxy layer
  * ({@code CodeArtifactNpmDataPlane}), before a request ever reaches the container; the container
  * itself is never reachable directly by a client.
+ *
+ * <p>Implements {@link ContainerTeardown} rather than observing {@code ShutdownEvent} directly:
+ * {@code ContainerTeardowns.stopAll} already runs every implementation both at process shutdown
+ * and on {@code /state/reset}/{@code /state/nuke}, so this is what actually stops every
+ * repository's container on reset, not the generic {@code CodeArtifactService} repository-record
+ * walk, which only knows about repositories that still exist in storage.
  */
 @ApplicationScoped
-public class VerdaccioSidecarManager implements RepositorySidecarManager {
+public class VerdaccioSidecarManager implements RepositorySidecarManager, ContainerTeardown {
 
     private static final Logger LOG = Logger.getLogger(VerdaccioSidecarManager.class);
     private static final String FORMAT = "npm";
@@ -171,7 +176,8 @@ public class VerdaccioSidecarManager implements RepositorySidecarManager {
         }
     }
 
-    void onStop(@Observes ShutdownEvent ignored) {
+    @Override
+    public void stopManagedContainers() {
         pool.stopAll();
     }
 }

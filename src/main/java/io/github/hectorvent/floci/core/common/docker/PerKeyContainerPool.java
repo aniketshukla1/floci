@@ -3,6 +3,7 @@ package io.github.hectorvent.floci.core.common.docker;
 import org.jboss.logging.Logger;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Lazily starts, health-checks, and reuses one container per arbitrary key. Pulled out of
@@ -33,6 +34,15 @@ public class PerKeyContainerPool {
     private final String healthPath;
     private final ConcurrentHashMap<String, StartedContainer> containers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Object> startLocks = new ConcurrentHashMap<>();
+    /**
+     * Bumped by every {@link #stopAll()}. {@link #ensureReady} reads it before and after starting
+     * a container: {@code stopAll()} takes no per-key lock (it has no single key to take), so it
+     * cannot see a container that only starts registering itself after {@code stopAll()} already
+     * iterated the map. A changed generation is how a start still notices that a teardown happened
+     * while it was building, so it can stop what it just started instead of leaving it running with
+     * nothing left able to ever stop it again.
+     */
+    private final AtomicLong generation = new AtomicLong();
 
     /**
      * @param healthPath path (e.g. {@code /-/ping}) appended to a container's base URL to probe
@@ -64,7 +74,16 @@ public class PerKeyContainerPool {
                 LOG.warnv("Sidecar container for key {0} is no longer healthy; restarting it", key);
                 lifecycleManager.stopAndRemove(existing.containerId(), null);
             }
+            long startedGeneration = generation.get();
             StartedContainer started = starter.start();
+            if (generation.get() != startedGeneration) {
+                // A stopAll() ran while this container was being built and could not have seen
+                // it: it was not in the map yet. Stop it now rather than register it, so a reset
+                // racing a first-use does not leave this one running behind.
+                LOG.warnv("Sidecar pool was reset while starting a container for key {0}; stopping it", key);
+                lifecycleManager.stopAndRemove(started.containerId(), null);
+                throw new IllegalStateException("Sidecar pool was reset while starting a container for key " + key);
+            }
             // Tracked before the health wait, not after: a timeout below must not stop
             // stopContainer()/stopAll() from ever finding this already-running container again.
             containers.put(key, started);
@@ -96,6 +115,7 @@ public class PerKeyContainerPool {
 
     /** Stops and removes every container this pool has started, then forgets them all. */
     public void stopAll() {
+        generation.incrementAndGet();
         if (containers.isEmpty()) {
             return;
         }

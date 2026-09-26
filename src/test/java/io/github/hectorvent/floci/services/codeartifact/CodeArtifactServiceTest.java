@@ -395,37 +395,6 @@ class CodeArtifactServiceTest {
     }
 
     @Test
-    void beforeResetReleasesEveryRepositorysSidecarStorageAcrossEveryAccount() {
-        service.createDomain(REGION, "dom", null, Map.of());
-        CodeArtifactRepository first = service.createRepository(REGION, "dom", null, "repo-1", null, null, Map.of());
-        CodeArtifactRepository second = service.createRepository(REGION, "dom", null, "repo-2", null, null, Map.of());
-
-        service.beforeReset();
-
-        verify(verdaccioManager).release(first.getSidecarContainerIds().get("npm"));
-        verify(reposiliteClient).release(first.getSidecarContainerIds().get("maven"));
-        verify(verdaccioManager).release(second.getSidecarContainerIds().get("npm"));
-        verify(reposiliteClient).release(second.getSidecarContainerIds().get("maven"));
-    }
-
-    @Test
-    void beforeResetToleratesASidecarReleaseFailureAndStillReleasesTheRest() {
-        service.createDomain(REGION, "dom", null, Map.of());
-        CodeArtifactRepository first = service.createRepository(REGION, "dom", null, "repo-1", null, null, Map.of());
-        CodeArtifactRepository second = service.createRepository(REGION, "dom", null, "repo-2", null, null, Map.of());
-        doThrow(new IllegalStateException("Reposilite unreachable")).when(reposiliteClient)
-                .release(first.getSidecarContainerIds().get("maven"));
-
-        // A reset must not abort partway through and leave later repositories' containers running
-        // just because one repository's release failed.
-        service.beforeReset();
-
-        verify(reposiliteClient).release(second.getSidecarContainerIds().get("maven"));
-        verify(verdaccioManager).release(first.getSidecarContainerIds().get("npm"));
-        verify(verdaccioManager).release(second.getSidecarContainerIds().get("npm"));
-    }
-
-    @Test
     void deleteRepositorySucceedsEvenWhenOneFormatsSidecarReleaseFails() {
         service.createDomain(REGION, "dom", null, Map.of());
         service.createRepository(REGION, "dom", null, "repo", null, null, Map.of());

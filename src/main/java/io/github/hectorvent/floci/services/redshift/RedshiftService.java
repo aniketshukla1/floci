@@ -370,8 +370,8 @@ public class RedshiftService {
         String integrationId = UUID.randomUUID().toString();
         Integration integration = new Integration();
         integration.setAccountId(integrations.accountId());
-        integration.setIntegrationArn("arn:aws:redshift:" + region + ":" + regionResolver.getAccountId()
-                + ":integration:" + integrationId);
+        integration.setIntegrationArn(AwsArnUtils.Arn.of("redshift", region, regionResolver.getAccountId(),
+                "integration:" + integrationId).toString());
         integration.setIntegrationName(integrationName);
         integration.setSourceArn(sourceArn);
         integration.setTargetArn(targetArn);
@@ -732,10 +732,26 @@ public class RedshiftService {
 
     public synchronized Cluster enableLogging(String clusterIdentifier, String bucketName, String s3KeyPrefix,
                                               String logDestinationType, List<String> logExports) {
+        return enableLogging(clusterIdentifier, bucketName, s3KeyPrefix, logDestinationType, logExports, null, null);
+    }
+
+    public synchronized Cluster enableLogging(String clusterIdentifier, String bucketName, String s3KeyPrefix,
+                                              String logDestinationType, List<String> logExports,
+                                              String s3TableKmsKeyId, String s3TableGranularity) {
         Cluster cluster = clusters.get(clusterIdentifier)
                 .orElseThrow(() -> new AwsException("ClusterNotFound", "Cluster " + clusterIdentifier + " not found", 404));
         boolean cloudWatch = "cloudwatch".equalsIgnoreCase(logDestinationType);
-        if (!cloudWatch && (bucketName == null || bucketName.isBlank())) {
+        boolean s3Table = "s3table".equalsIgnoreCase(logDestinationType);
+        if (s3Table && s3TableGranularity != null
+                && !List.of("cluster", "account").contains(s3TableGranularity)) {
+            throw new AwsException("InvalidParameterValue",
+                    "S3TableGranularity must be cluster or account", 400);
+        }
+        if (!s3Table && (s3TableKmsKeyId != null || s3TableGranularity != null)) {
+            throw new AwsException("InvalidParameterCombination",
+                    "S3-table logging settings are valid only when LogDestinationType is s3table", 400);
+        }
+        if (!cloudWatch && !s3Table && (bucketName == null || bucketName.isBlank())) {
             throw new AwsException("InvalidParameterValue", "BucketName is required for an S3 log destination", 400);
         }
         cluster.setLoggingEnabled(true);
@@ -743,6 +759,8 @@ public class RedshiftService {
         cluster.setLoggingDestinationType(logDestinationType);
         cluster.setLoggingExports(logExports == null || logExports.isEmpty() ? null : List.copyOf(logExports));
         cluster.setLoggingS3KeyPrefix(s3KeyPrefix);
+        cluster.setLoggingS3TableKmsKeyId(s3TableKmsKeyId);
+        cluster.setLoggingS3TableGranularity(s3TableGranularity);
         clusters.put(clusterIdentifier, cluster);
         clusters.flush();
         return cluster;
@@ -756,6 +774,8 @@ public class RedshiftService {
         cluster.setLoggingS3KeyPrefix(null);
         cluster.setLoggingDestinationType(null);
         cluster.setLoggingExports(null);
+        cluster.setLoggingS3TableKmsKeyId(null);
+        cluster.setLoggingS3TableGranularity(null);
         clusters.put(clusterIdentifier, cluster);
         clusters.flush();
         return cluster;

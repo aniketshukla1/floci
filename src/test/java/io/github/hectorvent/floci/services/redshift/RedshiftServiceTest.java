@@ -930,6 +930,63 @@ class RedshiftServiceTest {
     }
 
     @Test
+    void enableLoggingS3TableDoesNotRequireBucketName() {
+        Cluster cluster = new Cluster();
+        cluster.setClusterIdentifier("my-cluster");
+        when(clusterBackend.get("my-cluster")).thenReturn(Optional.of(cluster));
+
+        Cluster result = service.enableLogging("my-cluster", null, null, "s3table", null, "my-kms-key", "account");
+        assertTrue(result.isLoggingEnabled());
+        assertEquals("s3table", result.getLoggingDestinationType());
+        assertNull(result.getLoggingBucketName());
+        assertEquals("my-kms-key", result.getLoggingS3TableKmsKeyId());
+        assertEquals("account", result.getLoggingS3TableGranularity());
+    }
+
+    @Test
+    void enableLoggingRejectsInvalidS3TableGranularity() {
+        Cluster cluster = new Cluster();
+        cluster.setClusterIdentifier("my-cluster");
+        when(clusterBackend.get("my-cluster")).thenReturn(Optional.of(cluster));
+
+        AwsException ex = assertThrows(AwsException.class,
+                () -> service.enableLogging("my-cluster", null, null, "s3table", null, null, "daily"));
+
+        assertEquals("InvalidParameterValue", ex.getErrorCode());
+        assertFalse(cluster.isLoggingEnabled());
+    }
+
+    @Test
+    void enableLoggingRejectsS3TableSettingsForOtherDestinations() {
+        Cluster cluster = new Cluster();
+        cluster.setClusterIdentifier("my-cluster");
+        when(clusterBackend.get("my-cluster")).thenReturn(Optional.of(cluster));
+
+        AwsException ex = assertThrows(AwsException.class,
+                () -> service.enableLogging("my-cluster", null, null, "s3", null, null, "cluster"));
+
+        assertEquals("InvalidParameterCombination", ex.getErrorCode());
+        assertFalse(cluster.isLoggingEnabled());
+    }
+
+    @Test
+    void disableLoggingClearsS3TableFields() {
+        Cluster cluster = new Cluster();
+        cluster.setClusterIdentifier("my-cluster");
+        cluster.setLoggingEnabled(true);
+        cluster.setLoggingDestinationType("s3table");
+        cluster.setLoggingS3TableKmsKeyId("my-kms-key");
+        cluster.setLoggingS3TableGranularity("account");
+        when(clusterBackend.get("my-cluster")).thenReturn(Optional.of(cluster));
+
+        Cluster result = service.disableLogging("my-cluster");
+        assertFalse(result.isLoggingEnabled());
+        assertNull(result.getLoggingDestinationType());
+        assertNull(result.getLoggingS3TableKmsKeyId());
+        assertNull(result.getLoggingS3TableGranularity());
+    }
+
+    @Test
     void createClusterAssignsDefaultParameterGroup() {
         when(clusterBackend.get(anyString())).thenReturn(Optional.empty());
         when(cm.start(any(), any(), any(), any())).thenReturn(new RedshiftContainerHandle("c1", "my-cluster", "localhost", 5432));

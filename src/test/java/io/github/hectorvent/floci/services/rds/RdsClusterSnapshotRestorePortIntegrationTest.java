@@ -111,25 +111,35 @@ class RdsClusterSnapshotRestorePortIntegrationTest {
     }
 
     @Test
-    void instanceCreateAndRestoreUseTheSamePortRule() {
+    void encryptedInstanceRestorePreservesEncryptionAndRequestedPort() {
         rds("CreateDBInstance")
                 .formParam("DBInstanceIdentifier", INSTANCE)
                 .formParam("Engine", "postgres")
                 .formParam("MasterUsername", "admin")
                 .formParam("MasterUserPassword", "password123")
                 .formParam("DBInstanceClass", "db.t3.micro")
+                .formParam("StorageEncrypted", "true")
                 .formParam("Port", "7005")
                 .when().post("/").then().statusCode(200)
-                .body(containsString("<Port>7005</Port>"));
+                .body(containsString("<Port>7005</Port>"))
+                .body(containsString("<StorageEncrypted>true</StorageEncrypted>"));
         rds("CreateDBSnapshot")
                 .formParam("DBInstanceIdentifier", INSTANCE)
                 .formParam("DBSnapshotIdentifier", INSTANCE_SNAPSHOT)
-                .when().post("/").then().statusCode(200);
+                .when().post("/").then().statusCode(200)
+                .body(containsString("<Encrypted>true</Encrypted>"));
         rds("RestoreDBInstanceFromDBSnapshot")
                 .formParam("DBInstanceIdentifier", RESTORED_INSTANCE)
                 .formParam("DBSnapshotIdentifier", INSTANCE_SNAPSHOT)
                 .formParam("Port", "7006")
                 .when().post("/").then().statusCode(200)
-                .body(containsString("<Port>7006</Port>"));
+                .body(containsString("<Port>7006</Port>"))
+                .body(containsString("<StorageEncrypted>true</StorageEncrypted>"));
+
+        rds("DescribeDBInstances")
+                .formParam("DBInstanceIdentifier", RESTORED_INSTANCE)
+                .when().post("/").then().statusCode(200)
+                .body(containsString("<Port>7006</Port>"))
+                .body(containsString("<StorageEncrypted>true</StorageEncrypted>"));
     }
 }

@@ -1,6 +1,7 @@
 package io.github.hectorvent.floci.services.codeartifact;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
+import io.github.hectorvent.floci.core.common.ContainerTeardown;
 import io.github.hectorvent.floci.core.common.docker.ContainerBuilder;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager;
 import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager.ContainerInfo;
@@ -8,9 +9,7 @@ import io.github.hectorvent.floci.core.common.docker.ContainerLifecycleManager.E
 import io.github.hectorvent.floci.core.common.docker.ContainerSpec;
 import io.github.hectorvent.floci.core.common.docker.ContainerStorageHelper;
 import io.github.hectorvent.floci.core.common.docker.SidecarHealthHelper;
-import io.quarkus.runtime.ShutdownEvent;
 import jakarta.enterprise.context.ApplicationScoped;
-import jakarta.enterprise.event.Observes;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
@@ -30,9 +29,15 @@ import java.util.Optional;
  * <p>One repository-agnostic container backs every CodeArtifact domain/repository pair; a
  * CodeArtifact repository maps to a named Reposilite repository provisioned on first use (see
  * {@link ReposiliteSidecarClient#ensureRepository}), not to its own container.
+ *
+ * <p>Implements {@link ContainerTeardown} rather than observing {@code ShutdownEvent} directly:
+ * {@code ContainerTeardowns.stopAll} already runs every implementation both at process shutdown
+ * and on {@code /state/reset}/{@code /state/nuke}, so a reset now actually stops the managed
+ * container instead of leaving it running with every {@code CodeArtifactRepository} record that
+ * named it gone.
  */
 @ApplicationScoped
-public class ReposiliteSidecarManager {
+public class ReposiliteSidecarManager implements ContainerTeardown {
     static final String IMAGE_ENV = "FLOCI_SERVICES_CODEARTIFACT_MAVEN_IMAGE";
     static final String URL_ENV = "FLOCI_SERVICES_CODEARTIFACT_MAVEN_URL";
     static final String MANAGED_TOKEN_NAME = "floci-manager";
@@ -161,7 +166,8 @@ public class ReposiliteSidecarManager {
         LOG.infov("Reposilite sidecar is ready at {0}", resolvedUrl);
     }
 
-    void onStop(@Observes ShutdownEvent event) {
+    @Override
+    public void stopManagedContainers() {
         if (containerId == null) {
             return;
         }

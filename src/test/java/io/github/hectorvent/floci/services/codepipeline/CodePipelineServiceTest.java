@@ -79,8 +79,30 @@ class CodePipelineServiceTest {
     }
 
     /**
+     * The guard above is unreachable while the constructor reads only the one key, so this is what
+     * keeps the message it produces from rotting. {@code enabled()} returns a primitive and is not
+     * in the answers map, which is exactly the shape that used to fail as "not an interface".
+     */
+    @Test
+    void configStubNamesAnAccessorItCannotAnswer() {
+        EmulatorConfig stub = configWithPollInterval(500L);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> stub.services().codepipeline().enabled());
+
+        assertTrue(thrown.getMessage().contains("enabled()"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("answers map"), thrown.getMessage());
+    }
+
+    /**
      * Minimal {@link EmulatorConfig} view: the constructor reads only the source poll interval, so
      * a proxy answering that avoids standing up the Quarkus config container.
+     *
+     * <p>Anything not in the answers map is assumed to be a further config view and is proxied in
+     * turn. That assumption holds only while the constructor reads exactly one key. If a second read
+     * lands and it returns a {@code String} or a primitive there is no interface to proxy, so the
+     * handler says which method it could not answer instead of letting the JDK fail further down
+     * with "not an interface".
      */
     private static EmulatorConfig configWithPollInterval(long intervalMs) {
         Map<String, Object> answers = Map.of("sourcePollIntervalMs", intervalMs);
@@ -91,6 +113,11 @@ class CodePipelineServiceTest {
                 Object answer = answers.get(method.getName());
                 if (answer != null) {
                     return answer;
+                }
+                if (!method.getReturnType().isInterface()) {
+                    throw new IllegalStateException("cannot stub " + method.getName() + "(), which returns "
+                            + method.getReturnType().getSimpleName()
+                            + ": add it to the answers map in configWithPollInterval");
                 }
                 // services() and codepipeline() return further config views; proxy those too.
                 return Proxy.newProxyInstance(method.getReturnType().getClassLoader(),

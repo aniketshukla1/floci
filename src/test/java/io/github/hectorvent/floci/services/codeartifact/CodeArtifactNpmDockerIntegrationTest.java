@@ -276,6 +276,63 @@ class CodeArtifactNpmDockerIntegrationTest {
                 .then().statusCode(200);
     }
 
+    /**
+     * Proves the actual mechanism, not just that {@code VerdaccioSidecarManager} has a method
+     * named right: {@code ContainerTeardowns.stopAll} runs every {@code ContainerTeardown} on
+     * {@code /state/reset}, and this is what stops a live container, not the repository-record
+     * walk {@code CodeArtifactService} used to do (which only knew about repositories that still
+     * existed in storage).
+     *
+     * <p>Ordered before every other test, not after: a reset stops every container this process's
+     * pool is tracking, not just the one this test starts, so running it after the other tests
+     * have already started their own containers would make this test's own reset sweep those up
+     * too and fail the baseline comparison below for a reason that has nothing to do with whether
+     * reset-repo's own container was actually stopped. Running first means the only baseline is
+     * whatever this namespace already had running before this test class touched it at all (e.g.
+     * a container an earlier interrupted run never got the chance to clean up), which this reset
+     * cannot be expected to touch either. Self-contained (its own domain, repository and token)
+     * since the class's shared domain/token fields are not populated until {@code Order(0)} runs,
+     * and a state reset wipes them regardless, so every later test must not depend on anything
+     * this one touched.
+     */
+    @Test
+    @Order(-1)
+    void stateResetStopsTheRepositorysVerdaccioContainer() throws Exception {
+        int baseline = runningVerdaccioTestContainerCount();
+
+        String domain = "npm-sidecar-reset-domain";
+        given().contentType("application/json").header("Authorization", AUTH).body("{}")
+                .post("/v1/domain?domain=" + domain)
+                .then().statusCode(200);
+        given().contentType("application/json").header("Authorization", AUTH).body("{}")
+                .post("/v1/repository?domain=" + domain + "&repository=reset-repo")
+                .then().statusCode(200);
+        String token = given().header("Authorization", AUTH)
+                .post("/v1/authorization-token?domain=" + domain)
+                .then().statusCode(200)
+                .extract().jsonPath().getString("authorizationToken");
+        // A 404 read still starts the container; only a missing token skips it.
+        given().header("Authorization", "Bearer " + token)
+                .get("/codeartifact/npm/" + domain + "/reset-repo/does-not-exist")
+                .then().statusCode(404);
+        assertEquals(baseline + 1, runningVerdaccioTestContainerCount(),
+                "expected reset-repo's Verdaccio container to be running before reset");
+
+        given().post("/_floci/state/reset").then().statusCode(200);
+
+        assertEquals(baseline, runningVerdaccioTestContainerCount(),
+                "state reset must stop reset-repo's Verdaccio container");
+    }
+
+    private static int runningVerdaccioTestContainerCount() throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("docker", "ps", "-q",
+                "--filter", "name=floci-aws-codeartifact-npm-test-verdaccio-")
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        process.waitFor();
+        return output.isBlank() ? 0 : (int) output.lines().count();
+    }
+
     private static Matcher<Integer> anyOf201Or200() {
         return anyOf(is(200), is(201));
     }
