@@ -44,6 +44,13 @@ class Ec2DescribeVpcsNotFoundIntegrationTest {
     }
 
     @Test
+    void unsupportedFilterIsReportedBeforeAnUnknownRequestedId() {
+        ec2("DescribeVpcs", "VpcId.1", UNKNOWN, "Filter.1.Name", "unsupported-filter",
+                "Filter.1.Value.1", "value").statusCode(400)
+                .body("Response.Errors.Error.Code", equalTo("InvalidParameterValue"));
+    }
+
+    @Test
     void unknownIdAmongKnownIdsIsStillAnEc2Error() {
         String known = createVpc();
         ec2("DescribeVpcs", "VpcId.1", known, "VpcId.2", UNKNOWN).statusCode(400)
