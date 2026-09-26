@@ -1195,11 +1195,11 @@ public class CognitoJsonHandler {
 
     private static Integer authSessionValidity(JsonNode request) {
         JsonNode value = request.get("AuthSessionValidity");
-        if (value == null) {
+        if (value == null || value.isNull()) {
             return null;
         }
         if (!value.isIntegralNumber() || !value.canConvertToInt()) {
-            throw new AwsException("InvalidParameterException", "AuthSessionValidity must be an integer", 400);
+            throw new AwsException("SerializationException", "Expected integer or null", 400);
         }
         return value.intValue();
     }

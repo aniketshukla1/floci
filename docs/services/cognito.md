@@ -22,6 +22,10 @@ An action given a user pool ID that does not resolve returns `ResourceNotFoundEx
 `CreateUserPoolClient` and `UpdateUserPoolClient` store `AuthSessionValidity` in minutes,
 and `DescribeUserPoolClient` returns it. Values must be integers from 3 through 15.
 New clients default to 3 minutes; an update that omits the field retains its stored value.
+An explicit JSON `null` behaves as an omitted field. Wrong JSON types or numbers
+outside the 32-bit integer range return `SerializationException`. Integer durations
+outside 3 through 15 return `InvalidParameterException` with Cognito's constraint-error
+format. Validation runs before pool or client lookup.
 
 ## Supported Actions
 

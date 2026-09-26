@@ -710,8 +710,8 @@ public class CognitoService implements ResourceProvider {
                                                List<String> writeAttributes, Map<String, Object> refreshTokenRotation,
                                                Boolean enableTokenRevocation, Integer authSessionValidity) {
 
-        UserPool userPool = describeUserPool(userPoolId);
         validateAuthSessionValidity(authSessionValidity);
+        UserPool userPool = describeUserPool(userPoolId);
         String clientId = clientIdFor(userPool, clientName);
         List<String> normalizedAllowedOAuthFlows = normalizeStringList(allowedOAuthFlows);
         List<String> normalizedAllowedOAuthScopes = normalizeStringList(allowedOAuthScopes);
@@ -910,8 +910,8 @@ public class CognitoService implements ResourceProvider {
                                                List<String> supportedIdentityProviders, Map<String, String> tokenValidityUnits,
                                                List<String> writeAttributes, Map<String, Object> refreshTokenRotation,
                                                Boolean enableTokenRevocation, Integer authSessionValidity) {
-        UserPoolClient client = describeUserPoolClient(userPoolId, clientId);
         validateAuthSessionValidity(authSessionValidity);
+        UserPoolClient client = describeUserPoolClient(userPoolId, clientId);
         boolean effectiveAllowedOAuthFlowsUserPoolClient = allowedOAuthFlowsUserPoolClient != null
                 ? allowedOAuthFlowsUserPoolClient
                 : client.isAllowedOAuthFlowsUserPoolClient();
@@ -1023,8 +1023,12 @@ public class CognitoService implements ResourceProvider {
 
     private static void validateAuthSessionValidity(Integer authSessionValidity) {
         if (authSessionValidity != null && (authSessionValidity < 3 || authSessionValidity > 15)) {
+            String constraint = authSessionValidity < 3
+                    ? "Member must have value greater than or equal to 3"
+                    : "Member must have value less than or equal to 15";
             throw new AwsException("InvalidParameterException",
-                    "AuthSessionValidity must be between 3 and 15 minutes", 400);
+                    "1 validation error detected: Value '" + authSessionValidity
+                            + "' at 'authSessionValidity' failed to satisfy constraint: " + constraint, 400);
         }
     }
 
