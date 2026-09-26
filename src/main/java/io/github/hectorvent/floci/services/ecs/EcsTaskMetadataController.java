@@ -454,15 +454,9 @@ public class EcsTaskMetadataController {
         if (subnet.getVpcId() == null || region == null) {
             return null;
         }
-        try {
-            return ec2Service.describeVpcs(region, List.of(subnet.getVpcId()), Map.of()).stream()
-                    .findFirst()
-                    .orElse(null);
-        } catch (AwsException e) {
-            LOG.debugv("Subnet {0} references a VPC that is gone: {1}",
-                    subnet.getSubnetId(), e.getMessage());
-            return null;
-        }
+        return ec2Service.describeVpcs(region, List.of(subnet.getVpcId()), Map.of()).stream()
+                .findFirst()
+                .orElse(null);
     }
 
     private static String taskSubnetId(EcsTask task) {
