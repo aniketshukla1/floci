@@ -112,6 +112,82 @@ class CloudMapDnsPacketIntegrationTest {
                 Map.of(), REGION).getTargets().get("NAMESPACE");
     }
 
+    @Test
+    void ipv6InstanceAnswersAaaaWithConfiguredTtl() throws Exception {
+        String namespace = uniqueNamespace();
+        Service service = typedService(namespace, "AAAA", "MULTIVALUE");
+        cloudMapService.registerInstance(service.getId(), "task-1", null,
+                Map.of("AWS_INSTANCE_IPV6", "2001:db8::1"), REGION);
+        byte[] request = buildQuery("typed." + namespace, (short) 28);
+        byte[] response = query(new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource)), request);
+        ByteBuffer packet = ByteBuffer.wrap(response);
+        assertEquals(1, packet.getShort(6));
+        assertEquals(28, packet.getShort(request.length + 2));
+        assertEquals(45, packet.getInt(request.length + 6));
+        assertEquals(16, packet.getShort(request.length + 10));
+        assertArrayEquals(new byte[]{0x20, 0x01, 0x0d, (byte) 0xb8, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 1},
+                Arrays.copyOfRange(response, request.length + 12, response.length));
+    }
+
+    @Test
+    void cnameRecordIsReturnedForBothCnameAndAddressQueries() throws Exception {
+        String namespace = uniqueNamespace();
+        Service service = typedService(namespace, "CNAME", "WEIGHTED");
+        cloudMapService.registerInstance(service.getId(), "task-1", null,
+                Map.of("AWS_INSTANCE_CNAME", "backend.example.com"), REGION);
+        for (short type : new short[]{1, 5, 28}) {
+            byte[] request = buildQuery("typed." + namespace, type);
+            byte[] response = query(new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource)), request);
+            ByteBuffer packet = ByteBuffer.wrap(response);
+            assertEquals(1, packet.getShort(6));
+            assertEquals(5, packet.getShort(request.length + 2));
+            assertEquals(45, packet.getInt(request.length + 6));
+            packet.position(request.length + 12);
+            assertEquals("backend.example.com", EmbeddedDnsServer.readName(packet, response));
+        }
+    }
+
+    @Test
+    void srvRecordCarriesThePortAndInstanceHostname() throws Exception {
+        String namespace = uniqueNamespace();
+        Service service = typedService(namespace, "SRV", "MULTIVALUE");
+        cloudMapService.registerInstance(service.getId(), "task-1", null,
+                Map.of("AWS_INSTANCE_IPV6", "2001:db8::2", "AWS_INSTANCE_PORT", "8080"), REGION);
+        byte[] request = buildQuery("typed." + namespace, (short) 33);
+        byte[] response = query(new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource)), request);
+        ByteBuffer packet = ByteBuffer.wrap(response);
+        assertEquals(1, packet.getShort(6));
+        assertEquals(33, packet.getShort(request.length + 2));
+        packet.position(request.length + 12);
+        assertEquals(1, packet.getShort());
+        assertEquals(1, packet.getShort());
+        assertEquals(8080, packet.getShort());
+        assertEquals("task-1.typed." + namespace, EmbeddedDnsServer.readName(packet, response));
+        byte[] address = query(new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource)),
+                buildQuery("task-1.typed." + namespace, (short) 28));
+        assertEquals(1, ByteBuffer.wrap(address).getShort(6));
+    }
+
+    @Test
+    void weightedRoutingReturnsOneInstanceInsteadOfEight() throws Exception {
+        String namespace = uniqueNamespace();
+        Service service = typedService(namespace, "A", "WEIGHTED");
+        for (int i = 1; i <= 10; i++) {
+            cloudMapService.registerInstance(service.getId(), "task-" + i, null,
+                    Map.of("AWS_INSTANCE_IPV4", "172.31.0." + i), REGION);
+        }
+        byte[] response = query(new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource)),
+                buildQuery("typed." + namespace, (short) 1));
+        assertEquals(1, ByteBuffer.wrap(response).getShort(6));
+    }
+
+    private Service typedService(String namespace, String type, String routingPolicy) {
+        return cloudMapService.createService("typed", privateDnsNamespace(namespace), null, null,
+                "{\"RoutingPolicy\":\"" + routingPolicy + "\",\"DnsRecords\":[{\"Type\":\""
+                        + type + "\",\"TTL\":45}]}", null, null, null, Map.of(), REGION);
+    }
+
     private static String uniqueNamespace() {
         return "dnspacket" + UUID.randomUUID().toString().substring(0, 8) + ".internal";
     }
