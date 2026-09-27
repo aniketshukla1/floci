@@ -18,6 +18,12 @@ and relay are ready. Older records whose endpoint was cleared receive a new rela
 retry. A failed retry leaves their status unchanged and cleans up the attempted backend and
 any newly allocated relay port.
 
+Instance and cluster start operations, and cluster reboot, reconstruct a missing relay endpoint
+through the same retry path.
+Retrying a cluster directly also restores its missing member relays without restarting a healthy
+cluster backend or rebinding members that already recovered. A failed member relay can be retried
+again; stopped members remain stopped until a control-plane start operation.
+
 Floci manages real PostgreSQL, MySQL, MariaDB, and SQL Server Docker containers and proxies TCP connections to them, including IAM authentication support where the protocol supports it. SQL Server uses a transparent TCP relay for its native TDS protocol.
 
 RDS Data API (`rds-data`) is documented separately because it uses REST JSON routes instead of the RDS Query protocol. See [RDS Data API](rds-data.md).

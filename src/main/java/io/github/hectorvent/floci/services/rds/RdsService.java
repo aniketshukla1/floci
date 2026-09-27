@@ -2798,6 +2798,16 @@ public class RdsService implements Resettable, ResourceProvider {
      * it, the way a reboot does after stopping them.
      */
     private void startStandaloneInstanceBackend(DbInstance instance, String id, String effectiveRegion) {
+        if (instance.getEndpoint() == null) {
+            try {
+                ensureInstanceBackend(id, effectiveRegion);
+            } catch (RuntimeException | Error e) {
+                instance.setStatus(DbInstanceStatus.FAILED);
+                putInstanceForScope(currentAccountId(), effectiveRegion, id, instance);
+                throw e;
+            }
+            return;
+        }
         String image = imageForEngine(instance.getEngine(), instance.getEngineVersion());
         String storageResourceId = resolvedInstanceStorageResourceId(instance);
         String dockerVolumeName = resolvedInstanceDockerVolumeName(instance);
@@ -2903,28 +2913,7 @@ public class RdsService implements Resettable, ResourceProvider {
         }
         cluster.setStatus(DbInstanceStatus.AVAILABLE);
         putClusterForScope(accountId, effectiveRegion, id, cluster);
-        for (String memberId : cluster.getDbClusterMembers()) {
-            DbInstance member = findInstanceForScope(accountId, effectiveRegion, memberId);
-            if (member == null) {
-                continue;
-            }
-            member.setContainerId(cluster.getContainerId());
-            member.setContainerHost(cluster.getContainerHost());
-            member.setContainerPort(cluster.getContainerPort());
-            if (!config.services().rds().mock() && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
-                final String memberRegion = regionFromArn(member.getDbInstanceArn());
-                proxyManager.startProxy(rdsResourceRelayKey(member.getDbInstanceArn(), memberId),
-                        member.getEngine(), member.isIamDatabaseAuthenticationEnabled(), member.getProxyPort(),
-                        cluster.getContainerHost(), cluster.getContainerPort(), member.getEndpoint().address(),
-                        member.getMasterUsername() != null ? member.getMasterUsername() : "root",
-                        member.getMasterPassword(), member.getDbName(),
-                        (user, pw) -> validateDbPasswordForScope(accountId, memberRegion, memberId, user, pw),
-                        proxyBinding(member.getEngine(), member.getEndpoint().address(), member.getProxyPort(),
-                                memberRegion, accountId, member.getDbiResourceId()));
-            }
-            member.setStatus(DbInstanceStatus.AVAILABLE);
-            putInstanceForScope(accountId, effectiveRegion, memberId, member);
-        }
+        restoreClusterMemberBackends(cluster, effectiveRegion, true);
         LOG.infov("DB cluster {0} started", id);
         return response;
     }
@@ -2947,28 +2936,7 @@ public class RdsService implements Resettable, ResourceProvider {
         }
         cluster.setStatus(DbInstanceStatus.AVAILABLE);
         putClusterForScope(accountId, effectiveRegion, id, cluster);
-        for (String memberId : cluster.getDbClusterMembers()) {
-            DbInstance member = findInstanceForScope(accountId, effectiveRegion, memberId);
-            if (member == null) {
-                continue;
-            }
-            member.setContainerId(cluster.getContainerId());
-            member.setContainerHost(cluster.getContainerHost());
-            member.setContainerPort(cluster.getContainerPort());
-            if (!config.services().rds().mock() && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
-                final String memberRegion = regionFromArn(member.getDbInstanceArn());
-                proxyManager.startProxy(rdsResourceRelayKey(member.getDbInstanceArn(), memberId),
-                        member.getEngine(), member.isIamDatabaseAuthenticationEnabled(), member.getProxyPort(),
-                        cluster.getContainerHost(), cluster.getContainerPort(), member.getEndpoint().address(),
-                        member.getMasterUsername() != null ? member.getMasterUsername() : "root",
-                        member.getMasterPassword(), member.getDbName(),
-                        (user, pw) -> validateDbPasswordForScope(accountId, memberRegion, memberId, user, pw),
-                        proxyBinding(member.getEngine(), member.getEndpoint().address(), member.getProxyPort(),
-                                memberRegion, accountId, member.getDbiResourceId()));
-            }
-            member.setStatus(DbInstanceStatus.AVAILABLE);
-            putInstanceForScope(accountId, effectiveRegion, memberId, member);
-        }
+        restoreClusterMemberBackends(cluster, effectiveRegion, true);
         LOG.infov("DB cluster {0} rebooted", id);
         return response;
     }
@@ -3000,6 +2968,16 @@ public class RdsService implements Resettable, ResourceProvider {
 
     /** Brings a cluster's container up on its existing volume and its proxy with it. */
     private void startClusterBackend(DbCluster cluster, String id, String effectiveRegion) {
+        if (cluster.getEndpoint() == null) {
+            try {
+                ensureClusterBackend(id, effectiveRegion, false);
+            } catch (RuntimeException | Error e) {
+                cluster.setStatus(DbInstanceStatus.FAILED);
+                putClusterForScope(currentAccountId(), effectiveRegion, id, cluster);
+                throw e;
+            }
+            return;
+        }
         String image = imageForEngine(cluster.getEngine(), cluster.getEngineVersion());
         String storageResourceId = resolvedClusterStorageResourceId(cluster);
         String dockerVolumeName = resolvedClusterDockerVolumeName(cluster);
@@ -3163,7 +3141,7 @@ public class RdsService implements Resettable, ResourceProvider {
         String backendHost;
         int backendPort;
         if (clusterId != null && !clusterId.isBlank()) {
-            DbCluster cluster = ensureClusterBackend(clusterId, effectiveRegion);
+            DbCluster cluster = ensureClusterBackend(clusterId, effectiveRegion, false);
             if (!hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
                 return instance;
             }
@@ -3235,12 +3213,19 @@ public class RdsService implements Resettable, ResourceProvider {
      * @return the cluster, with its container fields populated when a backend became available
      */
     public synchronized DbCluster ensureClusterBackend(String id, String region) {
+        return ensureClusterBackend(id, region, true);
+    }
+
+    private DbCluster ensureClusterBackend(String id, String region, boolean restoreMembers) {
         String effectiveRegion = effectiveRegion(region);
         DbCluster cluster = getDbCluster(id, effectiveRegion);
         if (config.services().rds().mock()) {
             return cluster;
         }
         if (hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
+            if (restoreMembers) {
+                restoreClusterMemberBackends(cluster, effectiveRegion, false);
+            }
             return cluster;
         }
 
@@ -3299,7 +3284,41 @@ public class RdsService implements Resettable, ResourceProvider {
         putClusterForScope(currentAccountId(), effectiveRegion, id, cluster);
         applyAutoPause(cluster);
         LOG.infov("Backing database container for DB cluster {0} started on retry", id);
+        if (restoreMembers) {
+            restoreClusterMemberBackends(cluster, effectiveRegion, false);
+        }
         return cluster;
+    }
+
+    private void restoreClusterMemberBackends(DbCluster cluster, String region, boolean restart) {
+        String accountId = currentAccountId();
+        for (String memberId : cluster.getDbClusterMembers()) {
+            DbInstance member = findInstanceForScope(accountId, region, memberId);
+            if (member == null || member.getStatus() == DbInstanceStatus.DELETING
+                    || (!restart && member.getStatus() == DbInstanceStatus.STOPPED)) {
+                continue;
+            }
+            if (!config.services().rds().mock()
+                    && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
+                if (restart) {
+                    member.setContainerHost(null);
+                    member.setContainerPort(0);
+                    member.setStatus(DbInstanceStatus.AVAILABLE);
+                    putInstanceForScope(accountId, region, memberId, member);
+                }
+                // The private cluster retry does not recurse into members, and an already
+                // restored member is a no-op when retrying a different member's failed relay.
+                ensureInstanceBackend(memberId, region);
+            } else if (restart) {
+                member.setContainerId(cluster.getContainerId());
+                member.setContainerHost(cluster.getContainerHost());
+                member.setContainerPort(cluster.getContainerPort());
+            }
+            if (restart) {
+                member.setStatus(DbInstanceStatus.AVAILABLE);
+                putInstanceForScope(accountId, region, memberId, member);
+            }
+        }
     }
 
     private void stopStartedBackend(RdsContainerHandle started, RuntimeException proxyFailure) {
