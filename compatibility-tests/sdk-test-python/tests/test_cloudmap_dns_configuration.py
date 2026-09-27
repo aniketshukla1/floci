@@ -5,6 +5,7 @@ import uuid
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 
 
 def operation_target(client, operation_id):
@@ -45,6 +46,41 @@ def test_dns_configuration_and_instance_attributes_round_trip(aws_config, record
     finally:
         if registered:
             result = client.deregister_instance(ServiceId=service_id, InstanceId="task-1")
+            operation_target(client, result["OperationId"])
+        if service_id:
+            client.delete_service(Id=service_id)
+        if namespace_id:
+            client.delete_namespace(Id=namespace_id)
+        client.close()
+
+
+@pytest.mark.parametrize("identifier_length", [63, 64])
+def test_srv_target_label_limit(aws_config, identifier_length):
+    client = boto3.client("servicediscovery", **aws_config)
+    namespace_id = None
+    service_id = None
+    registered = False
+    instance_id = "a" * identifier_length
+    try:
+        created = client.create_private_dns_namespace(Name=f"srv-{uuid.uuid4().hex}.internal", Vpc="vpc-dns")
+        namespace_id = operation_target(client, created["OperationId"])["NAMESPACE"]
+        service_id = client.create_service(Name="backend", NamespaceId=namespace_id, DnsConfig={
+            "RoutingPolicy": "MULTIVALUE", "DnsRecords": [{"Type": "SRV", "TTL": 45}],
+        })["Service"]["Id"]
+        arguments = {"ServiceId": service_id, "InstanceId": instance_id,
+                     "Attributes": {"AWS_INSTANCE_PORT": "8080", "AWS_INSTANCE_IPV4": "192.0.2.1"}}
+        if identifier_length == 64:
+            with pytest.raises(ClientError) as error:
+                client.register_instance(**arguments)
+            assert error.value.response["Error"]["Code"] == "InvalidInput"
+            assert client.list_instances(ServiceId=service_id)["Instances"] == []
+        else:
+            result = client.register_instance(**arguments)
+            registered = True
+            operation_target(client, result["OperationId"])
+    finally:
+        if registered:
+            result = client.deregister_instance(ServiceId=service_id, InstanceId=instance_id)
             operation_target(client, result["OperationId"])
         if service_id:
             client.delete_service(Id=service_id)

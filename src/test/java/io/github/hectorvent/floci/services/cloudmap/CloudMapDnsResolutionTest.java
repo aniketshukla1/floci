@@ -385,4 +385,40 @@ class CloudMapDnsResolutionTest {
         assertTrue(cloudMapService.resolveDnsNameIfOwned("invalid." + namespace, 33).orElseThrow().isEmpty());
         assertTrue(cloudMapService.resolveDnsNameIfOwned("task-1.invalid." + namespace, 28).orElseThrow().isEmpty());
     }
+
+    @Test
+    void legacyMixedCnameConfigurationDoesNotHideConfiguredAddresses() {
+        String namespace = uniqueNamespace();
+        Service service = createService(privateDnsNamespace(namespace), "mixed",
+                dnsConfig("{\"Type\":\"A\",\"TTL\":15},{\"Type\":\"CNAME\",\"TTL\":45}"));
+        registerInstance(service.getId(), "task-1", "172.31.0.6");
+        DnsAnswer answer = cloudMapService.resolveDnsNameIfOwned("mixed." + namespace, 1).orElseThrow();
+        assertEquals(List.of("172.31.0.6"), answer.addresses());
+        assertEquals(15, answer.ttlSeconds());
+        cloudMapService.registerInstance(service.getId(), "task-1", null,
+                Map.of("AWS_INSTANCE_IPV4", "172.31.0.6", "AWS_INSTANCE_CNAME", "backend.example.com"), REGION);
+        assertEquals(List.of("172.31.0.6"), cloudMapService.resolveDnsName("mixed." + namespace));
+        assertEquals(List.of(new DnsRecord.Cname("backend.example.com")),
+                cloudMapService.resolveDnsNameIfOwned("mixed." + namespace, 5).orElseThrow().records());
+    }
+
+    @Test
+    void srvRegistrationRejectsUnencodableTargetsWithoutChangingInstanceState() {
+        String namespace = uniqueNamespace();
+        Service service = createService(privateDnsNamespace(namespace), "srv",
+                dnsConfig("{\"Type\":\"SRV\",\"TTL\":15}"));
+        Map<String, String> attributes = Map.of("AWS_INSTANCE_PORT", "8080", "AWS_INSTANCE_IPV4", "192.0.2.1");
+        cloudMapService.registerInstance(service.getId(), "a".repeat(63), null, attributes, REGION);
+        long revision = service.getRevision();
+        AwsException error = assertThrows(AwsException.class, () -> cloudMapService.registerInstance(
+                service.getId(), "a".repeat(64), null, attributes, REGION));
+        assertEquals("InvalidInput", error.getErrorCode());
+        assertEquals(1, service.getInstanceCount());
+        assertEquals(revision, service.getRevision());
+        assertEquals(1, cloudMapService.resolveDnsNameIfOwned("srv." + namespace, 33).orElseThrow().records().size());
+        // The DNS target restriction does not shorten the API's general identifier limit.
+        Service aService = createService(service.getNamespaceId(), "addresses");
+        registerInstance(aService.getId(), "a".repeat(64), "192.0.2.2");
+        assertEquals(1, aService.getInstanceCount());
+    }
 }

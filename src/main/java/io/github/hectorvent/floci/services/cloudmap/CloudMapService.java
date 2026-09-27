@@ -275,6 +275,17 @@ public class CloudMapService {
         if (attributes == null || attributes.isEmpty()) {
             throw new AwsException("InvalidInput", "Attributes are required.", 400);
         }
+        if (dnsRecordTtl(service, "SRV") >= 0 && service.getNamespaceId() != null) {
+            Namespace namespace = requireNamespace(service.getNamespaceId());
+            if ("DNS_PRIVATE".equals(namespace.getType()) || "DNS_PUBLIC".equals(namespace.getType())) {
+                try {
+                    DnsRecord.encodeName(instanceId + "." + service.getName() + "." + namespace.getName());
+                } catch (IllegalArgumentException e) {
+                    throw new AwsException("InvalidInput",
+                            "The SRV target must have ASCII labels of 1 to 63 bytes and at most 253 characters.", 400);
+                }
+            }
+        }
         Instance instance = new Instance();
         instance.setInstanceId(instanceId);
         instance.setServiceId(serviceId);
@@ -454,8 +465,8 @@ public class CloudMapService {
             }
             List<Instance> instances = scanInstances(service.getId());
             exists |= !instances.isEmpty();
-            int recordType = dnsRecordTtl(service, "CNAME") >= 0 ? 5 : type;
-            String recordName = switch (recordType) {
+            int recordType = type;
+            String recordName = switch (type) {
                 case 1 -> "A";
                 case 5 -> "CNAME";
                 case 28 -> "AAAA";
@@ -463,6 +474,10 @@ public class CloudMapService {
                 default -> "";
             };
             int ttl = dnsRecordTtl(service, recordName);
+            if (ttl < 0 && dnsRecordTtl(service, "CNAME") >= 0) {
+                recordType = 5;
+                ttl = dnsRecordTtl(service, "CNAME");
+            }
             if (ttl < 0) {
                 continue;
             }

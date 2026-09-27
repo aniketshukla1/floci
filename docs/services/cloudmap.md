@@ -47,6 +47,20 @@ usable A record TTL.
 New `CreateService` requests reject TTL values outside AWS's 0 to 2147483647
 range. Names owned by Floci's embedded DNS server also use 60 seconds.
 
+SRV registrations must produce an encodable DNS target: ASCII labels of at most
+63 bytes and a full name of at most 253 characters. Floci returns `InvalidInput`
+before storing an unencodable target, rather than accepting a registration that
+cannot resolve. The API's general 64-character instance identifier limit is not
+a guarantee that an identifier can be used as a single DNS label; non-SRV
+registrations are unaffected. This early validation is an emulator behavior,
+not a verified claim about AWS's error timing. Older mixed A/CNAME configurations
+still resolve their explicitly configured A records.
+
+UDP replies respect the legacy 512-byte limit or the client's EDNS payload size,
+capped at 4096 bytes. Oversized answers are truncated at whole-record boundaries
+and carry the DNS truncation flag. The embedded server remains UDP-only; TCP
+retry is not implemented.
+
 Two limits are worth knowing. `HTTP` namespaces do not resolve, matching AWS,
 where they are reachable only through `DiscoverInstances`. The embedded DNS server only runs
 when Floci itself runs inside Docker, so name resolution is available to

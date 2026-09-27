@@ -188,6 +188,59 @@ class CloudMapDnsPacketIntegrationTest {
                         + type + "\",\"TTL\":45}]}", null, null, null, Map.of(), REGION);
     }
 
+    @Test
+    void largeSrvResponsesRespectLegacyAndEdnsUdpSizes() throws Exception {
+        String namespace = uniqueNamespace();
+        Service service = typedService(namespace, "SRV", "MULTIVALUE");
+        for (int i = 0; i < 8; i++) {
+            cloudMapService.registerInstance(service.getId(), "instance-with-long-name-" + i, null,
+                    Map.of("AWS_INSTANCE_IPV4", "192.0.2.1", "AWS_INSTANCE_PORT", "8080"), REGION);
+        }
+        EmbeddedDnsServer dns = new EmbeddedDnsServer(List.of(), List.of(cloudMapDnsRecordSource));
+        byte[] legacyQuery = buildQuery("typed." + namespace, (short) 33);
+        byte[] legacy = query(dns, legacyQuery);
+        ByteBuffer legacyPacket = ByteBuffer.wrap(legacy);
+        assertTrue(legacy.length <= 512);
+        assertTrue((legacyPacket.getShort(2) & 0x0200) != 0);
+        assertTrue(legacyPacket.getShort(6) < 8);
+        assertCompleteRecords(legacy, legacyQuery.length, legacyPacket.getShort(6));
+
+        byte[] ednsQuery = withEdns(legacyQuery, 1232);
+        byte[] edns = query(dns, ednsQuery);
+        ByteBuffer ednsPacket = ByteBuffer.wrap(edns);
+        assertTrue(edns.length <= 1232);
+        assertEquals(0, ednsPacket.getShort(2) & 0x0200);
+        assertEquals(8, ednsPacket.getShort(6));
+        assertEquals(1, ednsPacket.getShort(10));
+        assertEquals(41, ednsPacket.getShort(edns.length - 10));
+
+        byte[] smallEdns = query(dns, withEdns(legacyQuery, 512));
+        assertTrue(smallEdns.length <= 512);
+        assertTrue((ByteBuffer.wrap(smallEdns).getShort(2) & 0x0200) != 0);
+    }
+
+    private static byte[] withEdns(byte[] query, int payloadSize) {
+        ByteBuffer extended = ByteBuffer.allocate(query.length + 11).put(query);
+        extended.putShort(10, (short) 1);
+        extended.put((byte) 0).putShort((short) 41).putShort((short) payloadSize).putInt(0).putShort((short) 0);
+        return extended.array();
+    }
+
+    private static void assertCompleteRecords(byte[] response, int questionEnd, int count) {
+        ByteBuffer packet = ByteBuffer.wrap(response);
+        packet.position(questionEnd);
+        for (int i = 0; i < count; i++) {
+            EmbeddedDnsServer.readName(packet, response);
+            packet.getShort();
+            packet.getShort();
+            packet.getInt();
+            int length = Short.toUnsignedInt(packet.getShort());
+            assertTrue(packet.remaining() >= length);
+            packet.position(packet.position() + length);
+        }
+        assertEquals(response.length, packet.position());
+    }
+
     private static String uniqueNamespace() {
         return "dnspacket" + UUID.randomUUID().toString().substring(0, 8) + ".internal";
     }
