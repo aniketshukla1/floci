@@ -4,6 +4,20 @@
 **Management Endpoint:** `POST http://localhost:4566/`
 **Data Endpoint:** `localhost:<proxy-port>` (TCP)
 
+### Recoverable backend startup failures
+
+If a persisted database's container or authentication relay cannot start when Floci restarts,
+Floci retains the database record and data volume and retries when its backend is next needed.
+This recoverable emulator condition uses `available`, the same metadata-only status as a
+restart without a reachable Docker daemon, not AWS's terminal `failed` state. It does not
+guarantee that a database connection is ready while Docker is unavailable. Port allocation
+failures still report `failed` because no endpoint could be allocated.
+
+A successful lazy retry updates legacy `failed` records to `available` only after the container
+and relay are ready. Older records whose endpoint was cleared receive a new relay endpoint on
+retry. A failed retry leaves their status unchanged and cleans up the attempted backend and
+any newly allocated relay port.
+
 Floci manages real PostgreSQL, MySQL, MariaDB, and SQL Server Docker containers and proxies TCP connections to them, including IAM authentication support where the protocol supports it. SQL Server uses a transparent TCP relay for its native TDS protocol.
 
 RDS Data API (`rds-data`) is documented separately because it uses REST JSON routes instead of the RDS Query protocol. See [RDS Data API](rds-data.md).

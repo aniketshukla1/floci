@@ -2124,6 +2124,7 @@ class RdsServiceTest {
                 20, false, null, null, null);
 
         assertNull(rdsService.ensureInstanceBackend("probe-db", "us-east-1").getContainerId());
+        created.setStatus(DbInstanceStatus.FAILED);
 
         // A Docker daemon appears.
         when(containerManager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -2131,6 +2132,8 @@ class RdsServiceTest {
                         "probe-db", "127.0.0.1", 15432));
 
         DbInstance started = rdsService.ensureInstanceBackend("probe-db", "us-east-1");
+        assertEquals(DbInstanceStatus.AVAILABLE, started.getStatus());
+        assertEquals(DbInstanceStatus.AVAILABLE, rdsService.getDbInstance("probe-db").getStatus());
         assertEquals("late-container", started.getContainerId());
         assertEquals("127.0.0.1", started.getContainerHost());
         assertEquals(15432, started.getContainerPort());
@@ -2162,6 +2165,7 @@ class RdsServiceTest {
                 20, false, null, null, null);
         RdsContainerHandle late = new RdsContainerHandle("late-container", created.getDbInstanceArn(),
                 "probe-db", "127.0.0.1", 15432);
+        created.setStatus(DbInstanceStatus.FAILED);
         when(containerManager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(late);
         doThrow(new IllegalStateException("port in use")).doNothing()
@@ -2175,8 +2179,10 @@ class RdsServiceTest {
         // call retries both halves instead of returning a container nothing listens on.
         verify(containerManager).stop(late);
         assertNull(rdsService.getDbInstance("probe-db").getContainerId());
+        assertEquals(DbInstanceStatus.FAILED, rdsService.getDbInstance("probe-db").getStatus());
 
         DbInstance started = rdsService.ensureInstanceBackend("probe-db", "us-east-1");
+        assertEquals(DbInstanceStatus.AVAILABLE, started.getStatus());
         assertEquals("late-container", started.getContainerId());
         verify(containerManager, times(3))
                 .tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -2192,11 +2198,17 @@ class RdsServiceTest {
                 "admin", "password", "dbname", "db.serverless",
                 0, false, null, null, "probe-cluster");
 
+        cluster.setStatus(DbInstanceStatus.FAILED);
+        member.setStatus(DbInstanceStatus.FAILED);
+
         when(containerManager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RdsContainerHandle("late-cluster-container", cluster.getDbClusterArn(),
                         "probe-cluster", "127.0.0.1", 15432));
 
         DbInstance started = rdsService.ensureInstanceBackend("probe-member", "us-east-1");
+
+        assertEquals(DbInstanceStatus.AVAILABLE, started.getStatus());
+        assertEquals(DbInstanceStatus.AVAILABLE, rdsService.getDbCluster("probe-cluster").getStatus());
 
         assertEquals("late-cluster-container", started.getContainerId());
         assertEquals("late-cluster-container",
@@ -3850,7 +3862,7 @@ class RdsServiceTest {
         restoredService.restorePersistedRuntime();
 
         DbInstance failed = restoredService.getDbInstance("broken");
-        assertEquals(DbInstanceStatus.FAILED, failed.getStatus());
+        assertEquals(DbInstanceStatus.AVAILABLE, failed.getStatus());
         assertNull(failed.getEndpoint());
         assertEquals("restored-container", failed.getContainerId());
         assertNull(failed.getContainerHost());
@@ -3895,7 +3907,7 @@ class RdsServiceTest {
         restoredService.restorePersistedRuntime();
 
         DbInstance failed = restoredService.getDbInstance("broken");
-        assertEquals(DbInstanceStatus.FAILED, failed.getStatus());
+        assertEquals(DbInstanceStatus.AVAILABLE, failed.getStatus());
         assertNull(failed.getEndpoint());
         assertEquals("persisted-container", failed.getContainerId());
         assertNull(failed.getContainerHost());
@@ -3939,6 +3951,63 @@ class RdsServiceTest {
     }
 
     @Test
+    void failedStartupBackendIsRetryableWithoutAnEndpoint() {
+        InMemoryStorage<String, DbInstance> instances = new InMemoryStorage<>();
+        instances.put("broken", persistedInstance("broken", "123456789012", "secret", 7000));
+        RdsContainerManager manager = mock(RdsContainerManager.class);
+        RdsProxyManager proxies = mock(RdsProxyManager.class);
+        RdsContainerHandle recovered = new RdsContainerHandle("recovered-container",
+                "arn:aws:rds:us-east-1:123456789012:db:broken", "broken", "127.0.0.1", 15432);
+        when(manager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("temporary Docker error"))
+                .thenReturn(recovered);
+        RdsService service = newService(manager, proxies, instances, new InMemoryStorage<>(),
+                new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>());
+        service.restorePersistedRuntime();
+        assertEquals(DbInstanceStatus.AVAILABLE, service.getDbInstance("broken").getStatus());
+        DbInstance retried = service.ensureInstanceBackend("broken", "us-east-1");
+        assertEquals(DbInstanceStatus.AVAILABLE, retried.getStatus());
+        assertEquals("recovered-container", retried.getContainerId());
+        assertNotNull(retried.getEndpoint());
+        assertTrue(retried.getProxyPort() > 0);
+        verify(proxies).startProxy(any(), any(), anyBoolean(), eq(retried.getProxyPort()),
+                eq("127.0.0.1"), eq(15432), eq(retried.getEndpoint().address()),
+                any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void retryOfLegacyClusterWithoutAnEndpointRollsBackTheNewPortOnRelayFailure() {
+        InMemoryStorage<String, DbCluster> clusters = new InMemoryStorage<>();
+        DbCluster cluster = persistedCluster("123456789012", "secret", 7000);
+        cluster.setStatus(DbInstanceStatus.FAILED);
+        cluster.setEndpoint(null);
+        cluster.setReaderEndpoint(null);
+        cluster.setProxyPort(0);
+        cluster.setContainerHost(null);
+        cluster.setContainerPort(0);
+        clusters.put("cluster1", cluster);
+        RdsContainerManager manager = mock(RdsContainerManager.class);
+        RdsProxyManager proxies = mock(RdsProxyManager.class);
+        RdsContainerHandle recovered = new RdsContainerHandle("recovered-container",
+                cluster.getDbClusterArn(), "cluster1", "127.0.0.1", 15432);
+        when(manager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(recovered);
+        doThrow(new IllegalStateException("temporary relay error")).doNothing()
+                .when(proxies).startProxy(any(), any(), anyBoolean(), anyInt(), any(), anyInt(),
+                        any(), any(), any(), any(), any(), any());
+        RdsService service = newService(manager, proxies, new InMemoryStorage<>(), clusters,
+                new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>());
+        assertThrows(IllegalStateException.class, () -> service.ensureClusterBackend("cluster1", "us-east-1"));
+        assertEquals(DbInstanceStatus.FAILED, service.getDbCluster("cluster1").getStatus());
+        assertNull(service.getDbCluster("cluster1").getEndpoint());
+        verify(manager).stop(recovered);
+        DbCluster retried = service.ensureClusterBackend("cluster1", "us-east-1");
+        assertEquals(DbInstanceStatus.AVAILABLE, retried.getStatus());
+        assertEquals(7000, retried.getProxyPort());
+        assertEquals(retried.getEndpoint(), retried.getReaderEndpoint());
+    }
+
+    @Test
     void failedClusterRestoreClearsRuntimeStateAndReleasesItsEndpointPort() {
         InMemoryStorage<String, DbCluster> clusters = new InMemoryStorage<>();
         clusters.put("cluster1", persistedCluster("123456789012", "secret", 7000));
@@ -3971,7 +4040,7 @@ class RdsServiceTest {
         restoredService.restorePersistedRuntime();
 
         DbCluster failed = restoredService.getDbCluster("cluster1");
-        assertEquals(DbInstanceStatus.FAILED, failed.getStatus());
+        assertEquals(DbInstanceStatus.AVAILABLE, failed.getStatus());
         assertNull(failed.getEndpoint());
         assertNull(failed.getReaderEndpoint());
         assertEquals("restored-container", failed.getContainerId());
