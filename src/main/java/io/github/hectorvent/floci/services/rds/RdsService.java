@@ -3292,32 +3292,52 @@ public class RdsService implements Resettable, ResourceProvider {
 
     private void restoreClusterMemberBackends(DbCluster cluster, String region, boolean restart) {
         String accountId = currentAccountId();
+        RuntimeException restartFailure = null;
         for (String memberId : cluster.getDbClusterMembers()) {
             DbInstance member = findInstanceForScope(accountId, region, memberId);
             if (member == null || member.getStatus() == DbInstanceStatus.DELETING
                     || (!restart && member.getStatus() == DbInstanceStatus.STOPPED)) {
                 continue;
             }
-            if (!config.services().rds().mock()
-                    && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
+            try {
+                if (!config.services().rds().mock()
+                        && hasBackend(cluster.getContainerHost(), cluster.getContainerPort())) {
+                    if (restart) {
+                        member.setContainerHost(null);
+                        member.setContainerPort(0);
+                    }
+                    // Member retry must not recurse into the cluster's other members.
+                    ensureInstanceBackend(memberId, region);
+                } else if (restart) {
+                    member.setContainerId(cluster.getContainerId());
+                    member.setContainerHost(cluster.getContainerHost());
+                    member.setContainerPort(cluster.getContainerPort());
+                }
                 if (restart) {
-                    member.setContainerHost(null);
-                    member.setContainerPort(0);
                     member.setStatus(DbInstanceStatus.AVAILABLE);
                     putInstanceForScope(accountId, region, memberId, member);
                 }
-                // The private cluster retry does not recurse into members, and an already
-                // restored member is a no-op when retrying a different member's failed relay.
-                ensureInstanceBackend(memberId, region);
-            } else if (restart) {
-                member.setContainerId(cluster.getContainerId());
-                member.setContainerHost(cluster.getContainerHost());
-                member.setContainerPort(cluster.getContainerPort());
+            } catch (RuntimeException e) {
+                member.setStatus(DbInstanceStatus.FAILED);
+                try {
+                    putInstanceForScope(accountId, region, memberId, member);
+                } catch (RuntimeException persistFailure) {
+                    e.addSuppressed(persistFailure);
+                }
+                LOG.warnv(e, "Failed to restore RDS cluster member {0}; its relay can be retried", memberId);
+                if (restart) {
+                    if (restartFailure == null) {
+                        restartFailure = e;
+                    } else {
+                        restartFailure.addSuppressed(e);
+                    }
+                }
             }
-            if (restart) {
-                member.setStatus(DbInstanceStatus.AVAILABLE);
-                putInstanceForScope(accountId, region, memberId, member);
-            }
+        }
+        // A Data API request only needs the cluster backend, which is already ready. Start
+        // and reboot operations still report a member failure, after trying every member.
+        if (restartFailure != null) {
+            throw restartFailure;
         }
     }
 

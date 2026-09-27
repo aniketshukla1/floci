@@ -4103,10 +4103,11 @@ class RdsServiceTest {
         when(containerManager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(new RdsContainerHandle("recovered-container", cluster.getDbClusterArn(),
                         "retry-cluster", "127.0.0.1", 15432));
-        assertThrows(IllegalStateException.class,
-                () -> rdsService.ensureClusterBackend("retry-cluster", "us-east-1"));
+        assertDoesNotThrow(() -> rdsService.ensureClusterBackend("retry-cluster", "us-east-1"));
         assertNull(first.getContainerHost());
         assertNull(first.getEndpoint());
+        assertEquals(DbInstanceStatus.FAILED, first.getStatus());
+        assertEquals("recovered-container", second.getContainerId());
         rdsService.ensureClusterBackend("retry-cluster", "us-east-1");
         assertEquals(DbInstanceStatus.AVAILABLE, first.getStatus());
         assertNotNull(first.getEndpoint());
@@ -4119,6 +4120,39 @@ class RdsServiceTest {
         verify(proxyManager).startProxy(eq("rds-resource:" + second.getDbInstanceArn()),
                 any(), anyBoolean(), eq(second.getProxyPort()), eq("127.0.0.1"), eq(15432),
                 any(), any(), any(), any(), any(), any());
+        verify(containerManager, times(2)).tryStart(eq(cluster.getDbClusterArn()), any(), any(),
+                any(), any(), any(), any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void clusterControlPlaneReportsMemberFailureAfterTryingTheRemainingMembers(boolean reboot) {
+        DbCluster cluster = rdsService.createDbCluster("control-cluster", "aurora-postgresql", "16.3",
+                "admin", "password", "dbname", false, null);
+        DbInstance first = rdsService.createDbInstance("control-first", "aurora-postgresql", "16.3",
+                "admin", "password", "dbname", "db.serverless", 0, false, null, null, "control-cluster");
+        DbInstance second = rdsService.createDbInstance("control-second", "aurora-postgresql", "16.3",
+                "admin", "password", "dbname", "db.serverless", 0, false, null, null, "control-cluster");
+        doThrow(new IllegalStateException("temporary member relay error")).doNothing()
+                .when(proxyManager).startProxy(eq("rds-resource:" + first.getDbInstanceArn()),
+                        any(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), any(), any(), any(), any());
+        if (reboot) {
+            assertThrows(IllegalStateException.class,
+                    () -> rdsService.rebootDbCluster("control-cluster", "us-east-1"));
+        } else {
+            rdsService.stopDbCluster("control-cluster", "us-east-1");
+            assertThrows(IllegalStateException.class,
+                    () -> rdsService.startDbCluster("control-cluster", "us-east-1"));
+        }
+        assertEquals(DbInstanceStatus.FAILED, first.getStatus());
+        assertNull(first.getContainerHost());
+        assertEquals(DbInstanceStatus.AVAILABLE, second.getStatus());
+        assertNotNull(second.getContainerHost());
+        assertEquals(DbInstanceStatus.AVAILABLE, cluster.getStatus(), "the cluster relay itself is ready");
+        rdsService.ensureClusterBackend("control-cluster", "us-east-1");
+        assertEquals(DbInstanceStatus.AVAILABLE, first.getStatus());
+        verify(proxyManager, times(2)).startProxy(eq("rds-resource:" + second.getDbInstanceArn()),
+                any(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), any(), any(), any(), any());
         verify(containerManager, times(2)).tryStart(eq(cluster.getDbClusterArn()), any(), any(),
                 any(), any(), any(), any(), any(), any());
     }

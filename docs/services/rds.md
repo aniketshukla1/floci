@@ -23,6 +23,9 @@ through the same retry path.
 Retrying a cluster directly also restores its missing member relays without restarting a healthy
 cluster backend or rebinding members that already recovered. A failed member relay can be retried
 again; stopped members remain stopped until a control-plane start operation.
+Lazy cluster recovery tries every active member even if one relay fails; a failed member does
+not prevent Data API access through a recovered cluster backend. Start and reboot report member
+relay errors after trying all members and mark those members `failed` until a successful retry.
 
 Floci manages real PostgreSQL, MySQL, MariaDB, and SQL Server Docker containers and proxies TCP connections to them, including IAM authentication support where the protocol supports it. SQL Server uses a transparent TCP relay for its native TDS protocol.
 
