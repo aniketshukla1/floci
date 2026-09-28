@@ -2639,6 +2639,16 @@ public class LambdaService implements ResourceProvider {
         return fn.getReservedConcurrentExecutions();
     }
 
+    /** Reads function-wide concurrency from the resolved owner's $LATEST, not a version snapshot. */
+    public Integer getFunctionConcurrency(String region, LambdaFunction function) {
+        String accountId = function.getAccountId() != null ? function.getAccountId()
+                : AwsArnUtils.accountOrDefault(function.getFunctionArn(), regionResolver.getAccountId());
+        LambdaFunction latest = functionStore.getForAccount(accountId, region, function.getFunctionName())
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException",
+                        "Function not found: " + function.getFunctionName(), 404));
+        return latest.getReservedConcurrentExecutions();
+    }
+
     /**
      * Aggregates the caller's stored {@code $LATEST} functions in a region: code-size usage,
      * function count, and the unreserved share of the configured concurrency limit.

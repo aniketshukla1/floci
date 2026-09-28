@@ -60,6 +60,13 @@ The event invoke configuration is stored and returned as AWS does, and `AWS::Lam
 provisions it from a stack. Asynchronous invocations apply its retry, event age, destination settings,
 and dead-letter queue configurations (`DeadLetterConfig`).
 
+### Reserved Concurrency
+
+`GetFunction` includes `Concurrency.ReservedConcurrentExecutions` when a reservation is set,
+including an explicit zero. The setting is function-wide: reads of published versions and aliases
+return the current reservation, not the value at publication time. Deleting the reservation with
+`DeleteFunctionConcurrency` removes the `Concurrency` member from subsequent `GetFunction` responses.
+
 ### Asynchronous Invocation Retries and Dead-Letter Queues
 
 An asynchronous invocation (`InvocationType: Event`) answers `202` immediately and runs on the background

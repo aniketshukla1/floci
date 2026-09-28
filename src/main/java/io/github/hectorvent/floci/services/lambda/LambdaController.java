@@ -123,6 +123,11 @@ public class LambdaController {
             tags.forEach(tagsNode::put);
         }
 
+        Integer reservedConcurrency = lambdaService.getFunctionConcurrency(region, fn);
+        if (reservedConcurrency != null) {
+            root.putObject("Concurrency").put("ReservedConcurrentExecutions", reservedConcurrency);
+        }
+
         return Response.ok(root).build();
     }
 
