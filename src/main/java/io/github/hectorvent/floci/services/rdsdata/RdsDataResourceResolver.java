@@ -73,9 +73,8 @@ class RdsDataResourceResolver {
     }
 
     private DatabaseTarget fromCluster(DbCluster cluster, String region) {
-        DbCluster resolved = hasRuntime(cluster.getContainerHost(), cluster.getContainerPort())
-                ? cluster
-                : rdsService.ensureClusterBackend(cluster.getDbClusterIdentifier(), region);
+        // A ready cluster can still have member relays awaiting a retry.
+        DbCluster resolved = rdsService.ensureClusterBackend(cluster.getDbClusterIdentifier(), region);
         return target(resolved.getDbClusterArn(), resolved.getEngine(), resolved.getContainerHost(),
                 resolved.getContainerPort(), resolved.getMasterUsername(), resolved.getMasterPassword(),
                 resolved.getDatabaseName());

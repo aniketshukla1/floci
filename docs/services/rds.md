@@ -7,7 +7,9 @@
 ### Recoverable backend startup failures
 
 If a persisted database's container or authentication relay cannot start when Floci restarts,
-Floci retains the database record and data volume and retries when its backend is next needed.
+Floci retains the database record, data volume, and reserved endpoint port and retries when its
+backend is next needed. A failed restore does not release or renumber a reserved endpoint; a retry
+or the next boot uses the same port.
 This recoverable emulator condition uses `available`, the same metadata-only status as a
 restart without a reachable Docker daemon, not AWS's terminal `failed` state. It does not
 guarantee that a database connection is ready while Docker is unavailable. Port allocation
@@ -20,9 +22,11 @@ any newly allocated relay port.
 
 Instance and cluster start operations, and cluster reboot, reconstruct a missing relay endpoint
 through the same retry path.
-Retrying a cluster directly also restores its missing member relays without restarting a healthy
-cluster backend or rebinding members that already recovered. A failed member relay can be retried
-again; stopped members remain stopped until a control-plane start operation.
+Retrying a cluster directly, or resolving its ARN for a Data API request, also restores its missing
+member relays without restarting a healthy cluster backend or rebinding members that already
+recovered. Data API cluster-ARN resolution checks for missing members even when the cluster backend
+is already running, so a member relay that fails once is retried on the next request. Stopped
+members remain stopped until a control-plane start operation.
 Lazy cluster recovery tries every active member even if one relay fails; a failed member does
 not prevent Data API access through a recovered cluster backend. Start and reboot report member
 relay errors after trying all members and mark those members `failed` until a successful retry.

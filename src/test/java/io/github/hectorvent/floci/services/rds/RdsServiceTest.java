@@ -4100,8 +4100,9 @@ class RdsServiceTest {
         assertEquals(retried.getEndpoint(), retried.getReaderEndpoint());
     }
 
-    @Test
-    void stopAndStartRecoverAnInstanceOnItsRetainedEndpoint() {
+    @ParameterizedTest
+    @CsvSource({"true", "false"})
+    void stopAndStartRecoverAnInstanceWithRetainedOrLegacyMissingEndpoint(boolean legacy) {
         InMemoryStorage<String, DbInstance> instances = new InMemoryStorage<>();
         DbInstance persisted = persistedInstance("broken", "123456789012", "secret", 7000);
         instances.put("broken", persisted);
@@ -4112,10 +4113,20 @@ class RdsServiceTest {
         when(manager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("temporary Docker error"))
                 .thenReturn(recovered);
+        if (legacy) {
+            persisted.setEndpoint(null);
+            persisted.setProxyPort(0);
+            doReturn(recovered).when(manager).tryStart(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any());
+        }
         RdsService service = newService(manager, proxies, instances, new InMemoryStorage<>(),
                 new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>());
-        service.restorePersistedRuntime();
-        assertEquals(7000, service.getDbInstance("broken").getEndpoint().port());
+        if (legacy) {
+            assertNull(service.getDbInstance("broken").getEndpoint());
+        } else {
+            service.restorePersistedRuntime();
+            assertEquals(7000, service.getDbInstance("broken").getEndpoint().port());
+        }
         service.stopDbInstance("broken", null);
         assertEquals(DbInstanceStatus.STARTING, service.startDbInstance("broken").getStatus());
         DbInstance started = service.getDbInstance("broken");
@@ -4127,8 +4138,8 @@ class RdsServiceTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"true", "false"})
-    void clusterControlPlaneRecoveryPreservesRetainedEndpoints(boolean reboot) {
+    @CsvSource({"true, true", "true, false", "false, true", "false, false"})
+    void clusterControlPlaneRecoveryHandlesRetainedAndLegacyMissingEndpoints(boolean reboot, boolean legacy) {
         InMemoryStorage<String, DbCluster> clusters = new InMemoryStorage<>();
         InMemoryStorage<String, DbInstance> instances = new InMemoryStorage<>();
         DbCluster persisted = persistedCluster("123456789012", "secret", 7000);
@@ -4144,13 +4155,27 @@ class RdsServiceTest {
         when(manager.tryStart(any(), any(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new IllegalStateException("temporary Docker error"))
                 .thenReturn(recovered);
+        if (legacy) {
+            persisted.setEndpoint(null);
+            persisted.setReaderEndpoint(null);
+            persisted.setProxyPort(0);
+            member.setEndpoint(null);
+            member.setProxyPort(0);
+            doReturn(recovered).when(manager).tryStart(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any());
+        }
         RdsService service = newService(manager, proxies, instances, clusters,
                 new InMemoryStorage<>(), new InMemoryStorage<>(), new InMemoryStorage<>());
-        service.restorePersistedRuntime();
-        assertEquals(7000, service.getDbCluster("cluster1").getEndpoint().port());
-        assertEquals(7000, service.getDbCluster("cluster1").getReaderEndpoint().port());
-        member = service.getDbInstance("member");
-        assertEquals(7001, member.getEndpoint().port());
+        if (legacy) {
+            assertNull(service.getDbCluster("cluster1").getEndpoint());
+            assertNull(service.getDbInstance("member").getEndpoint());
+        } else {
+            service.restorePersistedRuntime();
+            assertEquals(7000, service.getDbCluster("cluster1").getEndpoint().port());
+            assertEquals(7000, service.getDbCluster("cluster1").getReaderEndpoint().port());
+            member = service.getDbInstance("member");
+            assertEquals(7001, member.getEndpoint().port());
+        }
         if (reboot) {
             service.rebootDbCluster("cluster1", "us-east-1");
         } else {
