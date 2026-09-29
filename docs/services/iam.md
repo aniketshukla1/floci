@@ -631,8 +631,11 @@ account key carries no identity policies of its own.
 
 #### Supported Condition Operators:
 - `StringEquals`, `StringNotEquals`, `StringEqualsIgnoreCase`, `StringNotEqualsIgnoreCase`
-- `StringLike`, `StringNotLike`
-- `ArnEquals`, `ArnLike`, `ArnNotEquals`, `ArnNotLike`
+- `StringLike`, `StringNotLike`: case-sensitive glob matching with `*` and `?`.
+- `ArnEquals`, `ArnLike`, `ArnNotEquals`, `ArnNotLike`: case-sensitive glob matching
+  of each of the six ARN components independently. Wildcards cannot cross the first five
+  colon separators; colons within the resource component are retained. `ArnEquals` and
+  `ArnLike` behave identically, as do their negated forms.
 - `NumericEquals`, `NumericNotEquals`, `NumericLessThan`, `NumericGreaterThan` (and Equals variants)
 - `DateEquals`, `DateNotEquals`, `DateLessThan`, `DateGreaterThan` (and Equals variants)
 - `Bool`, `IpAddress`, `NotIpAddress`, `Null`
