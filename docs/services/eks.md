@@ -417,8 +417,15 @@ container until the replacement starts and restarts it if replacement fails. Thi
 containers started before resource limits were available. If Docker cannot remove the stopped
 backup after a successful replacement, the new node keeps running and cluster deletion retries
 the backup cleanup after stopping the live node. If cleanup still fails, deletion reports the
-error and can be retried before the data volume is removed. Backup container names end in
-`.capacity-backup`, which cannot match an EKS cluster name.
+error and can be retried before the data volume is removed. Backup container names put the
+`capacity-backup.` marker before the account-qualified cluster name, for example
+`floci-aws-eks-capacity-backup.demo` for the default account and
+`floci-aws-eks-capacity-backup.999999999999.demo` for another account. The configured Docker resource
+namespace applies to backups too. This keeps backup names outside both accounts' live-container
+namespaces without changing existing cluster container names or data volumes.
+Cleanup only targets this backup namespace; it does not look up old suffix-form names, which can
+identify another account's live cluster. Verify ownership before manually removing leftover stopped
+backups after upgrading.
 
 #### Cluster node provider ID and topology labels
 
