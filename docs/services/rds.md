@@ -27,9 +27,12 @@ member relays without restarting a healthy cluster backend or rebinding members 
 recovered. Data API cluster-ARN resolution checks for missing members even when the cluster backend
 is already running, so a member relay that fails once is retried on the next request. Stopped
 members remain stopped until a control-plane start operation.
+When the cluster and all active members have backends, Data API resolution skips the synchronized
+recovery path, so healthy queries do not wait for unrelated container starts or image pulls.
 Lazy cluster recovery tries every active member even if one relay fails; a failed member does
-not prevent Data API access through a recovered cluster backend. Start and reboot report member
-relay errors after trying all members and mark those members `failed` until a successful retry.
+not prevent Data API access through a recovered cluster backend, and repeated member failures are
+logged at debug level. Start and reboot report member relay errors after trying all members and
+mark those members `failed` until a successful retry.
 
 Floci manages real PostgreSQL, MySQL, MariaDB, and SQL Server Docker containers and proxies TCP connections to them, including IAM authentication support where the protocol supports it. SQL Server uses a transparent TCP relay for its native TDS protocol.
 

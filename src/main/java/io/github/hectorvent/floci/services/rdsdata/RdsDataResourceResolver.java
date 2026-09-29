@@ -73,8 +73,11 @@ class RdsDataResourceResolver {
     }
 
     private DatabaseTarget fromCluster(DbCluster cluster, String region) {
-        // A ready cluster can still have member relays awaiting a retry.
-        DbCluster resolved = rdsService.ensureClusterBackend(cluster.getDbClusterIdentifier(), region);
+        // Healthy queries must not wait behind unrelated container starts or image pulls.
+        DbCluster resolved = hasRuntime(cluster.getContainerHost(), cluster.getContainerPort())
+                && !rdsService.hasMissingClusterMemberBackends(cluster, region)
+                ? cluster
+                : rdsService.ensureClusterBackend(cluster.getDbClusterIdentifier(), region);
         return target(resolved.getDbClusterArn(), resolved.getEngine(), resolved.getContainerHost(),
                 resolved.getContainerPort(), resolved.getMasterUsername(), resolved.getMasterPassword(),
                 resolved.getDatabaseName());

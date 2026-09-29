@@ -3218,6 +3218,21 @@ public class RdsService implements Resettable, ResourceProvider {
         return ensureClusterBackend(id, region, true);
     }
 
+    /** Checks whether active members need the synchronized backend-recovery path. */
+    public boolean hasMissingClusterMemberBackends(DbCluster cluster, String region) {
+        String accountId = currentAccountId();
+        String effectiveRegion = effectiveRegion(region);
+        for (String memberId : new ArrayList<>(cluster.getDbClusterMembers())) {
+            DbInstance member = findInstanceForScope(accountId, effectiveRegion, memberId);
+            if (member != null && member.getStatus() != DbInstanceStatus.STOPPED
+                    && member.getStatus() != DbInstanceStatus.DELETING
+                    && !hasBackend(member.getContainerHost(), member.getContainerPort())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private DbCluster ensureClusterBackend(String id, String region, boolean restoreMembers) {
         String effectiveRegion = effectiveRegion(region);
         DbCluster cluster = getDbCluster(id, effectiveRegion);
@@ -3326,7 +3341,7 @@ public class RdsService implements Resettable, ResourceProvider {
                 } catch (RuntimeException persistFailure) {
                     e.addSuppressed(persistFailure);
                 }
-                LOG.warnv(e, "Failed to restore RDS cluster member {0}; its relay can be retried", memberId);
+                LOG.debugv(e, "Failed to restore RDS cluster member {0}; its relay can be retried", memberId);
                 if (restart) {
                     if (restartFailure == null) {
                         restartFailure = e;
@@ -7751,7 +7766,7 @@ public class RdsService implements Resettable, ResourceProvider {
         return instance;
     }
 
-    private synchronized DbCluster findClusterForScope(
+    private DbCluster findClusterForScope(
             String accountId, String region, String clusterId) {
         String effectiveAccountId = accountId != null ? accountId : currentAccountId();
         String effectiveRegion = effectiveRegion(region);
@@ -7760,26 +7775,29 @@ public class RdsService implements Resettable, ResourceProvider {
                 cluster.getDbClusterArn(), effectiveAccountId, effectiveRegion,
                 "cluster", clusterId);
         if (clusters instanceof AccountAwareStorageBackend<DbCluster> aware) {
+            // The store already serializes legacy migration, independently of container starts.
             return aware.getForAccountMigratingLegacyKeys(
                             effectiveAccountId, key, List.of(clusterId), owner)
                     .filter(owner)
                     .orElse(null);
         }
 
-        Optional<DbCluster> canonical = clusters.get(key).filter(owner);
-        if (canonical.isPresent()) {
-            clusters.get(clusterId).filter(owner).ifPresent(ignored -> clusters.delete(clusterId));
-            return canonical.get();
+        synchronized (this) {
+            Optional<DbCluster> canonical = clusters.get(key).filter(owner);
+            if (canonical.isPresent()) {
+                clusters.get(clusterId).filter(owner).ifPresent(ignored -> clusters.delete(clusterId));
+                return canonical.get();
+            }
+            Optional<DbCluster> legacy = clusters.get(clusterId).filter(owner);
+            if (legacy.isPresent()) {
+                clusters.put(key, legacy.get());
+                clusters.delete(clusterId);
+            }
+            return legacy.orElse(null);
         }
-        Optional<DbCluster> legacy = clusters.get(clusterId).filter(owner);
-        if (legacy.isPresent()) {
-            clusters.put(key, legacy.get());
-            clusters.delete(clusterId);
-        }
-        return legacy.orElse(null);
     }
 
-    private synchronized DbInstance findInstanceForScope(
+    private DbInstance findInstanceForScope(
             String accountId, String region, String instanceId) {
         String effectiveAccountId = accountId != null ? accountId : currentAccountId();
         String effectiveRegion = effectiveRegion(region);
@@ -7788,23 +7806,26 @@ public class RdsService implements Resettable, ResourceProvider {
                 instance.getDbInstanceArn(), effectiveAccountId, effectiveRegion,
                 "db", instanceId);
         if (instances instanceof AccountAwareStorageBackend<DbInstance> aware) {
+            // The store already serializes legacy migration, independently of container starts.
             return aware.getForAccountMigratingLegacyKeys(
                             effectiveAccountId, key, List.of(instanceId), owner)
                     .filter(owner)
                     .orElse(null);
         }
 
-        Optional<DbInstance> canonical = instances.get(key).filter(owner);
-        if (canonical.isPresent()) {
-            instances.get(instanceId).filter(owner).ifPresent(ignored -> instances.delete(instanceId));
-            return canonical.get();
+        synchronized (this) {
+            Optional<DbInstance> canonical = instances.get(key).filter(owner);
+            if (canonical.isPresent()) {
+                instances.get(instanceId).filter(owner).ifPresent(ignored -> instances.delete(instanceId));
+                return canonical.get();
+            }
+            Optional<DbInstance> legacy = instances.get(instanceId).filter(owner);
+            if (legacy.isPresent()) {
+                instances.put(key, legacy.get());
+                instances.delete(instanceId);
+            }
+            return legacy.orElse(null);
         }
-        Optional<DbInstance> legacy = instances.get(instanceId).filter(owner);
-        if (legacy.isPresent()) {
-            instances.put(key, legacy.get());
-            instances.delete(instanceId);
-        }
-        return legacy.orElse(null);
     }
 
     private void putClusterForScope(
