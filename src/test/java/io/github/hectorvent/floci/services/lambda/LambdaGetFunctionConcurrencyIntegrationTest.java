@@ -42,7 +42,7 @@ class LambdaGetFunctionConcurrencyIntegrationTest {
     }
 
     @Test
-    void versionsAndAliasesReadFunctionWideReservationRatherThanTheSnapshot() throws Exception {
+    void qualifiedReadsOmitConcurrencyEvenWhenAReservationIsSet() throws Exception {
         String name = createFunction(ACCOUNT, REGION);
         try {
             putConcurrency(ACCOUNT, REGION, name, 2);
@@ -50,13 +50,21 @@ class LambdaGetFunctionConcurrencyIntegrationTest {
             given().header("Authorization", auth(ACCOUNT, REGION)).contentType("application/json")
                     .body("{\"Name\":\"live\",\"FunctionVersion\":\"1\"}")
                     .when().post(FUNCTIONS + name + "/aliases").then().statusCode(201);
+            String arn = "arn:aws:lambda:" + REGION + ":" + ACCOUNT + ":function:" + name;
 
             for (int reservation : new int[]{7, 0}) {
                 putConcurrency(ACCOUNT, REGION, name, reservation);
+                assertConcurrency(ACCOUNT, REGION, name, null, reservation);
+                assertConcurrency(ACCOUNT, REGION, arn, null, reservation);
                 for (String qualifier : new String[]{"$LATEST", "1", "live"}) {
-                    assertConcurrency(ACCOUNT, REGION, name, qualifier, reservation);
+                    assertConcurrency(ACCOUNT, REGION, name, qualifier, null);
+                    assertConcurrency(ACCOUNT, REGION, name + ":" + qualifier, null, null);
+                    assertConcurrency(ACCOUNT, REGION, ACCOUNT + ":function:" + name + ":" + qualifier,
+                            null, null);
+                    assertConcurrency(ACCOUNT, REGION, arn, qualifier, null);
+                    assertConcurrency(ACCOUNT, REGION, arn + ":" + qualifier, null, null);
+                    assertConcurrency(ACCOUNT, REGION, arn + ":" + qualifier, qualifier, null);
                 }
-                assertConcurrency(ACCOUNT, REGION, name + ":1", null, reservation);
             }
             deleteConcurrency(ACCOUNT, REGION, name);
             assertConcurrency(ACCOUNT, REGION, name, "1", null);
@@ -67,7 +75,7 @@ class LambdaGetFunctionConcurrencyIntegrationTest {
     }
 
     @Test
-    void qualifiedArnReadsReservationFromTheResolvedFunctionsAccount() throws Exception {
+    void accountsHaveIndependentReservationsAndQualifiedArnsOmitConcurrency() throws Exception {
         String name = createFunction(ACCOUNT, REGION);
         createFunction(OTHER_ACCOUNT, REGION, name);
         try {
@@ -78,8 +86,10 @@ class LambdaGetFunctionConcurrencyIntegrationTest {
 
             String arn = "arn:aws:lambda:" + REGION + ":" + OTHER_ACCOUNT + ":function:" + name;
             assertConcurrency(ACCOUNT, REGION, name, null, 2);
-            assertConcurrency(OTHER_ACCOUNT, REGION, name, "1", 11);
-            assertConcurrency(ACCOUNT, REGION, arn + ":1", null, 11);
+            assertConcurrency(OTHER_ACCOUNT, REGION, name, null, 11);
+            assertConcurrency(OTHER_ACCOUNT, REGION, name, "1", null);
+            assertConcurrency(ACCOUNT, REGION, arn + ":1", null, null);
+            assertConcurrency(ACCOUNT, REGION, arn, "1", null);
         } finally {
             deleteFunction(ACCOUNT, REGION, name);
             deleteFunction(OTHER_ACCOUNT, REGION, name);

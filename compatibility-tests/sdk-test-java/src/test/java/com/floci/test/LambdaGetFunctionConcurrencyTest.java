@@ -57,7 +57,7 @@ class LambdaGetFunctionConcurrencyTest {
     }
 
     @Test
-    void versionsAliasesAndQualifiedArnsUseTheCurrentFunctionWideReservation() {
+    void versionsAliasesAndQualifiedArnsOmitConcurrency() {
         lambda.putFunctionConcurrency(request -> request.functionName(functionName).reservedConcurrentExecutions(2));
         String version = lambda.publishVersion(request -> request.functionName(functionName)).version();
         lambda.createAlias(request -> request.functionName(functionName).name("live").functionVersion(version));
@@ -67,16 +67,24 @@ class LambdaGetFunctionConcurrencyTest {
         for (int reservation : new int[]{7, 0}) {
             lambda.putFunctionConcurrency(request -> request.functionName(functionName)
                     .reservedConcurrentExecutions(reservation));
-            for (String qualifier : new String[]{version, "live"}) {
+            assertThat(lambda.getFunction(request -> request.functionName(functionName))
+                    .concurrency().reservedConcurrentExecutions()).isEqualTo(reservation);
+            assertThat(lambda.getFunction(request -> request.functionName(functionArn))
+                    .concurrency().reservedConcurrentExecutions()).isEqualTo(reservation);
+            assertThat(lambda.getFunctionConcurrency(request -> request.functionName(functionName))
+                    .reservedConcurrentExecutions()).isEqualTo(reservation);
+            for (String qualifier : new String[]{"$LATEST", version, "live"}) {
                 GetFunctionResponse response = lambda.getFunction(request -> request.functionName(functionName)
                         .qualifier(qualifier));
-                assertThat(response.configuration().version()).isEqualTo(version);
-                assertThat(response.concurrency()).isNotNull();
-                assertThat(response.concurrency().reservedConcurrentExecutions()).isEqualTo(reservation);
+                assertThat(response.configuration().version())
+                        .isEqualTo("$LATEST".equals(qualifier) ? "$LATEST" : version);
+                assertThat(response.concurrency()).isNull();
+                for (String reference : new String[]{functionName + ":" + qualifier, functionArn + ":" + qualifier}) {
+                    GetFunctionResponse byReference = lambda.getFunction(request -> request.functionName(reference));
+                    assertThat(byReference.concurrency()).isNull();
+                    assertThat(byReference.configuration().version()).isEqualTo(response.configuration().version());
+                }
             }
-            GetFunctionResponse byArn = lambda.getFunction(request -> request.functionName(functionArn + ":live"));
-            assertThat(byArn.concurrency()).isNotNull();
-            assertThat(byArn.concurrency().reservedConcurrentExecutions()).isEqualTo(reservation);
         }
 
         lambda.deleteFunctionConcurrency(request -> request.functionName(functionName));
