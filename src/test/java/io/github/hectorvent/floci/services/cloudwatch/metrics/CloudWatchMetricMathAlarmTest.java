@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.RegionResolver;
+import io.github.hectorvent.floci.core.common.XmlParser;
 import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.core.storage.PersistentStorage;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
@@ -18,12 +19,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.w3c.dom.Document;
-import org.xml.sax.InputSource;
 
-import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathFactory;
-import java.io.StringReader;
 import java.nio.file.Path;
 import java.util.Map;
 
@@ -123,9 +121,7 @@ class CloudWatchMetricMathAlarmTest {
         MultivaluedMap<String, String> params = new MultivaluedHashMap<>();
         params.putSingle("AlarmNames.member.1", ALARM_NAME);
         String xml = (String) queryHandler.handle("DescribeAlarms", params, REGION).getEntity();
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-        return factory.newDocumentBuilder().parse(new InputSource(new StringReader(xml)));
+        return XmlParser.parseDocument(xml);
     }
 
     private void assertMetricMathAlarm(ObjectNode request) throws Exception {
