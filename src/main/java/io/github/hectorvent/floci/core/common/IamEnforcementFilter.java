@@ -281,7 +281,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         if (action == null) {
             if (!"OPTIONS".equalsIgnoreCase(ctx.getMethod())
                     && iamService.presignedScope(akid).isPresent()) {
-                ctx.abortWith(accessDeniedResponse("Unknown", credentialScope, ctx.getMediaType()));
+                ctx.abortWith(accessDeniedForRequest("Unknown", credentialScope, ctx));
             }
             return; // unknown action → ALLOW for ordinary credentials (permissive)
         }
@@ -349,14 +349,14 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                 // absolute-form request target forwarded by a proxy.
                 String rawPath = request == null ? null : request.path();
                 if (rawPath == null || !rawPath.startsWith("/")) {
-                    ctx.abortWith(accessDeniedResponse(action, credentialScope, ctx.getMediaType()));
+                    ctx.abortWith(accessDeniedForRequest(action, credentialScope, ctx));
                     return;
                 }
                 String decodedPath;
                 try {
                     decodedPath = URLDecoder.decode(rawPath.replace("+", "%2B"), StandardCharsets.UTF_8);
                 } catch (IllegalArgumentException invalidEncoding) {
-                    ctx.abortWith(accessDeniedResponse(action, credentialScope, ctx.getMediaType()));
+                    ctx.abortWith(accessDeniedForRequest(action, credentialScope, ctx));
                     return;
                 }
                 resources = List.of(AwsArnUtils.Arn.global(AwsRegions.partitionFor(region),
@@ -366,7 +366,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
             // credential is narrower: it may authorize only its literal object and action.
             if (!scope.action().equals(action) || resources.isEmpty()
                     || resources.stream().anyMatch(resource -> !scope.resourceArn().equals(resource))) {
-                ctx.abortWith(accessDeniedResponse(action, credentialScope, ctx.getMediaType()));
+                ctx.abortWith(accessDeniedForRequest(action, credentialScope, ctx));
                 return;
             }
             // A tagged PutObject additionally requires s3:PutObjectTagging. Generated URLs
@@ -375,7 +375,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
             if ("s3:PutObject".equals(action)
                     && (ctx.getHeaderString("x-amz-tagging") != null
                     || ctx.getUriInfo().getQueryParameters().containsKey("x-amz-tagging"))) {
-                ctx.abortWith(accessDeniedResponse("s3:PutObjectTagging", credentialScope, ctx.getMediaType()));
+                ctx.abortWith(accessDeniedForRequest("s3:PutObjectTagging", credentialScope, ctx));
                 return;
             }
         }
@@ -514,7 +514,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                         + " on resource: \"" + resource + "\""
                         + " because no identity-based policy allows the " + action + " action";
                 emitS3DenialIfApplicable(akid, action, resource, ctx, region, denyMessage);
-                ctx.abortWith(accessDeniedResponse(action, credentialScope, ctx.getMediaType(), resource));
+                ctx.abortWith(accessDeniedForRequest(action, credentialScope, ctx, resource));
                 return true;
             }
         }
@@ -930,7 +930,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
      *   <li>S3 → S3-flavored XML {@code <Error>...</Error>}</li>
      *   <li>{@code application/x-www-form-urlencoded} body → AWS Query
      *       {@code <ErrorResponse>...</ErrorResponse>} (IAM/STS/EC2/SQS/SNS/...)</li>
-     *   <li>everything else (JSON 1.x, REST-JSON) → keep the historical JSON shape</li>
+     *   <li>JSON 1.x: JSON with HTTP 400; REST-JSON: JSON with HTTP 403</li>
      * </ul>
      */
     // Package-private for unit testing.
@@ -939,15 +939,32 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
     }
 
     static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType, String resourceArn) {
+        return accessDeniedResponse(action, credentialScope, requestMediaType, resourceArn, WireProtocol.REST);
+    }
+
+    private static Response accessDeniedForRequest(String action, String credentialScope, ContainerRequestContext ctx) {
+        return accessDeniedForRequest(action, credentialScope, ctx, null);
+    }
+
+    private static Response accessDeniedForRequest(String action, String credentialScope,
+                                                 ContainerRequestContext ctx, String resourceArn) {
+        WireProtocol protocol = ctx.getProperty(AwsProtocolClaimFilter.CLAIM_PROPERTY) instanceof ProtocolClaim claim
+                ? claim.protocol() : WireProtocol.REST;
+        return accessDeniedResponse(action, credentialScope, ctx.getMediaType(), resourceArn, protocol);
+    }
+
+    static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType,
+                                         String resourceArn, WireProtocol protocol) {
         String message = "User is not authorized to perform: " + action;
         if ("s3".equals(credentialScope)) {
             String resourcePath = formatS3ResourcePath(resourceArn);
             return s3XmlAccessDenied(message, resourcePath);
         }
-        if (isFormEncoded(requestMediaType)) {
+        if (protocol == WireProtocol.AWS_QUERY || isFormEncoded(requestMediaType)) {
             return queryXmlAccessDenied(message);
         }
-        return jsonAccessDenied(message);
+        int status = protocol == WireProtocol.AWS_JSON_1_0 || protocol == WireProtocol.AWS_JSON_1_1 ? 400 : 403;
+        return jsonAccessDenied(message, status);
     }
 
     private static String formatS3ResourcePath(String resourceArn) {
@@ -1104,8 +1121,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         return Response.status(403).type(MediaType.APPLICATION_JSON).entity(body).build();
     }
 
-    private static Response jsonAccessDenied(String message) {
+    private static Response jsonAccessDenied(String message, int status) {
         String body = "{\"__type\":\"AccessDeniedException\",\"message\":\"" + message + "\"}";
-        return Response.status(403).type(MediaType.APPLICATION_JSON).entity(body).build();
+        return Response.status(status).type(MediaType.APPLICATION_JSON).entity(body).build();
     }
 }
