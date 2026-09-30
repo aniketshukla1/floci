@@ -1531,6 +1531,40 @@ class LambdaServiceTest {
     }
 
     @Test
+    void updateFunctionConfigurationRejectsInvalidMemoryBeforeMutation() {
+        LambdaFunction original = service.createFunction(REGION, baseRequest("invalid-memory-update"));
+        String revisionId = original.getRevisionId();
+
+        for (Object invalid : List.of("abc", 127, 32769, 256.5)) {
+            AwsException error = assertThrows(AwsException.class,
+                    () -> service.updateFunctionConfiguration(REGION, "invalid-memory-update",
+                            Map.of("Description", "half-applied", "MemorySize", invalid)));
+            assertEquals("InvalidParameterValueException", error.getErrorCode());
+            LambdaFunction stored = service.getFunction(REGION, "invalid-memory-update");
+            assertNull(stored.getDescription());
+            assertEquals(256, stored.getMemorySize());
+            assertEquals(revisionId, stored.getRevisionId());
+        }
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsInvalidTimeoutBeforeMutation() {
+        LambdaFunction original = service.createFunction(REGION, baseRequest("invalid-timeout-update"));
+        String revisionId = original.getRevisionId();
+
+        for (Object invalid : List.of("abc", 0, 901, 1.5)) {
+            AwsException error = assertThrows(AwsException.class,
+                    () -> service.updateFunctionConfiguration(REGION, "invalid-timeout-update",
+                            Map.of("Description", "half-applied", "Timeout", invalid)));
+            assertEquals("InvalidParameterValueException", error.getErrorCode());
+            LambdaFunction stored = service.getFunction(REGION, "invalid-timeout-update");
+            assertNull(stored.getDescription());
+            assertEquals(10, stored.getTimeout());
+            assertEquals(revisionId, stored.getRevisionId());
+        }
+    }
+
+    @Test
     void createFunction_bareStringLayers_isRejectedAsSerializationError() {
         // Catches: a non-list Layers value being treated as absent instead of rejected
         Map<String, Object> request = baseRequest("bare-layers-fn");

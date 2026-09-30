@@ -800,6 +800,10 @@ public class LambdaService implements ResourceProvider {
         if (request.containsKey("Handler")) {
             validateHandler((String) request.get("Handler"));
         }
+        int memorySize = request.containsKey("MemorySize")
+                ? validatedConfigurationInteger(request.get("MemorySize"), "MemorySize", 128, 32768) : 0;
+        int timeout = request.containsKey("Timeout")
+                ? validatedConfigurationInteger(request.get("Timeout"), "Timeout", 1, 900) : 0;
 
         Map<String, Object> requestedVpcConfig = fn.getVpcConfig();
         if (requestedVpcConfigUpdate != null) {
@@ -820,7 +824,7 @@ public class LambdaService implements ResourceProvider {
             fn.setHandler((String) request.get("Handler"));
         }
         if (request.containsKey("MemorySize")) {
-            fn.setMemorySize(((Number) request.get("MemorySize")).intValue());
+            fn.setMemorySize(memorySize);
         }
         if (request.containsKey("Role")) {
             fn.setRole((String) request.get("Role"));
@@ -829,7 +833,7 @@ public class LambdaService implements ResourceProvider {
             fn.setRuntime((String) request.get("Runtime"));
         }
         if (request.containsKey("Timeout")) {
-            fn.setTimeout(((Number) request.get("Timeout")).intValue());
+            fn.setTimeout(timeout);
         }
         if (request.containsKey("Environment")) {
             if (environment != null && environment.containsKey("Variables")) {
@@ -926,6 +930,15 @@ public class LambdaService implements ResourceProvider {
         functionStore.save(region, fn);
         LOG.infov("Updated configuration for function: {0}", functionName);
         return fn;
+    }
+
+    private static int validatedConfigurationInteger(Object value, String field, int minimum, int maximum) {
+        if (!(value instanceof Byte || value instanceof Short || value instanceof Integer || value instanceof Long)
+                || ((Number) value).longValue() < minimum || ((Number) value).longValue() > maximum) {
+            throw new AwsException("InvalidParameterValueException",
+                    field + " must be an integer between " + minimum + " and " + maximum, 400);
+        }
+        return ((Number) value).intValue();
     }
 
     /**

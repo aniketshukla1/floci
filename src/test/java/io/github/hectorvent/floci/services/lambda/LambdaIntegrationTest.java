@@ -214,6 +214,40 @@ class LambdaIntegrationTest {
 
     @Test
     @Order(12)
+    void invalidMemoryUpdateDoesNotChangeConfiguration() {
+        given()
+            .contentType("application/json")
+            .body("""
+                {"FunctionName":"invalid-memory-update","Runtime":"nodejs20.x",
+                 "Role":"arn:aws:iam::000000000000:role/lambda-role","Handler":"index.handler"}
+                """)
+        .when()
+            .post(BASE_PATH + "/functions")
+        .then()
+            .statusCode(201);
+
+        given()
+            .contentType("application/json")
+            .body("""
+                {"Description":"half-applied","MemorySize":"abc"}
+                """)
+        .when()
+            .put(BASE_PATH + "/functions/invalid-memory-update/configuration")
+        .then()
+            .statusCode(400)
+            .body("__type", containsString("InvalidParameterValueException"));
+
+        given()
+        .when()
+            .get(BASE_PATH + "/functions/invalid-memory-update/configuration")
+        .then()
+            .statusCode(200)
+            .body("Description", anyOf(nullValue(), equalTo("")))
+            .body("MemorySize", equalTo(128));
+    }
+
+    @Test
+    @Order(12)
     void deleteFunction() {
         given()
         .when()
