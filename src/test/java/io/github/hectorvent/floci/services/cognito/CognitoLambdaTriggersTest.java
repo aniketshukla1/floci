@@ -307,8 +307,7 @@ class CognitoLambdaTriggersTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void postAuthenticationLambdaErrorDoesNotBlockAuth() {
+    void postAuthenticationLambdaErrorBlocksAuth() {
         UserPool pool = createPoolWithLambdaConfig(Map.of("PostAuthentication", "arn:aws:lambda:::post"));
         seedUser(pool, "alice", "Perm1234!");
         UserPoolClient client = createClient(pool);
@@ -316,12 +315,10 @@ class CognitoLambdaTriggersTest {
         when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::post"), any(byte[].class), any()))
                 .thenReturn(lambdaError("Unhandled"));
 
-        Map<String, Object> result = service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
-                Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!"));
-
-        Map<String, Object> auth = (Map<String, Object>) result.get("AuthenticationResult");
-        assertNotNull(auth, "Auth should still succeed when PostAuthentication errors");
-        assertNotNull(auth.get("AccessToken"));
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                        Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!")));
+        assertEquals("UserLambdaValidationException", error.getErrorCode());
     }
 
     // =========================================================================
@@ -490,6 +487,36 @@ class CognitoLambdaTriggersTest {
     // =========================================================================
     // PreTokenGeneration
     // =========================================================================
+
+    @Test
+    void preTokenGenerationLambdaErrorBlocksTokenIssuance() {
+        UserPool pool = createPoolWithLambdaConfig(Map.of("PreTokenGeneration", "arn:aws:lambda:::pre-token"));
+        seedUser(pool, "alice", "Perm1234!");
+        UserPoolClient client = createClient(pool);
+
+        when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::pre-token"), any(byte[].class), any()))
+                .thenReturn(lambdaError("Unhandled"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                        Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!")));
+        assertEquals("UserLambdaValidationException", error.getErrorCode());
+    }
+
+    @Test
+    void preTokenGenerationMalformedResponseBlocksTokenIssuance() {
+        UserPool pool = createPoolWithLambdaConfig(Map.of("PreTokenGeneration", "arn:aws:lambda:::pre-token"));
+        seedUser(pool, "alice", "Perm1234!");
+        UserPoolClient client = createClient(pool);
+
+        when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::pre-token"), any(byte[].class), any()))
+                .thenReturn(rawPayload("not-json"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                        Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!")));
+        assertEquals("InvalidLambdaResponseException", error.getErrorCode());
+    }
 
     @Test
     void newPasswordMfaSetupPreservesPreTokenGenerationSource() throws Exception {
