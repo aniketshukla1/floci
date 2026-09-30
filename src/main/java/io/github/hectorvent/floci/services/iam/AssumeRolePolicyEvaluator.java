@@ -262,36 +262,12 @@ public class AssumeRolePolicyEvaluator {
         if (!values.isTextual()) {
             return false;
         }
-        if ("StringEquals".equals(operator)) {
-            return values.asText().equals(actual);
-        }
-        return globMatchesCaseSensitive(values.asText(), actual);
-    }
-
-    private boolean globMatchesCaseSensitive(String pattern, String value) {
-        int patternIndex = 0;
-        int valueIndex = 0;
-        int starIndex = -1;
-        int starValueIndex = -1;
-        while (valueIndex < value.length()) {
-            if (patternIndex < pattern.length()
-                    && (pattern.charAt(patternIndex) == '?' || pattern.charAt(patternIndex) == value.charAt(valueIndex))) {
-                patternIndex++;
-                valueIndex++;
-            } else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
-                starIndex = patternIndex++;
-                starValueIndex = valueIndex;
-            } else if (starIndex >= 0) {
-                patternIndex = starIndex + 1;
-                valueIndex = ++starValueIndex;
-            } else {
-                return false;
-            }
-        }
-        while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
-            patternIndex++;
-        }
-        return patternIndex == pattern.length();
+        return switch (operator) {
+            case "StringEquals" -> values.asText().equals(actual);
+            case "StringLike" -> IamPolicyEvaluator.caseSensitiveGlobMatches(values.asText(), actual);
+            case "ArnEquals", "ArnLike" -> IamPolicyEvaluator.matchesArnCondition(values.asText(), actual);
+            default -> false;
+        };
     }
 
     private boolean matchesServicePrincipal(JsonNode principalNode, String servicePrincipal) {

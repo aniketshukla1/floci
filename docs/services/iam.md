@@ -640,7 +640,8 @@ account key carries no identity policies of its own.
 - `ArnEquals`, `ArnLike`, `ArnNotEquals`, `ArnNotLike`: case-sensitive glob matching
   of each of the six ARN components independently. Wildcards cannot cross the first five
   colon separators; colons within the resource component are retained. `ArnEquals` and
-  `ArnLike` behave identically, as do their negated forms.
+  `ArnLike` behave identically, as do their negated forms. Service-principal trust policies
+  use the same component-by-component ARN matching for `aws:SourceArn`.
 - `NumericEquals`, `NumericNotEquals`, `NumericLessThan`, `NumericGreaterThan` (and Equals variants)
 - `DateEquals`, `DateNotEquals`, `DateLessThan`, `DateGreaterThan` (and Equals variants)
 - `Bool`, `IpAddress`, `NotIpAddress`, `Null`

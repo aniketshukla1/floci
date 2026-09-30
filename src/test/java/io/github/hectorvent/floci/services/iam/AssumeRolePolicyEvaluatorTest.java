@@ -276,6 +276,17 @@ class AssumeRolePolicyEvaluatorTest {
     }
 
     @Test
+    void serviceSourceArnWildcardCannotCrossArnComponents() {
+        String doc = """
+            {"Statement":{"Effect":"Allow","Principal":{"Service":"appsync.amazonaws.com"},
+              "Action":"sts:AssumeRole",
+              "Condition":{"ArnLike":{"aws:SourceArn":"arn:aws:lambda:us-east-1:*:worker"}}}}
+            """;
+        assertFalse(evaluator.allowsService(doc, "appsync.amazonaws.com",
+                "arn:aws:lambda:us-east-1:111122223333:function:worker", "111122223333"));
+    }
+
+    @Test
     void deniesBlankOrMalformedDocument() {
         assertFalse(evaluator.allows(null, CALLER_ARN, CALLER_ACCOUNT));
         assertFalse(evaluator.allows("", CALLER_ARN, CALLER_ACCOUNT));

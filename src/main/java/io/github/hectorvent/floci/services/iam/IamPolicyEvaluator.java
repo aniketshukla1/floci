@@ -1053,11 +1053,11 @@ public class IamPolicyEvaluator {
         return globMatchesHelper(pattern.toLowerCase(), value.toLowerCase(), 0, 0);
     }
 
-    private static boolean caseSensitiveGlobMatches(String pattern, String value) {
+    public static boolean caseSensitiveGlobMatches(String pattern, String value) {
         return pattern != null && value != null && globMatchesHelper(pattern, value, 0, 0);
     }
 
-    private static boolean matchesArnCondition(String pattern, String value) {
+    public static boolean matchesArnCondition(String pattern, String value) {
         if (pattern == null || value == null) {
             return false;
         }
