@@ -1364,7 +1364,8 @@ final class CognitoAuthFlowHandler {
                 return TriggerResult.error(TriggerErrorKind.USER_VALIDATION, errorMessage);
             }
             if (result.getPayload() == null || result.getPayload().length == 0) {
-                return TriggerResult.success(Map.of());
+                return TriggerResult.error(TriggerErrorKind.INVALID_RESPONSE,
+                        triggerKey + " trigger returned an empty response");
             }
             Map<String, Object> parsed;
             try {

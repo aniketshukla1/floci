@@ -518,6 +518,23 @@ class CognitoLambdaTriggersTest {
         assertEquals("InvalidLambdaResponseException", error.getErrorCode());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void preTokenGenerationEmptyResponseBlocksTokenIssuance(boolean nullPayload) {
+        UserPool pool = createPoolWithLambdaConfig(Map.of("PreTokenGeneration", "arn:aws:lambda:::pre-token"));
+        seedUser(pool, "alice", "Perm1234!");
+        UserPoolClient client = createClient(pool);
+
+        byte[] payload = nullPayload ? null : new byte[0];
+        when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::pre-token"), any(byte[].class), any()))
+                .thenReturn(new InvokeResult(200, null, payload, null, "req-id"));
+
+        AwsException error = assertThrows(AwsException.class,
+                () -> service.initiateAuth(client.getClientId(), "USER_PASSWORD_AUTH",
+                        Map.of("USERNAME", "alice", "PASSWORD", "Perm1234!")));
+        assertEquals("InvalidLambdaResponseException", error.getErrorCode());
+    }
+
     @Test
     void newPasswordMfaSetupPreservesPreTokenGenerationSource() throws Exception {
         MutableClock clock = new MutableClock();
