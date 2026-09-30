@@ -1082,13 +1082,13 @@ public class IamPolicyEvaluator {
         int starValueIndex = -1;
 
         while (valueIndex < value.length()) {
-            if (patternIndex < pattern.length()
+            if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+                starIndex = patternIndex++;
+                starValueIndex = valueIndex;
+            } else if (patternIndex < pattern.length()
                     && (pattern.charAt(patternIndex) == '?' || pattern.charAt(patternIndex) == value.charAt(valueIndex))) {
                 patternIndex++;
                 valueIndex++;
-            } else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
-                starIndex = patternIndex++;
-                starValueIndex = valueIndex;
             } else if (starIndex >= 0) {
                 patternIndex = starIndex + 1;
                 valueIndex = ++starValueIndex;

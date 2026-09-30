@@ -54,6 +54,28 @@ class IamPolicyEvaluatorTest {
         });
     }
 
+    @Test
+    void wildcardMatchesLiteralAsteriskInValue() {
+        assertTrue(IamPolicyEvaluator.caseSensitiveGlobMatches("a*", "a*b"));
+        assertTrue(IamPolicyEvaluator.globMatches("A*", "a*b"));
+    }
+
+    @Test
+    void resourceDenyMatchesS3KeyContainingLiteralAsterisk() {
+        String policy = """
+                {"Version":"2012-10-17","Statement":[
+                  {"Effect":"Allow","Action":"s3:GetObject","Resource":"*"},
+                  {"Effect":"Deny","Action":"s3:GetObject",
+                   "Resource":"arn:aws:s3:::bucket/private/*"}
+                ]}""";
+        CallerContext caller = CallerContext.of(List.of(policy));
+
+        assertEquals(Decision.DENY,
+                evaluator.evaluate(caller, null, "s3:GetObject", "arn:aws:s3:::bucket/private/*x", null));
+        assertEquals(Decision.ALLOW,
+                evaluator.evaluate(caller, null, "s3:GetObject", "arn:aws:s3:::bucket/public/*x", null));
+    }
+
     private static CallerContext adminWithScps(List<List<String>> scpLevels) {
         return CallerContext.of(List.of(ALLOW_ALL)).withScpLevels(scpLevels);
     }
