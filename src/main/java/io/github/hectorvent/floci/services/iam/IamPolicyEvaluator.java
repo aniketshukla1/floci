@@ -806,7 +806,7 @@ public class IamPolicyEvaluator {
             return false;
         }
         for (String pattern : patterns) {
-            if (globMatchesHelper(pattern, value, 0, 0)) {
+            if (globMatchesHelper(pattern, value)) {
                 return true;
             }
         }
@@ -1050,11 +1050,11 @@ public class IamPolicyEvaluator {
         if (pattern == null || value == null) {
             return false;
         }
-        return globMatchesHelper(pattern.toLowerCase(), value.toLowerCase(), 0, 0);
+        return globMatchesHelper(pattern.toLowerCase(), value.toLowerCase());
     }
 
     public static boolean caseSensitiveGlobMatches(String pattern, String value) {
-        return pattern != null && value != null && globMatchesHelper(pattern, value, 0, 0);
+        return pattern != null && value != null && globMatchesHelper(pattern, value);
     }
 
     public static boolean matchesArnCondition(String pattern, String value) {
@@ -1075,33 +1075,31 @@ public class IamPolicyEvaluator {
         return true;
     }
 
-    private static boolean globMatchesHelper(String pat, String val, int pi, int vi) {
-        while (pi < pat.length() && vi < val.length()) {
-            char p = pat.charAt(pi);
-            if (p == '*') {
-                while (pi < pat.length() && pat.charAt(pi) == '*') {
-                    pi++;
-                }
-                if (pi == pat.length()) {
-                    return true;
-                }
-                for (int i = vi; i <= val.length(); i++) {
-                    if (globMatchesHelper(pat, val, pi, i)) {
-                        return true;
-                    }
-                }
-                return false;
-            } else if (p == '?' || p == val.charAt(vi)) {
-                pi++;
-                vi++;
+    private static boolean globMatchesHelper(String pattern, String value) {
+        int patternIndex = 0;
+        int valueIndex = 0;
+        int starIndex = -1;
+        int starValueIndex = -1;
+
+        while (valueIndex < value.length()) {
+            if (patternIndex < pattern.length()
+                    && (pattern.charAt(patternIndex) == '?' || pattern.charAt(patternIndex) == value.charAt(valueIndex))) {
+                patternIndex++;
+                valueIndex++;
+            } else if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+                starIndex = patternIndex++;
+                starValueIndex = valueIndex;
+            } else if (starIndex >= 0) {
+                patternIndex = starIndex + 1;
+                valueIndex = ++starValueIndex;
             } else {
                 return false;
             }
         }
-        while (pi < pat.length() && pat.charAt(pi) == '*') {
-            pi++;
+        while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '*') {
+            patternIndex++;
         }
-        return pi == pat.length() && vi == val.length();
+        return patternIndex == pattern.length();
     }
 
     // -----------------------------------------------------------------------

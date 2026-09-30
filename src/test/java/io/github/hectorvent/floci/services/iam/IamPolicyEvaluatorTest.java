@@ -7,10 +7,14 @@ import io.github.hectorvent.floci.services.iam.IamPolicyEvaluator.ResourcePolicy
 import io.github.hectorvent.floci.services.iam.model.CallerContext;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
@@ -37,6 +41,18 @@ class IamPolicyEvaluatorTest {
     private static final String MALFORMED = "{\"Version\":\"2012-10-17\",\"Statement\":[";
 
     private final IamPolicyEvaluator evaluator = new IamPolicyEvaluator(new ObjectMapper());
+
+    @Test
+    void globMatchingWithRepeatedWildcardsDoesNotBacktrackExponentially() {
+        String pattern = "*a".repeat(10) + "*b";
+        String value = "a".repeat(40);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+            assertFalse(IamPolicyEvaluator.caseSensitiveGlobMatches(pattern, value));
+            assertFalse(IamPolicyEvaluator.globMatches(pattern, value));
+            assertTrue(IamPolicyEvaluator.caseSensitiveGlobMatches("*a?*b", "zzacccb"));
+        });
+    }
 
     private static CallerContext adminWithScps(List<List<String>> scpLevels) {
         return CallerContext.of(List.of(ALLOW_ALL)).withScpLevels(scpLevels);
