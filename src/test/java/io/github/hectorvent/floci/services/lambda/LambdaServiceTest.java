@@ -1535,7 +1535,7 @@ class LambdaServiceTest {
         LambdaFunction original = service.createFunction(REGION, baseRequest("invalid-memory-update"));
         String revisionId = original.getRevisionId();
 
-        for (Object invalid : List.of("abc", 127, 32769, 256.5)) {
+        for (Object invalid : List.of("abc", 127, 10241, 32769, 256.5)) {
             AwsException error = assertThrows(AwsException.class,
                     () -> service.updateFunctionConfiguration(REGION, "invalid-memory-update",
                             Map.of("Description", "half-applied", "MemorySize", invalid)));
@@ -1543,6 +1543,38 @@ class LambdaServiceTest {
             LambdaFunction stored = service.getFunction(REGION, "invalid-memory-update");
             assertNull(stored.getDescription());
             assertEquals(256, stored.getMemorySize());
+            assertEquals(revisionId, stored.getRevisionId());
+        }
+    }
+
+    @Test
+    void updateFunctionConfigurationAcceptsMaximumMemorySize() {
+        service.createFunction(REGION, baseRequest("maximum-memory-update"));
+
+        LambdaFunction updated = service.updateFunctionConfiguration(REGION, "maximum-memory-update",
+                Map.of("MemorySize", 10240));
+
+        assertEquals(10240, updated.getMemorySize());
+    }
+
+    @Test
+    void updateFunctionConfigurationRejectsNonStringArnsBeforeMutation() {
+        LambdaFunction original = service.createFunction(REGION, baseRequest("invalid-arn-update"));
+        String revisionId = original.getRevisionId();
+
+        for (Map<String, Object> invalid : List.of(
+                Map.<String, Object>of("KMSKeyArn", 123),
+                Map.<String, Object>of("DeadLetterConfig", Map.of("TargetArn", 123)))) {
+            Map<String, Object> request = new HashMap<>(invalid);
+            request.put("Description", "half-applied");
+            AwsException error = assertThrows(AwsException.class,
+                    () -> service.updateFunctionConfiguration(REGION, "invalid-arn-update", request));
+
+            assertEquals("InvalidParameterValueException", error.getErrorCode());
+            LambdaFunction stored = service.getFunction(REGION, "invalid-arn-update");
+            assertNull(stored.getDescription());
+            assertNull(stored.getKmsKeyArn());
+            assertNull(stored.getDeadLetterTargetArn());
             assertEquals(revisionId, stored.getRevisionId());
         }
     }

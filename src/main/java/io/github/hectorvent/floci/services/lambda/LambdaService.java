@@ -787,7 +787,10 @@ public class LambdaService implements ResourceProvider {
         if (request.containsKey("Runtime")) {
             validateEnum(request.get("Runtime"), "runtime", RUNTIME_VALUES);
         }
-        validatePattern(request.get("KMSKeyArn"), "kmsKeyArn", KMS_KEY_ARN_PATTERN);
+        String kmsKeyArn = validatedOptionalString(request.get("KMSKeyArn"), "KMSKeyArn");
+        String deadLetterTargetArn = deadLetterConfig == null ? null
+                : validatedOptionalString(deadLetterConfig.get("TargetArn"), "DeadLetterConfig.TargetArn");
+        validatePattern(kmsKeyArn, "kmsKeyArn", KMS_KEY_ARN_PATTERN);
         if (request.containsKey("SnapStart")) {
             validateSnapStart(snapStart);
         }
@@ -801,7 +804,7 @@ public class LambdaService implements ResourceProvider {
             validateHandler((String) request.get("Handler"));
         }
         int memorySize = request.containsKey("MemorySize")
-                ? validatedConfigurationInteger(request.get("MemorySize"), "MemorySize", 128, 32768) : 0;
+                ? validatedConfigurationInteger(request.get("MemorySize"), "MemorySize", 128, 10240) : 0;
         int timeout = request.containsKey("Timeout")
                 ? validatedConfigurationInteger(request.get("Timeout"), "Timeout", 1, 900) : 0;
 
@@ -871,7 +874,7 @@ public class LambdaService implements ResourceProvider {
 
         if (request.containsKey("DeadLetterConfig")) {
             if (deadLetterConfig != null) {
-                fn.setDeadLetterTargetArn((String) deadLetterConfig.get("TargetArn"));
+                fn.setDeadLetterTargetArn(deadLetterTargetArn);
             }
         }
 
@@ -880,7 +883,7 @@ public class LambdaService implements ResourceProvider {
         }
 
         if (request.containsKey("KMSKeyArn")) {
-            fn.setKmsKeyArn((String) request.get("KMSKeyArn"));
+            fn.setKmsKeyArn(kmsKeyArn);
         }
 
         if (request.containsKey("VpcConfig")) {
@@ -939,6 +942,13 @@ public class LambdaService implements ResourceProvider {
                     field + " must be an integer between " + minimum + " and " + maximum, 400);
         }
         return ((Number) value).intValue();
+    }
+
+    private static String validatedOptionalString(Object value, String field) {
+        if (value != null && !(value instanceof String)) {
+            throw new AwsException("InvalidParameterValueException", field + " must be a string", 400);
+        }
+        return (String) value;
     }
 
     /**
