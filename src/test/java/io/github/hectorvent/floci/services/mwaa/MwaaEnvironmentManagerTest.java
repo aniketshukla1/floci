@@ -578,12 +578,20 @@ class MwaaEnvironmentManagerTest {
         }
 
         @Test
-        void allowsEveryMwaaCliCommandFamily() {
-            for (List<String> arguments : List.of(
-                    List.of("cheat-sheet"), List.of("version"), List.of("connections", "add"),
-                    List.of("dags", "list"), List.of("db", "clean"), List.of("providers", "notifications"),
-                    List.of("roles", "create"), List.of("tasks", "run"), List.of("variables", "set"))) {
-                assertTrue(MwaaEnvironmentManager.isSupportedCliCommand(arguments), arguments.toString());
+        void allowsEverySupportedMwaaCliCommand() {
+            for (String command : List.of(
+                    "cheat-sheet", "version", "connections add", "connections delete",
+                    "dags backfill", "dags delete", "dags list", "dags list-import-errors",
+                    "dags list-jobs", "dags list-runs", "dags next-execution", "dags pause",
+                    "dags report", "dags reserialize", "dags show", "dags state", "dags test",
+                    "dags trigger", "dags unpause", "db clean", "providers behaviours",
+                    "providers get", "providers hooks", "providers links", "providers list",
+                    "providers notifications", "providers secrets", "providers triggerer",
+                    "providers widgets", "roles add-perms", "roles create", "roles del-perms",
+                    "roles list", "tasks clear", "tasks failed-deps", "tasks list", "tasks render",
+                    "tasks run", "tasks state", "tasks states-for-dag-run", "tasks test",
+                    "variables delete", "variables get", "variables list", "variables set")) {
+                assertTrue(MwaaEnvironmentManager.isSupportedCliCommand(List.of(command.split(" "))), command);
             }
         }
 
