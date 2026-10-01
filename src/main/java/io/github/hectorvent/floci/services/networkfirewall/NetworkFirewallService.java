@@ -117,7 +117,9 @@ public class NetworkFirewallService {
                 response.remove("Rules");
             }
         }
-        ruleGroups.put(resourceArn(existing), replacement);
+        if (!request.path("DryRun").asBoolean(false)) {
+            ruleGroups.put(resourceArn(existing), replacement);
+        }
         return replacement.deepCopy();
     }
 
@@ -150,7 +152,9 @@ public class NetworkFirewallService {
         requireObject(request, "FirewallPolicy");
         ObjectNode replacement = replacementOf(existing, request, "FirewallPolicy", "FirewallPolicyResponse",
                 FIREWALL_POLICY_UPDATE_FIELDS);
-        firewallPolicies.put(resourceArn(existing), replacement);
+        if (!request.path("DryRun").asBoolean(false)) {
+            firewallPolicies.put(resourceArn(existing), replacement);
+        }
         return replacement.deepCopy();
     }
 
@@ -510,6 +514,7 @@ public class NetworkFirewallService {
         ObjectNode responseInfo = copyObject(request);
         JsonNode body = responseInfo.remove(requestBodyField);
         responseInfo.remove("UpdateToken");
+        responseInfo.remove("DryRun");
         responseInfo.put(arnField, resourceArn);
         responseInfo.put(idField, deterministicHex(resourceArn, 32));
         responseInfo.put(nameField, name);
@@ -521,7 +526,9 @@ public class NetworkFirewallService {
         }
         stored.set(responseField, responseInfo);
         stored.put("UpdateToken", UUID.randomUUID().toString());
-        store.put(resourceArn, stored);
+        if (!request.path("DryRun").asBoolean(false)) {
+            store.put(resourceArn, stored);
+        }
         return stored.deepCopy();
     }
 
