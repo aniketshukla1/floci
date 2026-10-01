@@ -2,6 +2,7 @@ package io.github.hectorvent.floci.services.apigateway;
 
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,9 @@ import static org.hamcrest.Matchers.notNullValue;
  */
 @QuarkusTest
 class ApiGatewayIntegrationFieldsRoundTripTest {
+
+    @Inject
+    ApiGatewayService service;
 
     private String apiId;
     private String resourceId;
@@ -137,6 +141,23 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
                 .body("methodIntegration.cacheNamespace", equalTo(resourceId))
                 .body("methodIntegration.cacheKeyParameters", empty())
                 .body("methodIntegration.responseTransferMode", equalTo("BUFFERED"));
+    }
+
+    @Test
+    void olderIntegrationWithNullDefaultsStillReadsBackAwsValues() {
+        given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
+                .when().put(integrationPath()).then().statusCode(201);
+        service.getIntegration("us-east-1", apiId, resourceId, "POST").setTimeoutInMillis(null);
+        service.getIntegration("us-east-1", apiId, resourceId, "POST").setCacheNamespace(null);
+
+        given().when().get(integrationPath())
+                .then().statusCode(200)
+                .body("timeoutInMillis", equalTo(29000))
+                .body("cacheNamespace", equalTo(resourceId));
+        given().when().get("/restapis/" + apiId + "/resources/" + resourceId + "/methods/POST")
+                .then().statusCode(200)
+                .body("methodIntegration.timeoutInMillis", equalTo(29000))
+                .body("methodIntegration.cacheNamespace", equalTo(resourceId));
     }
 
     @Test

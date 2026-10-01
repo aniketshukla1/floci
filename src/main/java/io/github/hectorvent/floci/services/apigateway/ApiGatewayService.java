@@ -592,7 +592,6 @@ public class ApiGatewayService implements ResourceProvider {
         integration.setCredentials((String) request.get("credentials"));
         integration.setCacheNamespace(request.get("cacheNamespace") != null
                 ? (String) request.get("cacheNamespace") : resourceId);
-        integration.setResponseTransferMode((String) request.get("responseTransferMode"));
         if (request.get("connectionType") != null) {
             integration.setConnectionType((String) request.get("connectionType"));
         }
