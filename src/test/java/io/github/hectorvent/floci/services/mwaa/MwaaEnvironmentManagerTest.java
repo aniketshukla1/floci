@@ -558,10 +558,33 @@ class MwaaEnvironmentManagerTest {
         void shellSyntaxInACliCommandReachesAirflowAsPlainArguments() throws Exception {
             List<List<String>> commands = ContainerExecStubs.completeEveryExec(dockerClient, AIRFLOW_ID, 0, "", "");
 
-            manager.runAirflowCli(AIRFLOW_ID, "dags list; touch /tmp/pwned $(id) `id` | cat > /tmp/out");
+            manager.runAirflowCli(AIRFLOW_ID, "dags list ; touch /tmp/pwned $(id) `id` | cat > /tmp/out");
 
-            assertEquals(List.of(List.of("airflow", "dags", "list;", "touch", "/tmp/pwned", "$(id)", "`id`",
+            assertEquals(List.of(List.of("airflow", "dags", "list", ";", "touch", "/tmp/pwned", "$(id)", "`id`",
                     "|", "cat", ">", "/tmp/out")), commands);
+        }
+
+        @Test
+        void unsupportedCommandsNeverReachTheAirflowContainer() throws Exception {
+            List<List<String>> commands = ContainerExecStubs.completeEveryExec(dockerClient, AIRFLOW_ID, 0, "", "");
+
+            for (String command : List.of("users list", "users create", "db shell", "config get-value",
+                    "webserver", "scheduler", "celery worker", "dags unknown", "dags", "")) {
+                ContainerExec.Result result = manager.runAirflowCli(AIRFLOW_ID, command);
+                assertEquals(1, result.exitCode(), command);
+                assertTrue(result.stderr().contains("not supported"), command);
+            }
+            assertEquals(List.of(), commands);
+        }
+
+        @Test
+        void allowsEveryMwaaCliCommandFamily() {
+            for (List<String> arguments : List.of(
+                    List.of("cheat-sheet"), List.of("version"), List.of("connections", "add"),
+                    List.of("dags", "list"), List.of("db", "clean"), List.of("providers", "notifications"),
+                    List.of("roles", "create"), List.of("tasks", "run"), List.of("variables", "set"))) {
+                assertTrue(MwaaEnvironmentManager.isSupportedCliCommand(arguments), arguments.toString());
+            }
         }
 
         @Test
