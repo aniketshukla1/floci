@@ -592,7 +592,7 @@ public class ApiGatewayService implements ResourceProvider {
         integration.setCredentials((String) request.get("credentials"));
         integration.setCacheNamespace(request.get("cacheNamespace") != null
                 ? (String) request.get("cacheNamespace") : resourceId);
-        integration.setResponseTransferMode(transferMode((String) request.get("responseTransferMode")));
+        integration.setResponseTransferMode(transferMode(request.get("responseTransferMode")));
         if (request.get("connectionType") != null) {
             integration.setConnectionType((String) request.get("connectionType"));
         }
@@ -2751,12 +2751,12 @@ public class ApiGatewayService implements ResourceProvider {
         throw new AwsException("BadRequestException", "Invalid timeout value: " + value, 400);
     }
 
-    private String transferMode(String value) {
+    private String transferMode(Object value) {
         if (value == null) {
             return "BUFFERED";
         }
         if ("BUFFERED".equals(value) || "STREAM".equals(value)) {
-            return value;
+            return (String) value;
         }
         throw new AwsException("BadRequestException", "Invalid response transfer mode: " + value, 400);
     }

@@ -170,6 +170,22 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
     }
 
     @Test
+    void nonStringTransferModeIsRejectedWithBadRequest() {
+        given().contentType(ContentType.JSON)
+                .body("{\"type\":\"HTTP_PROXY\",\"responseTransferMode\":42}")
+                .when().put(integrationPath()).then().statusCode(400);
+
+        String importedSpec = """
+                {"openapi":"3.0.1","info":{"title":"invalid-mode","version":"1"},
+                 "paths":{"/stream":{"get":{"x-amazon-apigateway-integration":{
+                   "type":"http_proxy","httpMethod":"GET","uri":"http://example.invalid/stream",
+                   "responseTransferMode":42}}}}}
+                """;
+        given().contentType(ContentType.JSON).queryParam("mode", "import")
+                .body(importedSpec).when().post("/restapis").then().statusCode(400);
+    }
+
+    @Test
     void openApiImportPreservesExplicitTransferMode() {
         String importedApi = given().contentType(ContentType.JSON).queryParam("mode", "import")
                 .body("""
