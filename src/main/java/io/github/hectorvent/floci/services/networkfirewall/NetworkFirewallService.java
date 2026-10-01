@@ -117,7 +117,9 @@ public class NetworkFirewallService {
                 response.remove("Rules");
             }
         }
-        if (!request.path("DryRun").asBoolean(false)) {
+        if (request.path("DryRun").asBoolean(false)) {
+            replacement.put("UpdateToken", existing.path("UpdateToken").asText());
+        } else {
             ruleGroups.put(resourceArn(existing), replacement);
         }
         return replacement.deepCopy();
@@ -152,7 +154,9 @@ public class NetworkFirewallService {
         requireObject(request, "FirewallPolicy");
         ObjectNode replacement = replacementOf(existing, request, "FirewallPolicy", "FirewallPolicyResponse",
                 FIREWALL_POLICY_UPDATE_FIELDS);
-        if (!request.path("DryRun").asBoolean(false)) {
+        if (request.path("DryRun").asBoolean(false)) {
+            replacement.put("UpdateToken", existing.path("UpdateToken").asText());
+        } else {
             firewallPolicies.put(resourceArn(existing), replacement);
         }
         return replacement.deepCopy();

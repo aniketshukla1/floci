@@ -517,7 +517,8 @@ class NetworkFirewallIntegrationTest {
         String update = "{\"RuleGroupArn\":\"" + arn + "\",\"UpdateToken\":\"" + token + "\","
                 + "\"RuleGroup\":{\"RulesSource\":{\"RulesString\":\"drop ip any any\"}},\"DryRun\":true}";
         call("UpdateRuleGroup", update).statusCode(200)
-            .body("RuleGroup.RulesSource.RulesString", equalTo("drop ip any any"));
+            .body("RuleGroup.RulesSource.RulesString", equalTo("drop ip any any"))
+            .body("UpdateToken", equalTo(token));
         call("DescribeRuleGroup", "{\"RuleGroupArn\":\"" + arn + "\"}").statusCode(200)
             .body("RuleGroup.RulesSource.RulesString", equalTo("pass ip any any"))
             .body("UpdateToken", equalTo(token));
@@ -546,7 +547,8 @@ class NetworkFirewallIntegrationTest {
                 + "\"FirewallPolicy\":{\"StatelessDefaultActions\":[\"aws:drop\"],"
                 + "\"StatelessFragmentDefaultActions\":[\"aws:drop\"]},\"DryRun\":true}";
         call("UpdateFirewallPolicy", update).statusCode(200)
-            .body("FirewallPolicy.StatelessDefaultActions[0]", equalTo("aws:drop"));
+            .body("FirewallPolicy.StatelessDefaultActions[0]", equalTo("aws:drop"))
+            .body("UpdateToken", equalTo(token));
         call("DescribeFirewallPolicy", "{\"FirewallPolicyArn\":\"" + arn + "\"}").statusCode(200)
             .body("FirewallPolicy.StatelessDefaultActions[0]", equalTo("aws:pass"))
             .body("UpdateToken", equalTo(token));
