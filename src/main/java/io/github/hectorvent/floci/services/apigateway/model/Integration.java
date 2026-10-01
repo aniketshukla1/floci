@@ -24,6 +24,7 @@ public class Integration {
     private String credentials;       // IAM role ARN assumed for AWS integrations
     private String cacheNamespace;
     private List<String> cacheKeyParameters = new ArrayList<>();
+    private String responseTransferMode = "BUFFERED";
     private TlsConfig tlsConfig;
     private Map<String, String> requestParameters = new HashMap<>(); // integration.request.* → method.request.*
     private Map<String, String> requestTemplates = new HashMap<>();
@@ -104,6 +105,14 @@ public class Integration {
 
     public void setCacheKeyParameters(List<String> cacheKeyParameters) {
         this.cacheKeyParameters = cacheKeyParameters != null ? cacheKeyParameters : new ArrayList<>();
+    }
+
+    public String getResponseTransferMode() {
+        return responseTransferMode != null ? responseTransferMode : "BUFFERED";
+    }
+
+    public void setResponseTransferMode(String responseTransferMode) {
+        this.responseTransferMode = responseTransferMode;
     }
 
     public TlsConfig getTlsConfig() {

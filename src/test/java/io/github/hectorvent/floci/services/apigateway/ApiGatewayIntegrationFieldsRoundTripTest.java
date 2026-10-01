@@ -144,6 +144,53 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
     }
 
     @Test
+    void explicitTransferModeRoundTripsAndCanBePatched() {
+        given().contentType(ContentType.JSON)
+                .body("{\"type\":\"HTTP_PROXY\",\"httpMethod\":\"GET\","
+                        + "\"uri\":\"http://example.invalid/widget\",\"responseTransferMode\":\"STREAM\"}")
+                .when().put(integrationPath())
+                .then().statusCode(201).body("responseTransferMode", equalTo("STREAM"));
+        given().when().get(integrationPath())
+                .then().statusCode(200).body("responseTransferMode", equalTo("STREAM"));
+        given().when().get("/restapis/" + apiId + "/resources/" + resourceId + "/methods/POST")
+                .then().statusCode(200)
+                .body("methodIntegration.responseTransferMode", equalTo("STREAM"));
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/responseTransferMode\",\"value\":\"BUFFERED\"}]}")
+                .when().patch(integrationPath())
+                .then().statusCode(200).body("responseTransferMode", equalTo("BUFFERED"));
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/responseTransferMode\",\"value\":\"UNKNOWN\"}]}")
+                .when().patch(integrationPath()).then().statusCode(400);
+        given().when().get(integrationPath())
+                .then().statusCode(200).body("responseTransferMode", equalTo("BUFFERED"));
+    }
+
+    @Test
+    void openApiImportPreservesExplicitTransferMode() {
+        String importedApi = given().contentType(ContentType.JSON).queryParam("mode", "import")
+                .body("""
+                        {"openapi":"3.0.1","info":{"title":"streaming-import","version":"1"},
+                         "paths":{"/stream":{"get":{"x-amazon-apigateway-integration":{
+                           "type":"http_proxy","httpMethod":"GET","uri":"http://example.invalid/stream",
+                           "responseTransferMode":"STREAM"}}}}}
+                        """)
+                .when().post("/restapis").then().statusCode(201).extract().path("id");
+        try {
+            String importedResource = given().when().get("/restapis/" + importedApi + "/resources")
+                    .then().statusCode(200).extract().path("item.find { it.path == '/stream' }.id");
+            given().when().get("/restapis/" + importedApi + "/resources/" + importedResource
+                            + "/methods/GET/integration")
+                    .then().statusCode(200).body("responseTransferMode", equalTo("STREAM"));
+        } finally {
+            given().when().delete("/restapis/" + importedApi).then().statusCode(202);
+        }
+    }
+
+    @Test
     void olderIntegrationWithNullDefaultsStillReadsBackAwsValues() {
         given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
                 .when().put(integrationPath()).then().statusCode(201);

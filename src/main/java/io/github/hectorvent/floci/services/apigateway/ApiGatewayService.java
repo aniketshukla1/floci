@@ -592,6 +592,7 @@ public class ApiGatewayService implements ResourceProvider {
         integration.setCredentials((String) request.get("credentials"));
         integration.setCacheNamespace(request.get("cacheNamespace") != null
                 ? (String) request.get("cacheNamespace") : resourceId);
+        integration.setResponseTransferMode(transferMode((String) request.get("responseTransferMode")));
         if (request.get("connectionType") != null) {
             integration.setConnectionType((String) request.get("connectionType"));
         }
@@ -2700,6 +2701,9 @@ public class ApiGatewayService implements ResourceProvider {
                     case "/timeoutInMillis":
                         parseIntegrationTimeout(value);
                         break;
+                    case "/responseTransferMode":
+                        transferMode(value);
+                        break;
                     default:
                         throw new AwsException("BadRequestException", "Unsupported path: " + path, 400);
                 }
@@ -2723,6 +2727,9 @@ public class ApiGatewayService implements ResourceProvider {
                     case "/timeoutInMillis":
                         integration.setTimeoutInMillis(parseIntegrationTimeout(value));
                         break;
+                    case "/responseTransferMode":
+                        integration.setResponseTransferMode(transferMode(value));
+                        break;
                     default:
                         throw new IllegalStateException("Unreachable: validated above");
                 }
@@ -2742,6 +2749,16 @@ public class ApiGatewayService implements ResourceProvider {
             // Return the same AWS-style error for non-numeric and out-of-range values.
         }
         throw new AwsException("BadRequestException", "Invalid timeout value: " + value, 400);
+    }
+
+    private String transferMode(String value) {
+        if (value == null) {
+            return "BUFFERED";
+        }
+        if ("BUFFERED".equals(value) || "STREAM".equals(value)) {
+            return value;
+        }
+        throw new AwsException("BadRequestException", "Invalid response transfer mode: " + value, 400);
     }
 
     // ──────────────────────────── Tags ────────────────────────────
@@ -3651,7 +3668,8 @@ public class ApiGatewayService implements ResourceProvider {
         integrationRequest.put("uri", integrationExt.get("uri"));
         integrationRequest.put("passthroughBehavior", integrationExt.get("passthroughBehavior"));
         for (String field : List.of("contentHandling", "timeoutInMillis", "connectionType",
-                "connectionId", "credentials", "cacheNamespace", "cacheKeyParameters", "tlsConfig")) {
+                "connectionId", "credentials", "cacheNamespace", "cacheKeyParameters", "tlsConfig",
+                "responseTransferMode")) {
             if (integrationExt.get(field) != null) {
                 integrationRequest.put(field, integrationExt.get(field));
             }

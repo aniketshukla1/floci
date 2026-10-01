@@ -2224,7 +2224,7 @@ public class ApiGatewayController {
         node.put("cacheNamespace", i.getCacheNamespace() != null ? i.getCacheNamespace() : resourceId);
         ArrayNode keys = node.putArray("cacheKeyParameters");
         i.getCacheKeyParameters().forEach(keys::add);
-        node.put("responseTransferMode", "BUFFERED");
+        node.put("responseTransferMode", i.getResponseTransferMode());
         if (i.getTlsConfig() != null) {
             node.putObject("tlsConfig")
                     .put("insecureSkipVerification", i.getTlsConfig().isInsecureSkipVerification());
