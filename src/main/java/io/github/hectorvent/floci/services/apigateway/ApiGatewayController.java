@@ -2221,10 +2221,9 @@ public class ApiGatewayController {
         if (i.getConnectionId() != null) node.put("connectionId", i.getConnectionId());
         if (i.getCredentials() != null) node.put("credentials", i.getCredentials());
         if (i.getCacheNamespace() != null) node.put("cacheNamespace", i.getCacheNamespace());
-        if (!i.getCacheKeyParameters().isEmpty()) {
-            ArrayNode keys = node.putArray("cacheKeyParameters");
-            i.getCacheKeyParameters().forEach(keys::add);
-        }
+        ArrayNode keys = node.putArray("cacheKeyParameters");
+        i.getCacheKeyParameters().forEach(keys::add);
+        node.put("responseTransferMode", i.getResponseTransferMode());
         if (i.getTlsConfig() != null) {
             node.putObject("tlsConfig")
                     .put("insecureSkipVerification", i.getTlsConfig().isInsecureSkipVerification());

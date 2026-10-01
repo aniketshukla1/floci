@@ -10,6 +10,7 @@ import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.notNullValue;
 
 /**
@@ -111,6 +112,55 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
                 .body("credentials", equalTo("arn:aws:iam::000000000000:role/ApiGatewayRole"))
                 .body("contentHandling", equalTo("CONVERT_TO_BINARY"))
                 .body("timeoutInMillis", equalTo(12000));
+    }
+
+    @Test
+    void integrationDefaultsAreReturnedByPutGetAndMethodReadBack() {
+        given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
+                .when().put(integrationPath())
+                .then().statusCode(201)
+                .body("timeoutInMillis", equalTo(29000))
+                .body("cacheNamespace", equalTo(resourceId))
+                .body("cacheKeyParameters", empty())
+                .body("responseTransferMode", equalTo("BUFFERED"));
+
+        given().when().get(integrationPath())
+                .then().statusCode(200)
+                .body("timeoutInMillis", equalTo(29000))
+                .body("cacheNamespace", equalTo(resourceId))
+                .body("cacheKeyParameters", empty())
+                .body("responseTransferMode", equalTo("BUFFERED"));
+
+        given().when().get("/restapis/" + apiId + "/resources/" + resourceId + "/methods/POST")
+                .then().statusCode(200)
+                .body("methodIntegration.timeoutInMillis", equalTo(29000))
+                .body("methodIntegration.cacheNamespace", equalTo(resourceId))
+                .body("methodIntegration.cacheKeyParameters", empty())
+                .body("methodIntegration.responseTransferMode", equalTo("BUFFERED"));
+    }
+
+    @Test
+    void updateIntegrationCanPatchTimeoutAndRejectsInvalidValuesWithoutMutation() {
+        given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
+                .when().put(integrationPath()).then().statusCode(201);
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/timeoutInMillis\",\"value\":\"30000\"}]}")
+                .when().patch(integrationPath())
+                .then().statusCode(200).body("timeoutInMillis", equalTo(30000));
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/passthroughBehavior\",\"value\":\"NEVER\"},"
+                        + "{\"op\":\"replace\",\"path\":\"/timeoutInMillis\",\"value\":\"49\"}]}")
+                .when().patch(integrationPath())
+                .then().statusCode(400);
+
+        given().when().get(integrationPath())
+                .then().statusCode(200)
+                .body("timeoutInMillis", equalTo(30000))
+                .body("passthroughBehavior", equalTo("WHEN_NO_MATCH"));
     }
 
     @Test

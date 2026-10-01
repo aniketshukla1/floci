@@ -590,7 +590,9 @@ public class ApiGatewayService implements ResourceProvider {
 
         integration.setContentHandling((String) request.get("contentHandling"));
         integration.setCredentials((String) request.get("credentials"));
-        integration.setCacheNamespace((String) request.get("cacheNamespace"));
+        integration.setCacheNamespace(request.get("cacheNamespace") != null
+                ? (String) request.get("cacheNamespace") : resourceId);
+        integration.setResponseTransferMode((String) request.get("responseTransferMode"));
         if (request.get("connectionType") != null) {
             integration.setConnectionType((String) request.get("connectionType"));
         }
@@ -2696,6 +2698,9 @@ public class ApiGatewayService implements ResourceProvider {
                     case "/uri":
                     case "/passthroughBehavior":
                         break;
+                    case "/timeoutInMillis":
+                        parseIntegrationTimeout(value);
+                        break;
                     default:
                         throw new AwsException("BadRequestException", "Unsupported path: " + path, 400);
                 }
@@ -2716,6 +2721,9 @@ public class ApiGatewayService implements ResourceProvider {
                     case "/passthroughBehavior":
                         integration.setPassthroughBehavior(value);
                         break;
+                    case "/timeoutInMillis":
+                        integration.setTimeoutInMillis(parseIntegrationTimeout(value));
+                        break;
                     default:
                         throw new IllegalStateException("Unreachable: validated above");
                 }
@@ -2723,6 +2731,18 @@ public class ApiGatewayService implements ResourceProvider {
         }
         resourceStore.put(resourceKey(region, apiId, resourceId), getResource(region, apiId, resourceId));
         return integration;
+    }
+
+    private int parseIntegrationTimeout(String value) {
+        try {
+            int timeout = Integer.parseInt(value);
+            if (timeout >= 50) {
+                return timeout;
+            }
+        } catch (NumberFormatException ignored) {
+            // Return the same AWS-style error for non-numeric and out-of-range values.
+        }
+        throw new AwsException("BadRequestException", "Invalid timeout value: " + value, 400);
     }
 
     // ──────────────────────────── Tags ────────────────────────────
