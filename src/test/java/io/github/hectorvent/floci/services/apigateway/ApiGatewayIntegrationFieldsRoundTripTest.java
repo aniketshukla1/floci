@@ -186,6 +186,68 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
     }
 
     @Test
+    void streamRequiresProxyTypeOnPutAndOpenApiImport() {
+        for (String type : new String[]{"MOCK", "HTTP", "AWS"}) {
+            given().contentType(ContentType.JSON)
+                    .body("{\"type\":\"" + type + "\",\"responseTransferMode\":\"STREAM\"}")
+                    .when().put(integrationPath())
+                    .then().statusCode(400).body("__type", equalTo("BadRequestException"));
+        }
+        given().when().get(integrationPath()).then().statusCode(404);
+
+        given().contentType(ContentType.JSON)
+                .body("{\"type\":\"AWS_PROXY\",\"responseTransferMode\":\"STREAM\"}")
+                .when().put(integrationPath())
+                .then().statusCode(201).body("responseTransferMode", equalTo("STREAM"));
+
+        String importedSpec = """
+                {"openapi":"3.0.1","info":{"title":"invalid-stream","version":"1"},
+                 "paths":{"/stream":{"get":{"x-amazon-apigateway-integration":{
+                   "type":"mock","responseTransferMode":"STREAM"}}}}}
+                """;
+        given().contentType(ContentType.JSON).queryParam("mode", "import")
+                .body(importedSpec).when().post("/restapis").then().statusCode(400);
+    }
+
+    @Test
+    void streamPatchValidatesFinalTypeWithoutMutatingOnFailure() {
+        given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
+                .when().put(integrationPath()).then().statusCode(201);
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/responseTransferMode\",\"value\":\"STREAM\"}]}")
+                .when().patch(integrationPath()).then().statusCode(400);
+        given().when().get(integrationPath())
+                .then().statusCode(200).body("type", equalTo("MOCK"))
+                .body("responseTransferMode", equalTo("BUFFERED"));
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/responseTransferMode\",\"value\":\"STREAM\"},"
+                        + "{\"op\":\"replace\",\"path\":\"/type\",\"value\":\"HTTP_PROXY\"}]}")
+                .when().patch(integrationPath()).then().statusCode(200)
+                .body("type", equalTo("HTTP_PROXY"))
+                .body("responseTransferMode", equalTo("STREAM"));
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/type\",\"value\":\"MOCK\"}]}")
+                .when().patch(integrationPath()).then().statusCode(400);
+        given().when().get(integrationPath())
+                .then().statusCode(200).body("type", equalTo("HTTP_PROXY"))
+                .body("responseTransferMode", equalTo("STREAM"));
+
+        given().contentType(ContentType.JSON)
+                .body("{\"patchOperations\":[{\"op\":\"replace\","
+                        + "\"path\":\"/responseTransferMode\",\"value\":\"BUFFERED\"},"
+                        + "{\"op\":\"replace\",\"path\":\"/type\",\"value\":\"MOCK\"}]}")
+                .when().patch(integrationPath()).then().statusCode(200)
+                .body("type", equalTo("MOCK"))
+                .body("responseTransferMode", equalTo("BUFFERED"));
+    }
+
+    @Test
     void openApiImportPreservesExplicitTransferMode() {
         String importedApi = given().contentType(ContentType.JSON).queryParam("mode", "import")
                 .body("""
@@ -225,6 +287,9 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
 
     @Test
     void updateIntegrationCanPatchTimeoutAndRejectsInvalidValuesWithoutMutation() {
+        given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\",\"timeoutInMillis\":49}")
+                .when().put(integrationPath())
+                .then().statusCode(400).body("message", equalTo("Invalid timeout value: 49"));
         given().contentType(ContentType.JSON).body("{\"type\":\"MOCK\"}")
                 .when().put(integrationPath()).then().statusCode(201);
 
@@ -239,7 +304,7 @@ class ApiGatewayIntegrationFieldsRoundTripTest {
                         + "\"path\":\"/passthroughBehavior\",\"value\":\"NEVER\"},"
                         + "{\"op\":\"replace\",\"path\":\"/timeoutInMillis\",\"value\":\"49\"}]}")
                 .when().patch(integrationPath())
-                .then().statusCode(400);
+                .then().statusCode(400).body("message", equalTo("Invalid timeout value: 49"));
 
         given().when().get(integrationPath())
                 .then().statusCode(200)
