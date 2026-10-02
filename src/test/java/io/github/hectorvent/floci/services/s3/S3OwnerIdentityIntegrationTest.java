@@ -55,6 +55,49 @@ class S3OwnerIdentityIntegrationTest {
                         + "</ID><DisplayName>floci</DisplayName></Owner>"));
     }
 
+    @Test
+    void anUploadCannotBeAttributedToAnotherAccountOrSurviveBucketDeletion() {
+        String bucket = "owner-identity-reused-bucket";
+        createBucket(ACCOUNT_ONE, bucket);
+        createBucket(ACCOUNT_TWO, bucket);
+
+        String firstUploadId = given().header("Authorization", authorization(ACCOUNT_ONE))
+        .when().post("/" + bucket + "/part.bin?uploads")
+        .then().statusCode(200)
+                .extract().xmlPath().getString("InitiateMultipartUploadResult.UploadId");
+
+        given().header("Authorization", authorization(ACCOUNT_TWO))
+        .when().get("/" + bucket + "/part.bin?uploadId=" + firstUploadId)
+        .then().statusCode(404)
+                .body(containsString("<Code>NoSuchUpload</Code>"));
+
+        given().header("Authorization", authorization(ACCOUNT_ONE))
+        .when().delete("/" + bucket)
+        .then().statusCode(204);
+
+        createBucket(ACCOUNT_ONE, bucket);
+        given().header("Authorization", authorization(ACCOUNT_ONE))
+        .when().get("/" + bucket + "/part.bin?uploadId=" + firstUploadId)
+        .then().statusCode(404)
+                .body(containsString("<Code>NoSuchUpload</Code>"));
+
+        given().header("Authorization", authorization(ACCOUNT_TWO))
+        .when().get("/" + bucket + "/part.bin?uploadId=" + firstUploadId)
+        .then().statusCode(404)
+                .body(containsString("<Code>NoSuchUpload</Code>"));
+
+        String secondUploadId = given().header("Authorization", authorization(ACCOUNT_TWO))
+        .when().post("/" + bucket + "/part.bin?uploads")
+        .then().statusCode(200)
+                .extract().xmlPath().getString("InitiateMultipartUploadResult.UploadId");
+
+        given().header("Authorization", authorization(ACCOUNT_TWO))
+        .when().get("/" + bucket + "/part.bin?uploadId=" + secondUploadId)
+        .then().statusCode(200)
+                .body(containsString("<Owner><ID>" + ACCOUNT_TWO
+                        + "</ID><DisplayName>floci</DisplayName></Owner>"));
+    }
+
     private static void createBucket(String account, String bucket) {
         given().header("Authorization", authorization(account))
         .when().put("/" + bucket)

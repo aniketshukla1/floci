@@ -393,6 +393,14 @@ public class S3Service implements Resettable, ResourceProvider {
                     "The bucket you tried to delete is not empty.", 409);
         }
 
+        // Outstanding uploads belong to this bucket incarnation. Do not let a later
+        // owner of the same name discover or complete them.
+        for (MultipartUpload upload : multipartUploads.values()) {
+            if (bucketName.equals(upload.getBucket()) && ownerId().equals(upload.getOwnerAccountId())) {
+                cleanupMultipart(upload.getUploadId());
+            }
+        }
+
         bucketStore.delete(bucketName);
         deleteAllAnnotationsForBucket(bucketName);
         if (inMemory) {
@@ -3333,6 +3341,7 @@ public class S3Service implements Resettable, ResourceProvider {
         SseCustomerKey customerKey = validateSseCustomerKey(sseCustomerAlgorithm, sseCustomerKey, sseCustomerKeyMd5);
         rejectConflictingServerSideEncryption(normalizedServerSideEncryption, customerKey);
         MultipartUpload upload = new MultipartUpload(bucket, key, contentType);
+        upload.setOwnerAccountId(getBucketOwnerAccountId(bucket));
         upload.setInitiatorAccountId(ownerId());
         if (metadata != null) {
             upload.getMetadata().putAll(metadata);
@@ -3386,11 +3395,7 @@ public class S3Service implements Resettable, ResourceProvider {
     /** Stores one part and returns it, with the ETag and the checksum the upload's algorithm gives it. */
     public Part storePart(String bucket, String key, String uploadId, int partNumber, byte[] data,
                           String sseCustomerAlgorithm, String sseCustomerKey, String sseCustomerKeyMd5) {
-        MultipartUpload upload = multipartUploads.get(uploadId);
-        if (upload == null || !upload.getBucket().equals(bucket) || !upload.getKey().equals(key)) {
-            throw new AwsException("NoSuchUpload",
-                    "The specified multipart upload does not exist.", 404);
-        }
+        MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
         if (partNumber < 1 || partNumber > 10000) {
             throw new AwsException("InvalidArgument",
                     "Part number must be between 1 and 10000.", 400);
@@ -3467,11 +3472,7 @@ public class S3Service implements Resettable, ResourceProvider {
     public S3Object completeMultipartUpload(String bucket, String key, String uploadId, List<Integer> partNumbers,
                                             Map<Integer, String> partETags, Map<Integer, S3Checksum> partChecksums,
                                             String checksumType, S3Checksum expectedChecksum) {
-        MultipartUpload upload = multipartUploads.get(uploadId);
-        if (upload == null || !upload.getBucket().equals(bucket) || !upload.getKey().equals(key)) {
-            throw new AwsException("NoSuchUpload",
-                    "The specified multipart upload does not exist.", 404);
-        }
+        MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
 
         ChecksumAlgorithm algorithm = upload.getChecksumAlgorithm() != null ? upload.getChecksumAlgorithm() : ChecksumAlgorithm.CRC64NVME;
         ChecksumType storedChecksumType = upload.getChecksumType() != null ? upload.getChecksumType() : ChecksumType.FULL_OBJECT;
@@ -3619,19 +3620,17 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     public void abortMultipartUpload(String bucket, String key, String uploadId) {
-        MultipartUpload upload = multipartUploads.get(uploadId);
-        if (upload == null || !upload.getBucket().equals(bucket) || !upload.getKey().equals(key)) {
-            throw new AwsException("NoSuchUpload",
-                    "The specified multipart upload does not exist.", 404);
-        }
+        MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
         cleanupMultipart(uploadId);
         LOG.infov("Aborted multipart upload: {0}/{1}, uploadId={2}", bucket, key, uploadId);
     }
 
     public List<MultipartUpload> listMultipartUploads(String bucket) {
         ensureBucketExists(bucket);
+        String ownerAccountId = getBucketOwnerAccountId(bucket);
         return multipartUploads.values().stream()
-                .filter(u -> u.getBucket().equals(bucket))
+                .filter(u -> u.getBucket().equals(bucket)
+                        && (u.getOwnerAccountId() == null || ownerAccountId.equals(u.getOwnerAccountId())))
                 .toList();
     }
 
@@ -3641,7 +3640,9 @@ public class S3Service implements Resettable, ResourceProvider {
 
     public MultipartUpload getMultipartUpload(String bucket, String key, String uploadId) {
         MultipartUpload upload = multipartUploads.get(uploadId);
-        if (upload == null || !upload.getBucket().equals(bucket) || !upload.getKey().equals(key)) {
+        if (upload == null || !upload.getBucket().equals(bucket) || !upload.getKey().equals(key)
+                || (upload.getOwnerAccountId() != null
+                        && !upload.getOwnerAccountId().equals(getBucketOwnerAccountId(bucket)))) {
             throw new AwsException("NoSuchUpload",
                     "The specified multipart upload does not exist.", 404);
         }

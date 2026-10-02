@@ -1709,7 +1709,8 @@ public class S3Controller {
                .elem("Size", part.getSize())
                .end("Part");
         }
-        String ownerAccountId = s3Service.getBucketOwnerAccountId(bucket);
+        String ownerAccountId = upload.getOwnerAccountId() != null
+                ? upload.getOwnerAccountId() : s3Service.getBucketOwnerAccountId(bucket);
         String initiatorAccountId = upload.getInitiatorAccountId() != null
                 ? upload.getInitiatorAccountId() : ownerAccountId;
         xml.start("Initiator")
