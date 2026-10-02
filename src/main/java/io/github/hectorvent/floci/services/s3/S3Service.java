@@ -411,6 +411,12 @@ public class S3Service implements Resettable, ResourceProvider {
         return bucketStore.scan(key -> true);
     }
 
+    public String getBucketOwnerAccountId(String bucketName) {
+        return resolveBucketEntry(bucketName)
+                .map(AccountAwareStorageBackend.OwnedEntry::account)
+                .orElseThrow(() -> new AwsException("NoSuchBucket", "The specified bucket does not exist.", 404));
+    }
+
     public void putBucketLogging(String bucketName, String loggingConfigurationXml) {
         Bucket bucket = bucketStore.get(bucketName)
                 .orElseThrow(() -> new AwsException("NoSuchBucket", "The specified bucket does not exist.", 404));
@@ -3327,6 +3333,7 @@ public class S3Service implements Resettable, ResourceProvider {
         SseCustomerKey customerKey = validateSseCustomerKey(sseCustomerAlgorithm, sseCustomerKey, sseCustomerKeyMd5);
         rejectConflictingServerSideEncryption(normalizedServerSideEncryption, customerKey);
         MultipartUpload upload = new MultipartUpload(bucket, key, contentType);
+        upload.setInitiatorAccountId(ownerId());
         if (metadata != null) {
             upload.getMetadata().putAll(metadata);
         }
