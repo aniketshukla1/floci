@@ -62,8 +62,7 @@ class CloudFormationChangeSetArnTest {
         assertThat(cloudFormation.describeStackResource(request -> request.stackName(secondStack)
                 .logicalResourceId("Queue")).stackResourceDetail().resourceStatusAsString())
                 .isEqualTo("CREATE_COMPLETE");
-        assertThat(cloudFormation.describeChangeSet(request -> request.changeSetName(secondArn))
-                .executionStatusAsString()).isEqualTo("EXECUTE_COMPLETE");
+        assertThat(awaitChangeSetExecuted(secondArn)).isEqualTo("EXECUTE_COMPLETE");
 
         cloudFormation.deleteChangeSet(request -> request.changeSetName(firstArn));
         assertThatThrownBy(() -> cloudFormation.describeChangeSet(request -> request.changeSetName(firstArn)))
@@ -98,5 +97,22 @@ class CloudFormationChangeSetArnTest {
             Thread.sleep(100);
         }
         throw new AssertionError(stackName + " did not reach CREATE_COMPLETE within 60 seconds");
+    }
+
+    private static String awaitChangeSetExecuted(String changeSetArn) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        String lastStatus = null;
+        while (System.nanoTime() < deadline) {
+            lastStatus = cloudFormation.describeChangeSet(request -> request.changeSetName(changeSetArn))
+                    .executionStatusAsString();
+            if ("EXECUTE_COMPLETE".equals(lastStatus)) {
+                return lastStatus;
+            }
+            if ("EXECUTE_FAILED".equals(lastStatus)) {
+                throw new AssertionError(changeSetArn + " reached EXECUTE_FAILED");
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError(changeSetArn + " did not execute within 60 seconds; last status: " + lastStatus);
     }
 }
