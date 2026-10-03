@@ -233,7 +233,7 @@ public class S3Controller {
                     .start("ListAllMyBucketsResult", AwsNamespaces.S3)
                     .start("Owner")
                     .elem("ID", regionResolver.getAccountId())
-                    .elem("DisplayName", "floci")
+                    .elem("DisplayName", S3Service.DEFAULT_OWNER_DISPLAY_NAME)
                     .end("Owner")
                     .start("Buckets");
             for (Bucket b : buckets) {
@@ -1715,11 +1715,11 @@ public class S3Controller {
                 ? upload.getInitiatorAccountId() : ownerAccountId;
         xml.start("Initiator")
            .elem("ID", initiatorAccountId)
-           .elem("DisplayName", "floci")
+           .elem("DisplayName", S3Service.DEFAULT_OWNER_DISPLAY_NAME)
            .end("Initiator")
            .start("Owner")
            .elem("ID", ownerAccountId)
-           .elem("DisplayName", "floci")
+           .elem("DisplayName", S3Service.DEFAULT_OWNER_DISPLAY_NAME)
            .end("Owner")
            .elem("StorageClass", upload.getStorageClass());
         xml.end("ListPartsResult");

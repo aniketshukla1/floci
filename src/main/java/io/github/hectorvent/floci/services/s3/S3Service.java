@@ -94,7 +94,7 @@ public class S3Service implements Resettable, ResourceProvider {
         }
         return "000000000000";
     }
-    private static final String DEFAULT_OWNER_DISPLAY_NAME = "floci";
+    static final String DEFAULT_OWNER_DISPLAY_NAME = "floci";
     private static final String AUTHENTICATED_USERS_GROUP_URI = "http://acs.amazonaws.com/groups/global/AuthenticatedUsers";
     private static final String LOG_DELIVERY_GROUP_URI = "http://acs.amazonaws.com/groups/s3/LogDelivery";
     private static final String LEGACY_ACCESS_KEY_ID = "test";
