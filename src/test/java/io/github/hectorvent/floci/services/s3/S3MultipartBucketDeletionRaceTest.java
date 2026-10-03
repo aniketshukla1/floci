@@ -3,6 +3,7 @@ package io.github.hectorvent.floci.services.s3;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.storage.InMemoryStorage;
 import io.github.hectorvent.floci.services.s3.model.MultipartUpload;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -14,6 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -105,6 +107,43 @@ class S3MultipartBucketDeletionRaceTest {
         assertFalse(deleter.isAlive());
         assertNull(failure.get());
         assertFalse(service.bucketExists("race-bucket"));
+    }
+
+    @Test
+    void multipartInitiationsInTheSameBucketCanProceedConcurrently() throws Exception {
+        BlockingService service = new BlockingService(tempDir.resolve("parallel"), true);
+        service.createBucket("race-bucket", "us-east-1");
+        service.blockOwnerLookup = true;
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread first = new Thread(() -> {
+            try {
+                service.initiateMultipartUpload("race-bucket", "first", "application/octet-stream");
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "multipart-initiator");
+        first.start();
+        assertTrue(service.entered.await(5, TimeUnit.SECONDS));
+
+        AtomicReference<MultipartUpload> secondUpload = new AtomicReference<>();
+        Thread second = new Thread(() -> {
+            try {
+                secondUpload.set(service.initiateMultipartUpload("race-bucket", "second", "application/octet-stream"));
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "parallel-initiator");
+        second.start();
+        try {
+            second.join(5_000);
+            assertFalse(second.isAlive(), "a multipart initiation should not block another on the same bucket");
+            assertNotNull(secondUpload.get());
+        } finally {
+            service.release.countDown();
+        }
+        first.join(5_000);
+        assertFalse(first.isAlive());
+        assertNull(failure.get());
     }
 
     private static void awaitWaiting(Thread thread) throws InterruptedException {

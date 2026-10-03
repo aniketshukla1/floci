@@ -71,7 +71,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -136,11 +138,23 @@ public class S3Service implements Resettable, ResourceProvider {
     private static final int DISK_FILE_LOCK_STRIPES = 256;
     private final ReentrantLock[] diskFileLocks = newLockStripes(DISK_FILE_LOCK_STRIPES);
     // Bucket deletion must not sweep an upload while a multipart operation is creating or using it.
-    // Fixed stripes avoid retaining a lock for every bucket name ever seen.
-    private final ReentrantLock[] multipartBucketLocks = newLockStripes(256);
+    // Read locks preserve parallel multipart writes; fair, fixed stripes avoid writer starvation
+    // and retaining a lock for every bucket name ever seen.
+    private final ReentrantReadWriteLock[] multipartBucketLocks = newMultipartBucketLocks(256);
 
-    private <T> T withMultipartBucketLock(String bucketName, Supplier<T> operation) {
-        ReentrantLock lock = multipartBucketLocks[Math.floorMod(bucketName.hashCode(), multipartBucketLocks.length)];
+    private static ReentrantReadWriteLock[] newMultipartBucketLocks(int count) {
+        ReentrantReadWriteLock[] locks = new ReentrantReadWriteLock[count];
+        for (int i = 0; i < count; i++) {
+            locks[i] = new ReentrantReadWriteLock(true);
+        }
+        return locks;
+    }
+
+    private ReentrantReadWriteLock multipartBucketLock(String bucketName) {
+        return multipartBucketLocks[Math.floorMod(bucketName.hashCode(), multipartBucketLocks.length)];
+    }
+
+    private static <T> T withLock(Lock lock, Supplier<T> operation) {
         lock.lock();
         try {
             return operation.get();
@@ -149,11 +163,23 @@ public class S3Service implements Resettable, ResourceProvider {
         }
     }
 
-    private void withMultipartBucketLock(String bucketName, Runnable operation) {
-        withMultipartBucketLock(bucketName, () -> {
+    private static void withLock(Lock lock, Runnable operation) {
+        withLock(lock, () -> {
             operation.run();
             return null;
         });
+    }
+
+    private <T> T withMultipartBucketReadLock(String bucketName, Supplier<T> operation) {
+        return withLock(multipartBucketLock(bucketName).readLock(), operation);
+    }
+
+    private void withMultipartBucketReadLock(String bucketName, Runnable operation) {
+        withLock(multipartBucketLock(bucketName).readLock(), operation);
+    }
+
+    private void withMultipartBucketWriteLock(String bucketName, Runnable operation) {
+        withLock(multipartBucketLock(bucketName).writeLock(), operation);
     }
 
     private static ReentrantLock[] newLockStripes(int count) {
@@ -393,7 +419,7 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     public void deleteBucket(String bucketName) {
-        withMultipartBucketLock(bucketName, () -> {
+        withMultipartBucketWriteLock(bucketName, () -> {
             ensureBucketExists(bucketName);
             Bucket bucket = bucketStore.get(bucketName)
                     .orElseThrow(() -> new AwsException("NoSuchBucket",
@@ -3356,7 +3382,7 @@ public class S3Service implements Resettable, ResourceProvider {
                                                    String sseCustomerAlgorithm, String sseCustomerKey, String sseCustomerKeyMd5,
                                                    String checksumAlgorithm, String checksumType,
                                                    Map<String, String> tagging) {
-        return withMultipartBucketLock(bucket, () -> {
+        return withMultipartBucketReadLock(bucket, () -> {
             ensureBucketExists(bucket);
             if (acl != null && !acl.isBlank()) {
                 cannedObjectAclXml(acl);
@@ -3420,7 +3446,7 @@ public class S3Service implements Resettable, ResourceProvider {
     /** Stores one part and returns it, with the ETag and the checksum the upload's algorithm gives it. */
     public Part storePart(String bucket, String key, String uploadId, int partNumber, byte[] data,
                           String sseCustomerAlgorithm, String sseCustomerKey, String sseCustomerKeyMd5) {
-        return withMultipartBucketLock(bucket, () -> {
+        return withMultipartBucketReadLock(bucket, () -> {
             MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
             if (partNumber < 1 || partNumber > 10000) {
                 throw new AwsException("InvalidArgument",
@@ -3499,7 +3525,7 @@ public class S3Service implements Resettable, ResourceProvider {
     public S3Object completeMultipartUpload(String bucket, String key, String uploadId, List<Integer> partNumbers,
                                             Map<Integer, String> partETags, Map<Integer, S3Checksum> partChecksums,
                                             String checksumType, S3Checksum expectedChecksum) {
-        return withMultipartBucketLock(bucket, () -> {
+        S3Object completed = withMultipartBucketReadLock(bucket, () -> {
             MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
 
             ChecksumAlgorithm algorithm = upload.getChecksumAlgorithm() != null ? upload.getChecksumAlgorithm() : ChecksumAlgorithm.CRC64NVME;
@@ -3575,7 +3601,6 @@ public class S3Service implements Resettable, ResourceProvider {
                 cleanupMultipart(uploadId);
                 LOG.infov("Completed multipart upload: {0}/{1}, uploadId={2}, parts={3}",
                         bucket, key, uploadId, partNumbers.size());
-                fireNotifications(bucket, key, "ObjectCreated:CompleteMultipartUpload", object);
                 return object;
             } catch (IOException e) {
                 throw new UncheckedIOException("Failed to read multipart parts", e);
@@ -3583,6 +3608,8 @@ public class S3Service implements Resettable, ResourceProvider {
                 throw new RuntimeException("MD5 algorithm not available", e);
             }
         });
+        fireNotifications(bucket, key, "ObjectCreated:CompleteMultipartUpload", completed);
+        return completed;
     }
 
     /**
@@ -3649,7 +3676,7 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     public void abortMultipartUpload(String bucket, String key, String uploadId) {
-        withMultipartBucketLock(bucket, () -> {
+        withMultipartBucketReadLock(bucket, () -> {
             getMultipartUpload(bucket, key, uploadId);
             cleanupMultipart(uploadId);
             LOG.infov("Aborted multipart upload: {0}/{1}, uploadId={2}", bucket, key, uploadId);
