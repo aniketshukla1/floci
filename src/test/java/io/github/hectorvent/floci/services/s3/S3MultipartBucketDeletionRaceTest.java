@@ -9,6 +9,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -146,6 +147,88 @@ class S3MultipartBucketDeletionRaceTest {
         assertNull(failure.get());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void abortWaitsForPartWriteOnTheSameUpload(boolean inMemory) throws Exception {
+        BlockingService service = new BlockingService(tempDir.resolve("abort"), inMemory);
+        service.createBucket("race-bucket", "us-east-1");
+        String uploadId = service.initiateMultipartUpload("race-bucket", "object", "application/octet-stream")
+                .getUploadId();
+        service.blockUploadLookup = true;
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread writer = new Thread(() -> {
+            try {
+                service.uploadPart("race-bucket", "object", uploadId, 1, new byte[]{1, 2, 3});
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "multipart-writer");
+        writer.start();
+        assertTrue(service.entered.await(5, TimeUnit.SECONDS));
+
+        Thread aborter = new Thread(() -> {
+            try {
+                service.abortMultipartUpload("race-bucket", "object", uploadId);
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "multipart-aborter");
+        aborter.start();
+        try {
+            awaitWaiting(aborter);
+        } finally {
+            service.release.countDown();
+        }
+        writer.join(5_000);
+        aborter.join(5_000);
+        assertFalse(writer.isAlive());
+        assertFalse(aborter.isAlive());
+        assertNull(failure.get());
+        AwsException missing = assertThrows(AwsException.class,
+                () -> service.getMultipartUpload("race-bucket", "object", uploadId));
+        assertEquals("NoSuchUpload", missing.getErrorCode());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void completionWaitsForPartWriteOnTheSameUpload(boolean inMemory) throws Exception {
+        BlockingService service = new BlockingService(tempDir.resolve("completion"), inMemory);
+        service.createBucket("race-bucket", "us-east-1");
+        String uploadId = service.initiateMultipartUpload("race-bucket", "object", "application/octet-stream")
+                .getUploadId();
+        service.blockUploadLookup = true;
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread writer = new Thread(() -> {
+            try {
+                service.uploadPart("race-bucket", "object", uploadId, 1, new byte[]{1, 2, 3});
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "multipart-writer");
+        writer.start();
+        assertTrue(service.entered.await(5, TimeUnit.SECONDS));
+
+        Thread completer = new Thread(() -> {
+            try {
+                service.completeMultipartUpload("race-bucket", "object", uploadId, List.of(1), null, null);
+            } catch (Throwable error) {
+                failure.set(error);
+            }
+        }, "multipart-completer");
+        completer.start();
+        try {
+            awaitWaiting(completer);
+        } finally {
+            service.release.countDown();
+        }
+        writer.join(5_000);
+        completer.join(5_000);
+        assertFalse(writer.isAlive());
+        assertFalse(completer.isAlive());
+        assertNull(failure.get());
+        assertNotNull(service.getObject("race-bucket", "object"));
+    }
+
     private static void awaitWaiting(Thread thread) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline && thread.getState() != Thread.State.WAITING) {
@@ -154,7 +237,7 @@ class S3MultipartBucketDeletionRaceTest {
             }
             Thread.sleep(10);
         }
-        assertEquals(Thread.State.WAITING, thread.getState(), "bucket deletion should wait for the multipart lock");
+        assertEquals(Thread.State.WAITING, thread.getState(), "operation should wait for the multipart lock");
     }
 
     private static final class BlockingService extends S3Service {

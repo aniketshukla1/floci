@@ -141,6 +141,9 @@ public class S3Service implements Resettable, ResourceProvider {
     // Read locks preserve parallel multipart writes; fair, fixed stripes avoid writer starvation
     // and retaining a lock for every bucket name ever seen.
     private final ReentrantReadWriteLock[] multipartBucketLocks = newMultipartBucketLocks(256);
+    // A second, finer-grained lock prevents part writes, completion and abort from racing on
+    // the same upload without serializing independent uploads in the bucket.
+    private final ReentrantLock[] multipartUploadLocks = newLockStripes(256);
 
     private static ReentrantReadWriteLock[] newMultipartBucketLocks(int count) {
         ReentrantReadWriteLock[] locks = new ReentrantReadWriteLock[count];
@@ -180,6 +183,18 @@ public class S3Service implements Resettable, ResourceProvider {
 
     private void withMultipartBucketWriteLock(String bucketName, Runnable operation) {
         withLock(multipartBucketLock(bucketName).writeLock(), operation);
+    }
+
+    private ReentrantLock multipartUploadLock(String uploadId) {
+        return multipartUploadLocks[Math.floorMod(uploadId.hashCode(), multipartUploadLocks.length)];
+    }
+
+    private <T> T withMultipartOperationLock(String bucketName, String uploadId, Supplier<T> operation) {
+        return withMultipartBucketReadLock(bucketName, () -> withLock(multipartUploadLock(uploadId), operation));
+    }
+
+    private void withMultipartOperationLock(String bucketName, String uploadId, Runnable operation) {
+        withMultipartBucketReadLock(bucketName, () -> withLock(multipartUploadLock(uploadId), operation));
     }
 
     private static ReentrantLock[] newLockStripes(int count) {
@@ -3446,7 +3461,7 @@ public class S3Service implements Resettable, ResourceProvider {
     /** Stores one part and returns it, with the ETag and the checksum the upload's algorithm gives it. */
     public Part storePart(String bucket, String key, String uploadId, int partNumber, byte[] data,
                           String sseCustomerAlgorithm, String sseCustomerKey, String sseCustomerKeyMd5) {
-        return withMultipartBucketReadLock(bucket, () -> {
+        return withMultipartOperationLock(bucket, uploadId, () -> {
             MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
             if (partNumber < 1 || partNumber > 10000) {
                 throw new AwsException("InvalidArgument",
@@ -3525,7 +3540,7 @@ public class S3Service implements Resettable, ResourceProvider {
     public S3Object completeMultipartUpload(String bucket, String key, String uploadId, List<Integer> partNumbers,
                                             Map<Integer, String> partETags, Map<Integer, S3Checksum> partChecksums,
                                             String checksumType, S3Checksum expectedChecksum) {
-        S3Object completed = withMultipartBucketReadLock(bucket, () -> {
+        S3Object completed = withMultipartOperationLock(bucket, uploadId, () -> {
             MultipartUpload upload = getMultipartUpload(bucket, key, uploadId);
 
             ChecksumAlgorithm algorithm = upload.getChecksumAlgorithm() != null ? upload.getChecksumAlgorithm() : ChecksumAlgorithm.CRC64NVME;
@@ -3676,7 +3691,7 @@ public class S3Service implements Resettable, ResourceProvider {
     }
 
     public void abortMultipartUpload(String bucket, String key, String uploadId) {
-        withMultipartBucketReadLock(bucket, () -> {
+        withMultipartOperationLock(bucket, uploadId, () -> {
             getMultipartUpload(bucket, key, uploadId);
             cleanupMultipart(uploadId);
             LOG.infov("Aborted multipart upload: {0}/{1}, uploadId={2}", bucket, key, uploadId);
