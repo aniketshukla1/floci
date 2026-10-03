@@ -823,7 +823,6 @@ public class CloudFormationService implements ResourceProvider {
                                               String accountId, boolean requireAvailable) {
         String canonicalStackName = getStackForChangeSet(stackNameOrArn, changeSetName, region,
                 accountId).getStackName();
-        String resolvedChangeSetName = resolveChangeSetName(changeSetName, region, accountId);
 
         ClaimedExecution[] claimed = new ClaimedExecution[1];
         StackMutationSnapshot[] snapshot = new StackMutationSnapshot[1];
@@ -832,12 +831,7 @@ public class CloudFormationService implements ResourceProvider {
                 throw new AwsException("ValidationError",
                         "Stack with id " + stackNameOrArn + " does not exist", 400);
             }
-            ChangeSet cs = existing.getChangeSets().get(resolvedChangeSetName);
-            if (cs == null || (changeSetName != null && changeSetName.startsWith("arn:")
-                    && !changeSetName.equals(cs.getChangeSetId()))) {
-                throw new AwsException("ChangeSetNotFoundException",
-                        "ChangeSet [" + changeSetName + "] does not exist", 400);
-            }
+            ChangeSet cs = getChangeSetOrThrow(existing, changeSetName, region, accountId);
             String executionStatus = cs.getExecutionStatus();
             boolean eligible = requireAvailable
                     ? "AVAILABLE".equals(executionStatus)

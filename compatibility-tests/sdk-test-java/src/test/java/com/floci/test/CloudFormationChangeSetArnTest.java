@@ -63,6 +63,10 @@ class CloudFormationChangeSetArnTest {
                 .logicalResourceId("Queue")).stackResourceDetail().resourceStatusAsString())
                 .isEqualTo("CREATE_COMPLETE");
         assertThat(awaitChangeSetExecuted(secondArn)).isEqualTo("EXECUTE_COMPLETE");
+        assertThat(cloudFormation.describeStacks(request -> request.stackName(firstStack)).stacks().get(0)
+                .stackStatusAsString()).isEqualTo("REVIEW_IN_PROGRESS");
+        assertThat(cloudFormation.describeChangeSet(request -> request.changeSetName(firstArn))
+                .executionStatusAsString()).isEqualTo("AVAILABLE");
 
         cloudFormation.deleteChangeSet(request -> request.changeSetName(firstArn));
         assertThatThrownBy(() -> cloudFormation.describeChangeSet(request -> request.changeSetName(firstArn)))

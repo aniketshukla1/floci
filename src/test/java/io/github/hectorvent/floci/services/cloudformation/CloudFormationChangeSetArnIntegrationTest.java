@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.cloudformation;
 
+import io.github.hectorvent.floci.core.common.XmlParser;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.response.Response;
@@ -13,6 +14,7 @@ import java.util.List;
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @QuarkusTest
 class CloudFormationChangeSetArnIntegrationTest {
@@ -66,6 +68,12 @@ class CloudFormationChangeSetArnIntegrationTest {
         .then().statusCode(200)
                 .body(containsString("<LogicalResourceId>Queue</LogicalResourceId>"))
                 .body(containsString("<ResourceStatus>CREATE_COMPLETE</ResourceStatus>"));
+        given().contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "DescribeStacks")
+                .formParam("StackName", firstStack)
+        .when().post("/")
+        .then().statusCode(200)
+                .body(containsString("<StackStatus>REVIEW_IN_PROGRESS</StackStatus>"));
         request("DeleteChangeSet", firstArn).then().statusCode(200);
 
         request("DescribeChangeSet", firstArn).then().statusCode(400)
@@ -115,7 +123,9 @@ class CloudFormationChangeSetArnIntegrationTest {
         .when().post("/")
         .then().statusCode(200)
         .extract().asString();
-        return xml.split("<Id>")[1].split("</Id>")[0];
+        String changeSetArn = XmlParser.extractFirst(xml, "Id", null);
+        assertNotNull(changeSetArn, xml);
+        return changeSetArn;
     }
 
     private static Response request(String action, String changeSetArn) {
