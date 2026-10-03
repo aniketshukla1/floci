@@ -12,6 +12,7 @@ import java.util.List;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @QuarkusTest
 class CloudFormationChangeSetArnIntegrationTest {
@@ -57,6 +58,14 @@ class CloudFormationChangeSetArnIntegrationTest {
                 .body(containsString("<Code>ValidationError</Code>"));
 
         request("ExecuteChangeSet", secondArn).then().statusCode(200);
+        assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(secondStack).status());
+        given().contentType("application/x-www-form-urlencoded")
+                .formParam("Action", "DescribeStackResources")
+                .formParam("StackName", secondStack)
+        .when().post("/")
+        .then().statusCode(200)
+                .body(containsString("<LogicalResourceId>Queue</LogicalResourceId>"))
+                .body(containsString("<ResourceStatus>CREATE_COMPLETE</ResourceStatus>"));
         request("DeleteChangeSet", firstArn).then().statusCode(200);
 
         request("DescribeChangeSet", firstArn).then().statusCode(400)
