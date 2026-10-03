@@ -160,6 +160,21 @@ public class ApiGatewayController {
         }
     }
 
+    @PATCH
+    @Path("/restapis/{apiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}")
+    public Response updateMethodResponse(@Context HttpHeaders headers,
+                                         @PathParam("apiId") String apiId,
+                                         @PathParam("resourceId") String resourceId,
+                                         @PathParam("httpMethod") String httpMethod,
+                                         @PathParam("statusCode") String statusCode,
+                                         String body) {
+        String region = regionResolver.resolveRegion(headers);
+        List<Map<String, String>> patchOperations = parsePatchOperations(body);
+        MethodResponse response = service.updateMethodResponse(
+                region, apiId, resourceId, httpMethod, statusCode, patchOperations);
+        return Response.ok(toMethodResponseNode(response).toString()).type(MediaType.APPLICATION_JSON).build();
+    }
+
     @DELETE
     @Path("/restapis/{apiId}/resources/{resourceId}/methods/{httpMethod}/responses/{statusCode}")
     public Response deleteMethodResponse(@Context HttpHeaders headers,
@@ -2206,6 +2221,10 @@ public class ApiGatewayController {
     private ObjectNode toMethodResponseNode(MethodResponse r) {
         ObjectNode node = objectMapper.createObjectNode();
         node.put("statusCode", r.statusCode());
+        if (r.responseParameters() != null && !r.responseParameters().isEmpty()) {
+            ObjectNode parameters = node.putObject("responseParameters");
+            r.responseParameters().forEach(parameters::put);
+        }
         return node;
     }
 

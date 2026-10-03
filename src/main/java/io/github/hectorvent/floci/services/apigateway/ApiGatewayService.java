@@ -564,6 +564,40 @@ public class ApiGatewayService implements ResourceProvider {
         return mr;
     }
 
+    public MethodResponse updateMethodResponse(String region, String apiId, String resourceId,
+                                               String httpMethod, String statusCode,
+                                               List<Map<String, String>> patchOperations) {
+        MethodResponse response = getMethodResponse(region, apiId, resourceId, httpMethod, statusCode);
+        Map<String, Boolean> parameters = new HashMap<>(
+                response.responseParameters() != null ? response.responseParameters() : Map.of());
+        if (patchOperations != null) {
+            for (Map<String, String> patch : patchOperations) {
+                String path = patch.get("path");
+                if (path == null || !path.startsWith("/responseParameters/method.response.header.")
+                        || path.length() == "/responseParameters/method.response.header.".length()) {
+                    throw new AwsException("BadRequestException", "Invalid patch operation", 400);
+                }
+                String name = path.substring("/responseParameters/".length());
+                String op = patch.get("op");
+                if ("remove".equals(op)) {
+                    parameters.remove(name);
+                } else if ("add".equals(op) || "replace".equals(op)) {
+                    String value = patch.get("value");
+                    if (!"true".equals(value) && !"false".equals(value)) {
+                        throw new AwsException("BadRequestException", "Invalid patch operation", 400);
+                    }
+                    parameters.put(name, Boolean.parseBoolean(value));
+                } else {
+                    throw new AwsException("BadRequestException", "Invalid patch operation", 400);
+                }
+            }
+        }
+        MethodResponse updated = new MethodResponse(statusCode, parameters);
+        getMethod(region, apiId, resourceId, httpMethod).getMethodResponses().put(statusCode, updated);
+        resourceStore.put(resourceKey(region, apiId, resourceId), getResource(region, apiId, resourceId));
+        return updated;
+    }
+
     public void deleteMethodResponse(String region, String apiId, String resourceId,
                                      String httpMethod, String statusCode) {
         MethodConfig method = getMethod(region, apiId, resourceId, httpMethod);
