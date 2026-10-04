@@ -15,6 +15,50 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class CloudFormationUpdateStackTagsIntegrationTest {
 
     @Test
+    void tagsOnlyUpdatesWorkForDirectRequestsAndChangeSets() {
+        String stackName = "cfn-tags-only-" + UUID.randomUUID().toString().substring(0, 8);
+        String template = """
+                {"Resources":{"Queue":{"Type":"AWS::SQS::Queue","Properties":{"QueueName":"%s"}}}}
+                """.formatted(stackName);
+        try {
+            withTags(request("CreateStack", stackName).formParam("TemplateBody", template),
+                    "before", "original")
+                    .when().post("/").then().statusCode(200);
+            assertEquals("CREATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+
+            withTags(request("UpdateStack", stackName).formParam("TemplateBody", template),
+                    "after", "new")
+                    .when().post("/").then().statusCode(200);
+            assertEquals("UPDATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+            assertEquals(Map.of("Env", "after", "Team", "new"), tags(stackName));
+
+            withTags(request("CreateChangeSet", stackName)
+                    .formParam("TemplateBody", template)
+                    .formParam("ChangeSetName", "tags-only")
+                    .formParam("ChangeSetType", "UPDATE"), "final", "latest")
+                    .when().post("/").then().statusCode(200);
+            assertEquals(Map.of("Env", "after", "Team", "new"), tags(stackName));
+            executeChangeSet(stackName, "tags-only");
+            assertEquals(Map.of("Env", "final", "Team", "latest"), tags(stackName));
+
+            String failingTemplate = """
+                    {"Resources":{
+                      "Queue":{"Type":"AWS::SQS::Queue","Properties":{"QueueName":"%s"}},
+                      "ZFail":{"Type":"AWS::CloudFormation::Stack","Properties":{}}
+                    }}
+                    """.formatted(stackName);
+            withTags(request("UpdateStack", stackName).formParam("TemplateBody", failingTemplate),
+                    "failed", "attempt")
+                    .when().post("/").then().statusCode(200);
+            assertEquals("UPDATE_ROLLBACK_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+            assertEquals(Map.of("Env", "final", "Team", "latest"), tags(stackName));
+        } finally {
+            request("DeleteStack", stackName).when().post("/").then().statusCode(200);
+            CfnStackWaits.awaitStackDeleted(stackName);
+        }
+    }
+
+    @Test
     void suppliedTagsReplaceStackTagsOnlyWhenTheUpdateExecutes() {
         String stackName = "cfn-update-tags-" + UUID.randomUUID().toString().substring(0, 8);
         String template = """
