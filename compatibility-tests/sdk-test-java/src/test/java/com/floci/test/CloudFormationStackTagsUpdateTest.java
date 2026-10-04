@@ -36,10 +36,9 @@ class CloudFormationStackTagsUpdateTest {
         if (cloudFormation != null) {
             try {
                 cloudFormation.deleteStack(request -> request.stackName(stackName));
-            } catch (CloudFormationException e) {
-                System.err.println("CloudFormation stack tags cleanup failed: " + e.getMessage());
+            } finally {
+                cloudFormation.close();
             }
-            cloudFormation.close();
         }
     }
 
