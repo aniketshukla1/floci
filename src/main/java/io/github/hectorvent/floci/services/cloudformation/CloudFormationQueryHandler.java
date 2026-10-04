@@ -219,7 +219,7 @@ public class CloudFormationQueryHandler {
         String templateBody = params.getFirst("TemplateBody");
         String templateUrl = params.getFirst("TemplateURL");
         boolean usePreviousTemplate = Boolean.parseBoolean(params.getFirst("UsePreviousTemplate"));
-        if (usePreviousTemplate && "CREATE".equalsIgnoreCase(changeSetType)) {
+        if (usePreviousTemplate && (changeSetType == null || "CREATE".equalsIgnoreCase(changeSetType))) {
             throw new AwsException("ValidationError",
                     "UsePreviousTemplate cannot be specified for a CREATE change set", 400);
         }
