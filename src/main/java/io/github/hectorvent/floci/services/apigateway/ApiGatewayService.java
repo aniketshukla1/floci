@@ -541,7 +541,7 @@ public class ApiGatewayService implements ResourceProvider {
         resourceStore.put(resourceKey(region, apiId, resourceId), resource);
     }
 
-    public MethodResponse putMethodResponse(String region, String apiId, String resourceId,
+    public synchronized MethodResponse putMethodResponse(String region, String apiId, String resourceId,
                                             String httpMethod, String statusCode,
                                             Map<String, Object> request) {
         MethodConfig method = getMethod(region, apiId, resourceId, httpMethod);
@@ -564,7 +564,7 @@ public class ApiGatewayService implements ResourceProvider {
         return mr;
     }
 
-    public MethodResponse updateMethodResponse(String region, String apiId, String resourceId,
+    public synchronized MethodResponse updateMethodResponse(String region, String apiId, String resourceId,
                                                String httpMethod, String statusCode,
                                                List<Map<String, String>> patchOperations) {
         MethodResponse response = getMethodResponse(region, apiId, resourceId, httpMethod, statusCode);
@@ -577,7 +577,7 @@ public class ApiGatewayService implements ResourceProvider {
                         || path.length() == "/responseParameters/method.response.header.".length()) {
                     throw new AwsException("BadRequestException", "Invalid patch operation", 400);
                 }
-                String name = path.substring("/responseParameters/".length());
+                String name = unescapeJsonPointer(path.substring("/responseParameters/".length()));
                 String op = patch.get("op");
                 if ("remove".equals(op)) {
                     parameters.remove(name);
@@ -598,7 +598,7 @@ public class ApiGatewayService implements ResourceProvider {
         return updated;
     }
 
-    public void deleteMethodResponse(String region, String apiId, String resourceId,
+    public synchronized void deleteMethodResponse(String region, String apiId, String resourceId,
                                      String httpMethod, String statusCode) {
         MethodConfig method = getMethod(region, apiId, resourceId, httpMethod);
         if (method.getMethodResponses().remove(statusCode) == null) {

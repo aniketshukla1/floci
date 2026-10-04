@@ -3,6 +3,8 @@ package io.github.hectorvent.floci.services.apigateway;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
 
+import java.util.stream.IntStream;
+
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
@@ -47,6 +49,27 @@ class ApiGatewayMethodResponseParametersIntegrationTest {
                 .body("responseParameters", not(hasKey("method.response.header.X-Second")));
         given().when().get(path).then().statusCode(200)
                 .body("responseParameters.'method.response.header.X-First'", equalTo(true));
+
+        given().contentType("application/json")
+                .body("{\"patchOperations\":[{\"op\":\"add\","
+                        + "\"path\":\"/responseParameters/method.response.header.X~0Tag\","
+                        + "\"value\":\"true\"}]}")
+                .when().patch(path).then().statusCode(200)
+                .body("responseParameters.'method.response.header.X~Tag'", equalTo(true))
+                .body("responseParameters", not(hasKey("method.response.header.X~0Tag")));
+        given().when().get(path).then().statusCode(200)
+                .body("responseParameters.'method.response.header.X~Tag'", equalTo(true));
+
+        IntStream.range(0, 16).parallel().forEach(index -> given().contentType("application/json")
+                .body("{\"patchOperations\":[{\"op\":\"add\","
+                        + "\"path\":\"/responseParameters/method.response.header.X-Concurrent-"
+                        + index + "\",\"value\":\"true\"}]}")
+                .when().patch(path).then().statusCode(200));
+        for (int index = 0; index < 16; index++) {
+            given().when().get(path).then().statusCode(200)
+                    .body("responseParameters.'method.response.header.X-Concurrent-" + index + "'",
+                            equalTo(true));
+        }
 
         given().contentType("application/json")
                 .body("{\"patchOperations\":[{\"op\":\"replace\","
