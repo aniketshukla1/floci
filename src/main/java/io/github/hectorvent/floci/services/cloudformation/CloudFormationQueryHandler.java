@@ -724,7 +724,9 @@ public class CloudFormationQueryHandler {
             result.put(key, value != null ? value : "");
             i++;
         }
-        return result.isEmpty() ? null : result;
+        boolean supplied = params.keySet().stream().anyMatch(name ->
+                "Tags".equals(name) || "Tags.member".equals(name) || name.startsWith("Tags.member."));
+        return supplied ? result : null;
     }
 
     private List<String> extractList(MultivaluedMap<String, String> params, String prefix) {

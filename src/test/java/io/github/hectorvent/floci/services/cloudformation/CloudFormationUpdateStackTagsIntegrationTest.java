@@ -97,6 +97,26 @@ class CloudFormationUpdateStackTagsIntegrationTest {
                     .when().post("/").then().statusCode(200);
             executeChangeSet(stackName, "untagged-update");
             assertEquals(Map.of("Env", "final", "Team", "latest"), tags(stackName));
+
+            updateRequest("UpdateStack", stackName, template, "100")
+                    .formParam("Tags", "")
+                    .when().post("/").then().statusCode(200);
+            assertEquals("UPDATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+            assertEquals(Map.of(), tags(stackName));
+
+            withTags(updateRequest("UpdateStack", stackName, template, "110"), "reset", "again")
+                    .when().post("/").then().statusCode(200);
+            assertEquals("UPDATE_COMPLETE", CfnStackWaits.awaitTerminal(stackName).status());
+            assertEquals(Map.of("Env", "reset", "Team", "again"), tags(stackName));
+
+            updateRequest("CreateChangeSet", stackName, template, "120")
+                    .formParam("ChangeSetName", "clear-tags")
+                    .formParam("ChangeSetType", "UPDATE")
+                    .formParam("Tags.member", "")
+                    .when().post("/").then().statusCode(200);
+            assertEquals(Map.of("Env", "reset", "Team", "again"), tags(stackName));
+            executeChangeSet(stackName, "clear-tags");
+            assertEquals(Map.of(), tags(stackName));
         } finally {
             request("DeleteStack", stackName).when().post("/").then().statusCode(200);
             CfnStackWaits.awaitStackDeleted(stackName);
