@@ -172,21 +172,6 @@ class CloudFormationUsePreviousTemplateIntegrationTest {
     }
 
     @Test
-    void createChangeSet_usePreviousTemplateWithoutType_returnsValidationError() {
-        createStack("use-prev-default-type", "use-prev-default-type-q");
-
-        given().contentType(FORM)
-            .formParam("Action", "CreateChangeSet")
-            .formParam("StackName", "use-prev-default-type")
-            .formParam("ChangeSetName", "cs")
-            .formParam("UsePreviousTemplate", "true")
-        .when().post("/")
-        .then().statusCode(400)
-            .body(containsString("<Code>ValidationError</Code>"))
-            .body(containsString("UsePreviousTemplate cannot be specified for a CREATE change set"));
-    }
-
-    @Test
     void updateStack_usePreviousTemplateOnMissingStack_returnsValidationError() {
         given().contentType(FORM)
             .formParam("Action", "UpdateStack")

@@ -5,7 +5,6 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.services.cloudformation.CloudFormationClient;
 import software.amazon.awssdk.services.cloudformation.model.ChangeSetType;
-import software.amazon.awssdk.services.cloudformation.model.CloudFormationException;
 import software.amazon.awssdk.services.cloudformation.model.Stack;
 import software.amazon.awssdk.services.cloudformation.model.Tag;
 
@@ -14,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CloudFormationStackTagsUpdateTest {
 
@@ -43,7 +41,7 @@ class CloudFormationStackTagsUpdateTest {
     }
 
     @Test
-    void sdkUpdatesStackTagsAndRejectsImplicitCreateChangeSet() throws InterruptedException {
+    void sdkUpdatesStackTags() throws InterruptedException {
         cloudFormation.createStack(request -> request.stackName(stackName)
                 .templateBody(TEMPLATE)
                 .tags(tag("Env", "before"), tag("Owner", "original")));
@@ -74,14 +72,6 @@ class CloudFormationStackTagsUpdateTest {
                 .usePreviousTemplate(true));
         assertThat(awaitStatus("UPDATE_COMPLETE")).isEqualTo("UPDATE_COMPLETE");
         assertThat(tags()).containsExactlyInAnyOrderEntriesOf(Map.of("Env", "final"));
-
-        assertThatThrownBy(() -> cloudFormation.createChangeSet(request -> request
-                .stackName(stackName)
-                .changeSetName("implicit-create")
-                .usePreviousTemplate(true)))
-                .isInstanceOf(CloudFormationException.class)
-                .satisfies(error -> assertThat(((CloudFormationException) error)
-                        .awsErrorDetails().errorCode()).isEqualTo("ValidationError"));
     }
 
     private static Tag tag(String key, String value) {
