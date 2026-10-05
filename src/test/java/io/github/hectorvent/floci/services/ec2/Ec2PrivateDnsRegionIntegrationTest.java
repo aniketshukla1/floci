@@ -7,6 +7,7 @@ import io.restassured.response.Response;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @QuarkusTest
@@ -40,7 +41,7 @@ class Ec2PrivateDnsRegionIntegrationTest {
                     .header("Authorization", auth)
                     .when().post("/").then().statusCode(200)
                     .body("DescribeInstancesResponse.reservationSet.item.instancesSet.item.privateDnsName",
-                            org.hamcrest.Matchers.equalTo(expectedDnsName));
+                            equalTo(expectedDnsName));
 
             ExtractableResponse<Response> interfaceResponse = given().formParam("Action", "CreateNetworkInterface")
                     .formParam("SubnetId", subnetId)

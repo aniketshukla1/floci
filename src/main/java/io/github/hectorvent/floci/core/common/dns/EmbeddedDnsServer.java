@@ -2,7 +2,7 @@ package io.github.hectorvent.floci.core.common.dns;
 
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.config.TlsConfigSource;
-import io.github.hectorvent.floci.core.common.AwsRegions;
+import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.docker.ContainerDetector;
 import io.quarkus.runtime.Startup;
 import io.vertx.core.Vertx;
@@ -427,7 +427,7 @@ public class EmbeddedDnsServer {
         if (!matcher.matches()) {
             return Optional.empty();
         }
-        if (matcher.group(5) != null && !AwsRegions.isRegionId(matcher.group(5))) {
+        if (matcher.group(5) != null && !RegionResolver.isKnownRegion(matcher.group(5))) {
             return Optional.empty();
         }
 

@@ -60,7 +60,6 @@ public class EcsTaskMetadataController {
 
     private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter.ISO_INSTANT;
     private static final String SERVICE_GROUP_PREFIX = "service:";
-    /** The search domain an instance gets, which us-east-1 spells differently from every other region. */
 
     /**
      * Docker's stats document, written back out the way the daemon sent it. docker-java's model

@@ -98,6 +98,12 @@ class EmbeddedDnsServerTest {
     }
 
     @Test
+    void resolveEc2PrivateDnsName_decodesUnpublishedRegionIpName() {
+        assertEquals("10.0.0.5", dns.resolveEc2PrivateDnsName(
+                "ip-10-0-0-5.us-new-1.compute.internal").orElseThrow());
+    }
+
+    @Test
     void resolveEc2PrivateDnsName_isCaseInsensitive() {
         assertEquals(
                 "10.42.32.17",
