@@ -172,7 +172,8 @@ public class ApiGatewayController {
         List<Map<String, String>> patchOperations = parsePatchOperations(body);
         MethodResponse response = service.updateMethodResponse(
                 region, apiId, resourceId, httpMethod, statusCode, patchOperations);
-        return Response.ok(toMethodResponseNode(response).toString()).type(MediaType.APPLICATION_JSON).build();
+        return Response.status(201).entity(toMethodResponseNode(response).toString())
+                .type(MediaType.APPLICATION_JSON).build();
     }
 
     @DELETE
