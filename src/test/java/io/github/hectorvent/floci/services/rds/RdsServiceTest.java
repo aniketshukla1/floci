@@ -8448,9 +8448,18 @@ class RdsServiceTest {
         AwsException modifyError = assertThrows(AwsException.class, () ->
                 rdsService.modifyDbClusterEndpoint("us-east-1", "legacy", "READER", null, null));
         assertEquals("InvalidParameterValue", modifyError.getErrorCode());
-        AwsException deleteError = assertThrows(AwsException.class, () ->
-                rdsService.deleteDbClusterEndpoint("us-east-1", "legacy"));
-        assertEquals("InvalidParameterValue", deleteError.getErrorCode());
+        List<DbClusterEndpoint> existing = rdsService.describeDbClusterEndpoints(
+                "us-east-1", "aurora", null, Map.of(), null, null).endpoints();
+        assertEquals(List.of("legacy"), existing.stream()
+                .map(DbClusterEndpoint::getDbClusterEndpointIdentifier)
+                .toList());
+        assertEquals("deleting", rdsService.deleteDbClusterEndpoint("us-east-1", "legacy").getStatus());
+
+        aurora.setEngineIdentifier(null);
+        rdsService.createDbClusterEndpoint("us-east-1", "aurora", "restored", "ANY",
+                List.of(), List.of(), Map.of());
+        assertEquals(3, rdsService.describeDbClusterEndpoints(
+                "us-east-1", "aurora", null, Map.of(), null, null).endpoints().size());
     }
 
     @Test

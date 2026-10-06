@@ -9407,7 +9407,6 @@ public class RdsService implements Resettable, ResourceProvider {
         String effectiveRegion = effectiveRegion(region);
         DbClusterEndpoint endpoint = requireClusterEndpoint(effectiveRegion, endpointId);
         DbCluster cluster = getDbCluster(endpoint.getDbClusterIdentifier(), effectiveRegion);
-        requireAuroraCluster(cluster);
         clusterEndpoints.delete(clusterEndpointKey(effectiveRegion, endpoint.getDbClusterEndpointIdentifier()));
         DbClusterEndpoint deleted = currentView(endpoint, cluster);
         deleted.setStatus("deleting");
@@ -9434,10 +9433,7 @@ public class RdsService implements Resettable, ResourceProvider {
                         .toList();
         List<DbClusterEndpoint> all = new ArrayList<>();
         for (DbCluster cluster : scope) {
-            if (!isAuroraEngine(cluster.getEngineIdentifier())) {
-                continue;
-            }
-            if (isBlank(endpointId)) {
+            if (isAuroraCluster(cluster) && isBlank(endpointId)) {
                 if (cluster.getEndpoint() != null) {
                     all.add(builtInClusterEndpoint(cluster, "WRITER", cluster.getEndpoint().address()));
                 }
@@ -9474,10 +9470,16 @@ public class RdsService implements Resettable, ResourceProvider {
     }
 
     private static void requireAuroraCluster(DbCluster cluster) {
-        if (!isAuroraEngine(cluster.getEngineIdentifier())) {
+        if (!isAuroraCluster(cluster)) {
             throw new AwsException("InvalidParameterValue",
                     "Custom endpoints are supported only for Aurora DB clusters.", 400);
         }
+    }
+
+    private static boolean isAuroraCluster(DbCluster cluster) {
+        // engineIdentifier was added after clusters were already persisted; blank records retain
+        // their legacy Aurora endpoint behavior because the older enum cannot distinguish Aurora.
+        return isBlank(cluster.getEngineIdentifier()) || isAuroraEngine(cluster.getEngineIdentifier());
     }
 
     private static boolean matchesFilter(Map<String, List<String>> filters, String name, String value) {
