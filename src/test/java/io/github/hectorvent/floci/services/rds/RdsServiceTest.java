@@ -8429,6 +8429,31 @@ class RdsServiceTest {
     }
 
     @Test
+    void clusterEndpointActionsApplyOnlyToAuroraClusters() {
+        rdsService.createDbCluster("plain", "postgres", "17.5", "admin", "password", "appdb", false, null);
+
+        AwsException createError = assertThrows(AwsException.class, () ->
+                rdsService.createDbClusterEndpoint("us-east-1", "plain", "reports", "ANY",
+                        List.of(), List.of(), Map.of()));
+        assertEquals("InvalidParameterValue", createError.getErrorCode());
+        assertTrue(rdsService.describeDbClusterEndpoints(
+                "us-east-1", "plain", null, Map.of(), null, null).endpoints().isEmpty());
+
+        DbCluster aurora = rdsService.createDbCluster(
+                "aurora", "aurora-postgresql", "16.3", "admin", "password", "appdb", false, null);
+        rdsService.createDbClusterEndpoint("us-east-1", "aurora", "legacy", "ANY",
+                List.of(), List.of(), Map.of());
+        aurora.setEngineIdentifier("postgres");
+
+        AwsException modifyError = assertThrows(AwsException.class, () ->
+                rdsService.modifyDbClusterEndpoint("us-east-1", "legacy", "READER", null, null));
+        assertEquals("InvalidParameterValue", modifyError.getErrorCode());
+        AwsException deleteError = assertThrows(AwsException.class, () ->
+                rdsService.deleteDbClusterEndpoint("us-east-1", "legacy"));
+        assertEquals("InvalidParameterValue", deleteError.getErrorCode());
+    }
+
+    @Test
     void failoverDbClusterMovesTheWriterRole() {
         rdsService.createDbCluster("aurora", "aurora-postgresql", "16.3", "admin", "password", "appdb", false, null);
         AwsException noMembers = assertThrows(AwsException.class, () ->

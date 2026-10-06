@@ -9339,6 +9339,7 @@ public class RdsService implements Resettable, ResourceProvider {
         }
         String id = requireClusterEndpointIdentifier(endpointId);
         DbCluster cluster = getDbCluster(clusterId, effectiveRegion);
+        requireAuroraCluster(cluster);
         if (cluster.getStatus() != null && cluster.getStatus() != DbInstanceStatus.AVAILABLE) {
             throw new AwsException("InvalidDBClusterStateFault",
                     "DB cluster " + cluster.getDbClusterIdentifier() + " is not in available state.", 400);
@@ -9385,6 +9386,7 @@ public class RdsService implements Resettable, ResourceProvider {
         String effectiveRegion = effectiveRegion(region);
         DbClusterEndpoint endpoint = requireClusterEndpoint(effectiveRegion, endpointId);
         DbCluster cluster = getDbCluster(endpoint.getDbClusterIdentifier(), effectiveRegion);
+        requireAuroraCluster(cluster);
         String customType = isBlank(endpointType) ? endpoint.getCustomEndpointType() : requireCustomEndpointType(endpointType);
         boolean listsGiven = staticMembers != null || excludedMembers != null;
         List<String> newStatic = listsGiven ? clusterMembersNamed(cluster, staticMembers) : endpoint.getStaticMembers();
@@ -9404,9 +9406,10 @@ public class RdsService implements Resettable, ResourceProvider {
     public synchronized DbClusterEndpoint deleteDbClusterEndpoint(String region, String endpointId) {
         String effectiveRegion = effectiveRegion(region);
         DbClusterEndpoint endpoint = requireClusterEndpoint(effectiveRegion, endpointId);
+        DbCluster cluster = getDbCluster(endpoint.getDbClusterIdentifier(), effectiveRegion);
+        requireAuroraCluster(cluster);
         clusterEndpoints.delete(clusterEndpointKey(effectiveRegion, endpoint.getDbClusterEndpointIdentifier()));
-        DbClusterEndpoint deleted = currentView(endpoint,
-                findClusterForScope(currentAccountId(), effectiveRegion, endpoint.getDbClusterIdentifier()));
+        DbClusterEndpoint deleted = currentView(endpoint, cluster);
         deleted.setStatus("deleting");
         return deleted;
     }
@@ -9431,6 +9434,9 @@ public class RdsService implements Resettable, ResourceProvider {
                         .toList();
         List<DbClusterEndpoint> all = new ArrayList<>();
         for (DbCluster cluster : scope) {
+            if (!isAuroraEngine(cluster.getEngineIdentifier())) {
+                continue;
+            }
             if (isBlank(endpointId)) {
                 if (cluster.getEndpoint() != null) {
                     all.add(builtInClusterEndpoint(cluster, "WRITER", cluster.getEndpoint().address()));
@@ -9465,6 +9471,13 @@ public class RdsService implements Resettable, ResourceProvider {
         int to = Math.min(matching.size(), start + limit);
         return new ClusterEndpointPage(matching.subList(start, to),
                 to < matching.size() ? Integer.toString(to) : null);
+    }
+
+    private static void requireAuroraCluster(DbCluster cluster) {
+        if (!isAuroraEngine(cluster.getEngineIdentifier())) {
+            throw new AwsException("InvalidParameterValue",
+                    "Custom endpoints are supported only for Aurora DB clusters.", 400);
+        }
     }
 
     private static boolean matchesFilter(Map<String, List<String>> filters, String name, String value) {
