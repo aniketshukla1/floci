@@ -362,6 +362,47 @@ class CognitoLambdaTriggersTest {
     }
 
     @Test
+    void postConfirmationFiresOnAdminConfirmSignUp() throws Exception {
+        UserPool pool = createPoolWithLambdaConfig(Map.of("PostConfirmation", "arn:aws:lambda:::post-confirm"));
+        UserPoolClient client = createClient(pool);
+        service.signUp(client.getClientId(), "alice", "Perm1234!", Map.of("email", "alice@example.com"));
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
+                any(byte[].class), eq(InvocationType.RequestResponse))).thenReturn(ok(Map.of()));
+
+        service.adminConfirmSignUp(pool.getId(), "alice");
+
+        verify(lambdaService).invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
+                payload.capture(), eq(InvocationType.RequestResponse));
+        assertEquals("PostConfirmation_ConfirmSignUp",
+                MAPPER.readTree(payload.getValue()).path("triggerSource").asText());
+    }
+
+    @Test
+    void postConfirmationFiresOnConfirmForgotPassword() throws Exception {
+        VerificationCodeService verificationCodes = mock(VerificationCodeService.class);
+        CognitoService svc = createServiceWithMessaging(
+                mock(SesService.class), mock(SnsService.class), verificationCodes);
+        UserPool pool = svc.createUserPool(Map.of(
+                "PoolName", "trigger-pool",
+                "LambdaConfig", Map.of("PostConfirmation", "arn:aws:lambda:::post-confirm")), "us-east-1");
+        UserPoolClient client = svc.createUserPoolClient(
+                pool.getId(), "c", false, false, List.of(), List.of());
+        svc.adminCreateUser(pool.getId(), "alice", Map.of("email", "alice@example.com"), null);
+        svc.adminSetUserPassword(pool.getId(), "alice", "Perm1234!", true);
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
+                any(byte[].class), eq(InvocationType.RequestResponse))).thenReturn(ok(Map.of()));
+
+        svc.confirmForgotPassword(client.getClientId(), "alice", "123456", "NewPass1234!");
+
+        verify(lambdaService).invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
+                payload.capture(), eq(InvocationType.RequestResponse));
+        assertEquals("PostConfirmation_ConfirmForgotPassword",
+                MAPPER.readTree(payload.getValue()).path("triggerSource").asText());
+    }
+
+    @Test
     void postConfirmationLambdaErrorDoesNotBlockConfirm() {
         UserPool pool = createPoolWithLambdaConfig(Map.of("PostConfirmation", "arn:aws:lambda:::post-confirm"));
         UserPoolClient client = createClient(pool);

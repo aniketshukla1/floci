@@ -3177,17 +3177,21 @@ public class CognitoService implements ResourceProvider {
 
     public void adminConfirmSignUp(String userPoolId, String username) {
         CognitoUser resolvedUser = adminGetUser(userPoolId, username);
+        CognitoUser user;
         synchronized (userLock(userPoolId, resolvedUser.getUsername())) {
-            adminConfirmSignUpUnderUserLock(userPoolId, resolvedUser.getUsername());
+            user = adminConfirmSignUpUnderUserLock(userPoolId, resolvedUser.getUsername());
         }
+        authFlowHandler.firePostConfirmation(describeUserPool(userPoolId), null, user,
+                Map.of(), "PostConfirmation_ConfirmSignUp");
     }
 
-    private void adminConfirmSignUpUnderUserLock(String userPoolId, String username) {
+    private CognitoUser adminConfirmSignUpUnderUserLock(String userPoolId, String username) {
         CognitoUser user = adminGetUser(userPoolId, username);
         user.setUserStatus("CONFIRMED");
         user.setLastModifiedDate(System.currentTimeMillis() / 1000L);
         userStore.put(userKey(userPoolId, user.getUsername()), user);
         LOG.infov("Admin confirmed sign up for user {0} in pool {1}", username, userPoolId);
+        return user;
     }
 
     // ──────────────────────────── Auth ────────────────────────────
@@ -3372,6 +3376,9 @@ public class CognitoService implements ResourceProvider {
             throw mapVerificationCodeException(e);
         }
         adminSetUserPassword(client.getUserPoolId(), user.getUsername(), newPassword, true);
+        authFlowHandler.firePostConfirmation(describeUserPool(client.getUserPoolId()), client,
+                adminGetUser(client.getUserPoolId(), user.getUsername()), Map.of(),
+                "PostConfirmation_ConfirmForgotPassword");
     }
 
     public Map<String, Object> getUser(String accessToken) {
