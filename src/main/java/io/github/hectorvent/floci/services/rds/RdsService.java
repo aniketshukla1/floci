@@ -9406,9 +9406,9 @@ public class RdsService implements Resettable, ResourceProvider {
     public synchronized DbClusterEndpoint deleteDbClusterEndpoint(String region, String endpointId) {
         String effectiveRegion = effectiveRegion(region);
         DbClusterEndpoint endpoint = requireClusterEndpoint(effectiveRegion, endpointId);
-        DbCluster cluster = getDbCluster(endpoint.getDbClusterIdentifier(), effectiveRegion);
         clusterEndpoints.delete(clusterEndpointKey(effectiveRegion, endpoint.getDbClusterEndpointIdentifier()));
-        DbClusterEndpoint deleted = currentView(endpoint, cluster);
+        DbClusterEndpoint deleted = currentView(endpoint,
+                findClusterForScope(currentAccountId(), effectiveRegion, endpoint.getDbClusterIdentifier()));
         deleted.setStatus("deleting");
         return deleted;
     }
@@ -9433,7 +9433,7 @@ public class RdsService implements Resettable, ResourceProvider {
                         .toList();
         List<DbClusterEndpoint> all = new ArrayList<>();
         for (DbCluster cluster : scope) {
-            if (isAuroraCluster(cluster) && isBlank(endpointId)) {
+            if (isBlank(endpointId)) {
                 if (cluster.getEndpoint() != null) {
                     all.add(builtInClusterEndpoint(cluster, "WRITER", cluster.getEndpoint().address()));
                 }
@@ -9470,16 +9470,10 @@ public class RdsService implements Resettable, ResourceProvider {
     }
 
     private static void requireAuroraCluster(DbCluster cluster) {
-        if (!isAuroraCluster(cluster)) {
+        if (!isAuroraEngine(cluster.getEngineIdentifier())) {
             throw new AwsException("InvalidParameterValue",
                     "Custom endpoints are supported only for Aurora DB clusters.", 400);
         }
-    }
-
-    private static boolean isAuroraCluster(DbCluster cluster) {
-        // engineIdentifier was added after clusters were already persisted; blank records retain
-        // their legacy Aurora endpoint behavior because the older enum cannot distinguish Aurora.
-        return isBlank(cluster.getEngineIdentifier()) || isAuroraEngine(cluster.getEngineIdentifier());
     }
 
     private static boolean matchesFilter(Map<String, List<String>> filters, String name, String value) {

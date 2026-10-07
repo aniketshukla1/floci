@@ -62,6 +62,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -8429,15 +8430,17 @@ class RdsServiceTest {
     }
 
     @Test
-    void clusterEndpointActionsApplyOnlyToAuroraClusters() {
+    void customClusterEndpointMutationsRequireAurora() {
         rdsService.createDbCluster("plain", "postgres", "17.5", "admin", "password", "appdb", false, null);
 
         AwsException createError = assertThrows(AwsException.class, () ->
                 rdsService.createDbClusterEndpoint("us-east-1", "plain", "reports", "ANY",
                         List.of(), List.of(), Map.of()));
         assertEquals("InvalidParameterValue", createError.getErrorCode());
-        assertTrue(rdsService.describeDbClusterEndpoints(
-                "us-east-1", "plain", null, Map.of(), null, null).endpoints().isEmpty());
+        assertEquals(Set.of("WRITER", "READER"), rdsService.describeDbClusterEndpoints(
+                        "us-east-1", "plain", null, Map.of(), null, null).endpoints().stream()
+                .map(DbClusterEndpoint::getEndpointType)
+                .collect(Collectors.toSet()));
 
         DbCluster aurora = rdsService.createDbCluster(
                 "aurora", "aurora-postgresql", "16.3", "admin", "password", "appdb", false, null);
@@ -8450,15 +8453,17 @@ class RdsServiceTest {
         assertEquals("InvalidParameterValue", modifyError.getErrorCode());
         List<DbClusterEndpoint> existing = rdsService.describeDbClusterEndpoints(
                 "us-east-1", "aurora", null, Map.of(), null, null).endpoints();
-        assertEquals(List.of("legacy"), existing.stream()
-                .map(DbClusterEndpoint::getDbClusterEndpointIdentifier)
-                .toList());
+        assertEquals(Set.of("WRITER", "READER", "CUSTOM"), existing.stream()
+                .map(DbClusterEndpoint::getEndpointType)
+                .collect(Collectors.toSet()));
         assertEquals("deleting", rdsService.deleteDbClusterEndpoint("us-east-1", "legacy").getStatus());
 
         aurora.setEngineIdentifier(null);
-        rdsService.createDbClusterEndpoint("us-east-1", "aurora", "restored", "ANY",
-                List.of(), List.of(), Map.of());
-        assertEquals(3, rdsService.describeDbClusterEndpoints(
+        AwsException legacyCreateError = assertThrows(AwsException.class, () ->
+                rdsService.createDbClusterEndpoint("us-east-1", "aurora", "restored", "ANY",
+                        List.of(), List.of(), Map.of()));
+        assertEquals("InvalidParameterValue", legacyCreateError.getErrorCode());
+        assertEquals(2, rdsService.describeDbClusterEndpoints(
                 "us-east-1", "aurora", null, Map.of(), null, null).endpoints().size());
     }
 
