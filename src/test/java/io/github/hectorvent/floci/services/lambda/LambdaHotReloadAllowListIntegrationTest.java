@@ -54,14 +54,11 @@ class LambdaHotReloadAllowListIntegrationTest {
     @ValueSource(strings = {"/home/ci/code", "/home/ci/code/app"})
     void createFunctionAcceptsTheAllowedDirectoryAndItsChildren(String s3Key) {
         String name = "hot-reload-allow-list-" + (++counter);
-        try {
-            createFunction(name, s3Key).statusCode(201);
-        } finally {
-            given()
-                    .when()
-                    .delete("/2015-03-31/functions/{name}", name)
-                    .then()
-                    .statusCode(204);
-        }
+        createFunction(name, s3Key).statusCode(201);
+        given()
+                .when()
+                .delete("/2015-03-31/functions/{name}", name)
+                .then()
+                .statusCode(204);
     }
 }
