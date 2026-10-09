@@ -104,6 +104,7 @@ public class AppConfigDataService {
     public ConfigurationData getLatestConfiguration(String token, String accept) {
         ConfigurationSession session = sessionStore.get(token)
                 .orElseThrow(() -> new AwsException("BadRequestException", "Invalid configuration token", 400));
+        appConfigService.getEnvironment(session.getApplicationId(), session.getEnvironmentId());
 
         int pollInterval = normalizePollInterval(session.getRequiredMinimumPollIntervalInSeconds());
         session.setRequiredMinimumPollIntervalInSeconds(pollInterval);

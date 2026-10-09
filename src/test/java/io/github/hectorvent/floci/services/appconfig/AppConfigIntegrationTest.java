@@ -1087,26 +1087,29 @@ class AppConfigIntegrationTest {
 
     @Test @Order(51)
     void deleteEnvironmentRemovesIt() {
-        String applicationId = given()
+        String token = given()
                 .contentType(ContentType.JSON)
-                .body("{\"Name\":\"delete-environment-app\"}")
-                .when().post("/applications")
+                .body("{\"ApplicationIdentifier\":\"" + appId + "\",\"EnvironmentIdentifier\":\""
+                        + envId + "\",\"ConfigurationProfileIdentifier\":\"" + profileId + "\"}")
+                .when().post("/configurationsessions")
                 .then().statusCode(201)
-                .extract().path("Id");
-
-        String environmentId = given()
-                .contentType(ContentType.JSON)
-                .body("{\"Name\":\"delete-me\"}")
-                .when().post("/applications/" + applicationId + "/environments")
-                .then().statusCode(201)
-                .extract().path("Id");
+                .extract().path("InitialConfigurationToken");
 
         given()
-                .when().delete("/applications/" + applicationId + "/environments/" + environmentId)
+                .when().delete("/applications/" + appId + "/environments/" + envId)
                 .then().statusCode(204);
 
         given()
-                .when().get("/applications/" + applicationId + "/environments/" + environmentId)
+                .when().get("/applications/" + appId + "/environments/" + envId)
+                .then().statusCode(404);
+
+        given()
+                .when().get("/applications/" + appId + "/environments/" + envId + "/deployments/1")
+                .then().statusCode(404);
+
+        given()
+                .queryParam("configuration_token", token)
+                .when().get("/configuration")
                 .then().statusCode(404);
     }
 }

@@ -99,8 +99,23 @@ public class AppConfigService {
         return env;
     }
 
-    public void deleteEnvironment(String appId, String envId) {
+    public synchronized void deleteEnvironment(String appId, String envId) {
         getEnvironment(appId, envId);
+
+        String deploymentPrefix = appId + "::" + envId + "::";
+        deploymentStore.keys().stream()
+                .filter(key -> key.startsWith(deploymentPrefix))
+                .toList()
+                .forEach(deploymentStore::delete);
+
+        String activeConfigPrefix = envId + "::";
+        activeConfigStore.keys().stream()
+                .filter(key -> key.startsWith(activeConfigPrefix))
+                .toList()
+                .forEach(activeConfigStore::delete);
+
+        String deploymentScope = appId + "::" + envId;
+        deploymentPageTokens.entrySet().removeIf(entry -> entry.getValue().scope().equals(deploymentScope));
         environmentStore.delete(envId);
     }
 
@@ -304,7 +319,7 @@ public class AppConfigService {
 
     // ──────────────────────────── Deployment ────────────────────────────
 
-    public Deployment startDeployment(String appId, String envId, Map<String, Object> request) {
+    public synchronized Deployment startDeployment(String appId, String envId, Map<String, Object> request) {
         getEnvironment(appId, envId);
         String profileId = (String) request.get("ConfigurationProfileId");
         String version = (String) request.get("ConfigurationVersion");
@@ -333,6 +348,7 @@ public class AppConfigService {
     }
 
     public Deployment getDeployment(String appId, String envId, int deploymentNumber) {
+        getEnvironment(appId, envId);
         return deploymentStore.get(appId + "::" + envId + "::" + deploymentNumber)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException", "Deployment not found", 404));
     }
