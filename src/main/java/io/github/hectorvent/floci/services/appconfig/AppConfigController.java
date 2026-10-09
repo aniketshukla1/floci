@@ -92,6 +92,13 @@ public class AppConfigController {
         return Response.ok(service.getEnvironment(appId, envId)).build();
     }
 
+    @DELETE
+    @Path("/applications/{appId}/environments/{envId}")
+    public Response deleteEnvironment(@PathParam("appId") String appId, @PathParam("envId") String envId) {
+        service.deleteEnvironment(appId, envId);
+        return Response.noContent().build();
+    }
+
     @GET
     @Path("/applications/{appId}/environments")
     public Response listEnvironments(@PathParam("appId") String appId) {

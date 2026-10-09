@@ -1084,4 +1084,29 @@ class AppConfigIntegrationTest {
                 .extract().asByteArray();
         assertArrayEquals(stored, body);
     }
+
+    @Test @Order(51)
+    void deleteEnvironmentRemovesIt() {
+        String applicationId = given()
+                .contentType(ContentType.JSON)
+                .body("{\"Name\":\"delete-environment-app\"}")
+                .when().post("/applications")
+                .then().statusCode(201)
+                .extract().path("Id");
+
+        String environmentId = given()
+                .contentType(ContentType.JSON)
+                .body("{\"Name\":\"delete-me\"}")
+                .when().post("/applications/" + applicationId + "/environments")
+                .then().statusCode(201)
+                .extract().path("Id");
+
+        given()
+                .when().delete("/applications/" + applicationId + "/environments/" + environmentId)
+                .then().statusCode(204);
+
+        given()
+                .when().get("/applications/" + applicationId + "/environments/" + environmentId)
+                .then().statusCode(404);
+    }
 }

@@ -99,6 +99,11 @@ public class AppConfigService {
         return env;
     }
 
+    public void deleteEnvironment(String appId, String envId) {
+        getEnvironment(appId, envId);
+        environmentStore.delete(envId);
+    }
+
     /** The environment of {@code appId} whose ID or name is {@code idOrName}. */
     public Environment resolveEnvironment(String appId, String idOrName) {
         // An exact ID always wins over another environment's name, and a direct lookup skips the scan.
