@@ -342,7 +342,7 @@ class CognitoLambdaTriggersTest {
     // =========================================================================
 
     @Test
-    void postConfirmationFiresOnConfirmSignUp() {
+    void postConfirmationFiresOnConfirmSignUp() throws Exception {
         UserPool pool = createPoolWithLambdaConfig(Map.of("PostConfirmation", "arn:aws:lambda:::post-confirm"));
         UserPoolClient client = createClient(pool);
 
@@ -354,11 +354,19 @@ class CognitoLambdaTriggersTest {
                 any(byte[].class), eq(InvocationType.RequestResponse)))
                 .thenReturn(ok(Map.of()));
 
-        service.confirmSignUp(client.getClientId(), "alice");
+        ObjectNode request = MAPPER.createObjectNode();
+        request.put("ClientId", client.getClientId());
+        request.put("Username", "alice");
+        request.put("ConfirmationCode", "123456");
+        request.putObject("ClientMetadata").put("source", "confirm-sign-up");
+        new CognitoJsonHandler(service, MAPPER).handle("ConfirmSignUp", request, "us-east-1");
 
-        verify(lambdaService, atLeastOnce())
-                .invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
-                        any(byte[].class), eq(InvocationType.RequestResponse));
+        ArgumentCaptor<byte[]> payload = ArgumentCaptor.forClass(byte[].class);
+        verify(lambdaService).invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
+                payload.capture(), eq(InvocationType.RequestResponse));
+        JsonNode event = MAPPER.readTree(payload.getValue());
+        assertEquals("PostConfirmation_ConfirmSignUp", event.path("triggerSource").asText());
+        assertEquals("confirm-sign-up", event.path("request").path("clientMetadata").path("source").asText());
     }
 
     @Test
@@ -370,12 +378,17 @@ class CognitoLambdaTriggersTest {
         when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
                 any(byte[].class), eq(InvocationType.RequestResponse))).thenReturn(ok(Map.of()));
 
-        service.adminConfirmSignUp(pool.getId(), "alice");
+        ObjectNode request = MAPPER.createObjectNode();
+        request.put("UserPoolId", pool.getId());
+        request.put("Username", "alice");
+        request.putObject("ClientMetadata").put("source", "admin-confirm");
+        new CognitoJsonHandler(service, MAPPER).handle("AdminConfirmSignUp", request, "us-east-1");
 
         verify(lambdaService).invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
                 payload.capture(), eq(InvocationType.RequestResponse));
-        assertEquals("PostConfirmation_ConfirmSignUp",
-                MAPPER.readTree(payload.getValue()).path("triggerSource").asText());
+        JsonNode event = MAPPER.readTree(payload.getValue());
+        assertEquals("PostConfirmation_ConfirmSignUp", event.path("triggerSource").asText());
+        assertEquals("admin-confirm", event.path("request").path("clientMetadata").path("source").asText());
     }
 
     @Test
@@ -394,12 +407,19 @@ class CognitoLambdaTriggersTest {
         when(lambdaService.invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
                 any(byte[].class), eq(InvocationType.RequestResponse))).thenReturn(ok(Map.of()));
 
-        svc.confirmForgotPassword(client.getClientId(), "alice", "123456", "NewPass1234!");
+        ObjectNode request = MAPPER.createObjectNode();
+        request.put("ClientId", client.getClientId());
+        request.put("Username", "alice");
+        request.put("ConfirmationCode", "123456");
+        request.put("Password", "NewPass1234!");
+        request.putObject("ClientMetadata").put("source", "forgot-password");
+        new CognitoJsonHandler(svc, MAPPER).handle("ConfirmForgotPassword", request, "us-east-1");
 
         verify(lambdaService).invoke(anyString(), eq("arn:aws:lambda:::post-confirm"),
                 payload.capture(), eq(InvocationType.RequestResponse));
-        assertEquals("PostConfirmation_ConfirmForgotPassword",
-                MAPPER.readTree(payload.getValue()).path("triggerSource").asText());
+        JsonNode event = MAPPER.readTree(payload.getValue());
+        assertEquals("PostConfirmation_ConfirmForgotPassword", event.path("triggerSource").asText());
+        assertEquals("forgot-password", event.path("request").path("clientMetadata").path("source").asText());
     }
 
     @Test

@@ -3072,21 +3072,26 @@ public class CognitoService implements ResourceProvider {
     }
 
     public void confirmSignUp(String clientId, String username) {
-        confirmSignUp(clientId, username, null);
+        confirmSignUp(clientId, username, null, Map.of());
     }
 
     public void confirmSignUp(String clientId, String username, String confirmationCode) {
+        confirmSignUp(clientId, username, confirmationCode, Map.of());
+    }
+
+    public void confirmSignUp(String clientId, String username, String confirmationCode,
+                              Map<String, String> clientMetadata) {
         UserPoolClient client = clientStore.get(clientId)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException", "Client not found",
                         400));
         String userPoolId = client.getUserPoolId();
         synchronized (userLock(userPoolId, username)) {
-            confirmSignUpUnderUserLock(client, userPoolId, username, confirmationCode);
+            confirmSignUpUnderUserLock(client, userPoolId, username, confirmationCode, clientMetadata);
         }
     }
 
     private void confirmSignUpUnderUserLock(UserPoolClient client, String userPoolId, String username,
-            String confirmationCode) {
+            String confirmationCode, Map<String, String> clientMetadata) {
         UserPool pool = poolStore.get(userPoolId)
                 .orElseThrow(() -> userPoolNotFound(userPoolId));
         CognitoUser user = adminGetUser(client.getUserPoolId(), username);
@@ -3112,7 +3117,7 @@ public class CognitoService implements ResourceProvider {
         user.setUserStatus("CONFIRMED");
         user.setLastModifiedDate(System.currentTimeMillis() / 1000L);
         userStore.put(userKey(client.getUserPoolId(), user.getUsername()), user);
-        authFlowHandler.firePostConfirmation(pool, client, user, Map.of(), "PostConfirmation_ConfirmSignUp");
+        authFlowHandler.firePostConfirmation(pool, client, user, clientMetadata, "PostConfirmation_ConfirmSignUp");
     }
 
     Map<String, String> signUpCodeDeliveryDetails(CognitoUser user) {
@@ -3176,13 +3181,17 @@ public class CognitoService implements ResourceProvider {
     }
 
     public void adminConfirmSignUp(String userPoolId, String username) {
+        adminConfirmSignUp(userPoolId, username, Map.of());
+    }
+
+    public void adminConfirmSignUp(String userPoolId, String username, Map<String, String> clientMetadata) {
         CognitoUser resolvedUser = adminGetUser(userPoolId, username);
         CognitoUser user;
         synchronized (userLock(userPoolId, resolvedUser.getUsername())) {
             user = adminConfirmSignUpUnderUserLock(userPoolId, resolvedUser.getUsername());
         }
         authFlowHandler.firePostConfirmation(describeUserPool(userPoolId), null, user,
-                Map.of(), "PostConfirmation_ConfirmSignUp");
+                clientMetadata, "PostConfirmation_ConfirmSignUp");
     }
 
     private CognitoUser adminConfirmSignUpUnderUserLock(String userPoolId, String username) {
@@ -3365,6 +3374,11 @@ public class CognitoService implements ResourceProvider {
     }
 
     public void confirmForgotPassword(String clientId, String username, String confirmationCode, String newPassword) {
+        confirmForgotPassword(clientId, username, confirmationCode, newPassword, Map.of());
+    }
+
+    public void confirmForgotPassword(String clientId, String username, String confirmationCode, String newPassword,
+                                      Map<String, String> clientMetadata) {
         UserPoolClient client = clientStore.get(clientId)
                 .orElseThrow(() -> new AwsException("ResourceNotFoundException", "Client not found", 400));
         CognitoUser user = adminGetUser(client.getUserPoolId(), username);
@@ -3377,7 +3391,7 @@ public class CognitoService implements ResourceProvider {
         }
         adminSetUserPassword(client.getUserPoolId(), user.getUsername(), newPassword, true);
         authFlowHandler.firePostConfirmation(describeUserPool(client.getUserPoolId()), client,
-                adminGetUser(client.getUserPoolId(), user.getUsername()), Map.of(),
+                adminGetUser(client.getUserPoolId(), user.getUsername()), clientMetadata,
                 "PostConfirmation_ConfirmForgotPassword");
     }
 
