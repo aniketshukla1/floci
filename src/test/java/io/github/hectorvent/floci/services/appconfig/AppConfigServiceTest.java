@@ -6,6 +6,7 @@ import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.storage.AccountAwareStorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.appconfig.model.Application;
+import io.github.hectorvent.floci.services.appconfig.model.ConfigurationProfile;
 import io.github.hectorvent.floci.services.appconfig.model.Deployment;
 import io.github.hectorvent.floci.services.appconfig.model.DeploymentSummary;
 import io.github.hectorvent.floci.services.appconfig.model.Environment;
@@ -45,6 +46,7 @@ class AppConfigServiceTest {
     void setUp() {
         applicationStore = mock(AccountAwareStorageBackend.class);
         environmentStore = mock(AccountAwareStorageBackend.class);
+        AccountAwareStorageBackend<ConfigurationProfile> profileStore = mock(AccountAwareStorageBackend.class);
         deploymentStore = mock(AccountAwareStorageBackend.class);
         activeConfigStore = mock(AccountAwareStorageBackend.class);
         Map<String, Deployment> deployments = new HashMap<>();
@@ -61,6 +63,7 @@ class AppConfigServiceTest {
         doAnswer(invocation -> switch (invocation.getArgument(1, String.class)) {
             case "appconfig-applications.json" -> applicationStore;
             case "appconfig-environments.json" -> environmentStore;
+            case "appconfig-profiles.json" -> profileStore;
             case "appconfig-deployments.json" -> deploymentStore;
             case "appconfig-active-configs.json" -> activeConfigStore;
             default -> mock(AccountAwareStorageBackend.class);
@@ -75,6 +78,10 @@ class AppConfigServiceTest {
         environment.setApplicationId("app");
         environmentStore.put("env", environment);
         when(environmentStore.get("env")).thenReturn(Optional.of(environment));
+        ConfigurationProfile profile = new ConfigurationProfile();
+        profile.setId("profile");
+        profile.setApplicationId("app");
+        when(profileStore.get("profile")).thenReturn(Optional.of(profile));
         service = new AppConfigService(storageFactory, mock(EmulatorConfig.class));
     }
 
@@ -137,6 +144,26 @@ class AppConfigServiceTest {
         verify(deploymentStore).delete("app::env::1");
         verify(activeConfigStore).delete("env::profile");
         verify(environmentStore).delete("env");
+    }
+
+    @Test
+    void startDeploymentUsesHighestNumberAfterAnotherEnvironmentIsDeleted() {
+        Environment otherEnvironment = new Environment();
+        otherEnvironment.setId("other-env");
+        otherEnvironment.setApplicationId("app");
+        when(environmentStore.get("other-env")).thenReturn(Optional.of(otherEnvironment));
+        deploymentStore.put("app::env::1", deployment("app", "env", 1));
+        deploymentStore.put("app::other-env::2", deployment("app", "other-env", 2));
+        deploymentStore.put("app::env::3", deployment("app", "env", 3));
+
+        service.deleteEnvironment("app", "other-env");
+        Deployment deployment = service.startDeployment("app", "env", Map.of(
+                "ConfigurationProfileId", "profile",
+                "ConfigurationVersion", "version",
+                "DeploymentStrategyId", "AppConfig.AllAtOnce"));
+
+        assertEquals(4, deployment.getDeploymentNumber());
+        assertEquals(Set.of("app::env::1", "app::env::3", "app::env::4"), deploymentStore.keys());
     }
 
     @Test

@@ -102,17 +102,8 @@ public class AppConfigService {
     public synchronized void deleteEnvironment(String appId, String envId) {
         getEnvironment(appId, envId);
 
-        String deploymentPrefix = appId + "::" + envId + "::";
-        deploymentStore.keys().stream()
-                .filter(key -> key.startsWith(deploymentPrefix))
-                .toList()
-                .forEach(deploymentStore::delete);
-
-        String activeConfigPrefix = envId + "::";
-        activeConfigStore.keys().stream()
-                .filter(key -> key.startsWith(activeConfigPrefix))
-                .toList()
-                .forEach(activeConfigStore::delete);
+        deleteByPrefix(deploymentStore, appId + "::" + envId + "::");
+        deleteByPrefix(activeConfigStore, envId + "::");
 
         String deploymentScope = appId + "::" + envId;
         deploymentPageTokens.entrySet().removeIf(entry -> entry.getValue().scope().equals(deploymentScope));
@@ -183,12 +174,15 @@ public class AppConfigService {
         // A hosted configuration version isn't independently addressable outside its profile's
         // lifecycle - cascade the delete so a caller can't still fetch versions for a profile
         // that's supposedly gone.
-        String versionPrefix = appId + "::" + profileId + "::";
-        versionStore.keys().stream()
-                .filter(k -> k.startsWith(versionPrefix))
-                .toList()
-                .forEach(versionStore::delete);
+        deleteByPrefix(versionStore, appId + "::" + profileId + "::");
         profileStore.delete(profileId);
+    }
+
+    private static void deleteByPrefix(StorageBackend<String, ?> store, String prefix) {
+        store.keys().stream()
+                .filter(key -> key.startsWith(prefix))
+                .toList()
+                .forEach(store::delete);
     }
 
     // ──────────────────────────── Hosted Configuration Version ────────────────────────────
@@ -334,7 +328,11 @@ public class AppConfigService {
         deployment.setConfigurationProfileId(profileId);
         deployment.setConfigurationVersion(version);
         deployment.setDeploymentStrategyId(strategyId);
-        deployment.setDeploymentNumber(deploymentStore.keys().size() + 1);
+        int nextDeploymentNumber = deploymentStore.scan(key -> true).stream()
+                .mapToInt(Deployment::getDeploymentNumber)
+                .max()
+                .orElse(0) + 1;
+        deployment.setDeploymentNumber(nextDeploymentNumber);
         deployment.setState("COMPLETE"); // Synchronous immediate deployment
         deployment.setDescription((String) request.get("Description"));
 

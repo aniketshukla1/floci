@@ -15,6 +15,7 @@ The management plane allows you to create and manage applications, environments,
 - `CreateEnvironment`
 - `GetEnvironment`
 - `ListEnvironments`
+- `DeleteEnvironment`
 - `CreateConfigurationProfile`
 - `GetConfigurationProfile`
 - `ListConfigurationProfiles`
