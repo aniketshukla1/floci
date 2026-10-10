@@ -10,6 +10,7 @@ import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.TagHandler;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.core.storage.StorageOperations;
 import io.github.hectorvent.floci.services.fis.model.Experiment;
 import io.github.hectorvent.floci.services.fis.model.ExperimentTemplate;
 import io.github.hectorvent.floci.services.fis.model.IdempotencyRecord;
@@ -178,7 +179,7 @@ public class FisService implements TagHandler {
     public synchronized ObjectNode deleteExperimentTemplate(String region, String id) {
         ObjectNode template = requireTemplate(region, id);
         stores.templates.delete(templateKey(region, id));
-        deleteByPrefix(stores.targetAccounts, targetAccountPrefix(region, id));
+        StorageOperations.deleteByPrefix(stores.targetAccounts, targetAccountPrefix(region, id));
         return wrap("experimentTemplate", template);
     }
 
@@ -1506,14 +1507,6 @@ public class FisService implements TagHandler {
         template.put("targetAccountConfigurationsCount", targetAccountConfigurations(region, templateId).size());
         template.put("lastUpdateTime", now());
         putTemplate(region, templateId, template);
-    }
-
-    private <T> void deleteByPrefix(StorageBackend<String, T> store, String prefix) {
-        for (String key : new HashSet<>(store.keys())) {
-            if (key.startsWith(prefix)) {
-                store.delete(key);
-            }
-        }
     }
 
     private String newId(String region, String type, String prefix) {

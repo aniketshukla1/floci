@@ -1096,7 +1096,7 @@ class AppConfigIntegrationTest {
                 .extract().path("InitialConfigurationToken");
 
         given()
-                .when().delete("/applications/" + appId + "/environments/" + envId)
+                .when().delete("/applications/test-app/environments/test-env")
                 .then().statusCode(204);
 
         given()

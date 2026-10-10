@@ -5,6 +5,7 @@ import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.storage.StorageBackend;
 import io.github.hectorvent.floci.core.storage.StorageFactory;
+import io.github.hectorvent.floci.core.storage.StorageOperations;
 import io.github.hectorvent.floci.services.appconfig.model.Application;
 import io.github.hectorvent.floci.services.appconfig.model.ConfigurationProfile;
 import io.github.hectorvent.floci.services.appconfig.model.Deployment;
@@ -99,11 +100,14 @@ public class AppConfigService {
         return env;
     }
 
-    public synchronized void deleteEnvironment(String appId, String envId) {
-        getEnvironment(appId, envId);
+    public synchronized void deleteEnvironment(String applicationIdentifier, String environmentIdentifier) {
+        Application application = resolveApplication(applicationIdentifier);
+        Environment environment = resolveEnvironment(application.getId(), environmentIdentifier);
+        String appId = application.getId();
+        String envId = environment.getId();
 
-        deleteByPrefix(deploymentStore, appId + "::" + envId + "::");
-        deleteByPrefix(activeConfigStore, envId + "::");
+        StorageOperations.deleteByPrefix(deploymentStore, appId + "::" + envId + "::");
+        StorageOperations.deleteByPrefix(activeConfigStore, envId + "::");
 
         String deploymentScope = appId + "::" + envId;
         deploymentPageTokens.entrySet().removeIf(entry -> entry.getValue().scope().equals(deploymentScope));
@@ -174,15 +178,8 @@ public class AppConfigService {
         // A hosted configuration version isn't independently addressable outside its profile's
         // lifecycle - cascade the delete so a caller can't still fetch versions for a profile
         // that's supposedly gone.
-        deleteByPrefix(versionStore, appId + "::" + profileId + "::");
+        StorageOperations.deleteByPrefix(versionStore, appId + "::" + profileId + "::");
         profileStore.delete(profileId);
-    }
-
-    private static void deleteByPrefix(StorageBackend<String, ?> store, String prefix) {
-        store.keys().stream()
-                .filter(key -> key.startsWith(prefix))
-                .toList()
-                .forEach(store::delete);
     }
 
     // ──────────────────────────── Hosted Configuration Version ────────────────────────────
