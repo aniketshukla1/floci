@@ -3428,7 +3428,7 @@ public class ApiGatewayExecuteController {
             }
 
             Map<String, List<String>> lowercaseHeaders = new LinkedHashMap<>();
-            integrationRequestHeaders(headers, iamIdentity).forEach((name, values) ->
+            headers.getRequestHeaders().forEach((name, values) ->
                     lowercaseHeaders.computeIfAbsent(name.toLowerCase(Locale.ROOT), ignored -> new ArrayList<>())
                             .addAll(values));
             putSingleValueHeaders(event, lowercaseHeaders);
