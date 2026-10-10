@@ -2623,10 +2623,13 @@ public class ApiGatewayExecuteController {
 
         String requestId = UUID.randomUUID().toString();
         boolean payloadV1 = "1.0".equals(integration.getPayloadFormatVersion());
+        Map<String, String> stageVariables = payloadV1
+                ? apiGatewayV2Service.getStage(region, apiId, stageName).getStageVariables()
+                : null;
         String eventJson = payloadV1
                 ? buildV1ProxyEvent(httpMethod, path, route.getRouteKey(),
-                        apiId, region, stageName, headers, uriInfo, body, requestId, jwtClaims, jwtScopes,
-                        lambdaAuthorizerContext, iamIdentity)
+                        apiId, region, stageName, stageVariables, headers, uriInfo, body, requestId,
+                        jwtClaims, jwtScopes, lambdaAuthorizerContext, iamIdentity)
                 : buildV2ProxyEvent(httpMethod, path, route.getRouteKey(),
                         apiId, region, stageName, headers, uriInfo, body, requestId, jwtClaims, jwtScopes,
                         lambdaAuthorizerContext, iamIdentity);
@@ -3406,6 +3409,7 @@ public class ApiGatewayExecuteController {
     /** Reuses the REST v1 event shape, then applies the documented HTTP API v1 differences. */
     String buildV1ProxyEvent(String httpMethod, String path, String routeKey,
                              String apiId, String region, String stageName,
+                             Map<String, String> stageVariables,
                              HttpHeaders headers, UriInfo uriInfo, byte[] body, String requestId,
                              Map<String, String> jwtClaims, List<String> jwtScopes,
                              ObjectNode lambdaAuthorizerContext,
@@ -3418,6 +3422,10 @@ public class ApiGatewayExecuteController {
         try {
             ObjectNode event = (ObjectNode) objectMapper.readTree(json);
             event.put("version", "1.0");
+            if (stageVariables != null && !stageVariables.isEmpty()) {
+                ObjectNode variables = event.putObject("stageVariables");
+                stageVariables.forEach(variables::put);
+            }
 
             Map<String, List<String>> lowercaseHeaders = new LinkedHashMap<>();
             integrationRequestHeaders(headers, iamIdentity).forEach((name, values) ->
@@ -3432,6 +3440,7 @@ public class ApiGatewayExecuteController {
 
             ObjectNode context = (ObjectNode) event.path("requestContext");
             context.putNull("resourceId");
+            // Payload 1.0 keeps claims and scopes directly under authorizer; jwt belongs to 2.0.
             if (jwtClaims != null) {
                 ObjectNode authorizer = context.putObject("authorizer");
                 ObjectNode claims = authorizer.putObject("claims");

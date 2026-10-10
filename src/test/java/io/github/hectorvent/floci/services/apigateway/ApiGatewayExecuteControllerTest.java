@@ -634,7 +634,8 @@ class ApiGatewayExecuteControllerTest {
 
         JsonNode event = new ObjectMapper().readTree(controller.buildV1ProxyEvent(
                 "GET", "/echo-v1", "GET /echo-v1", "api1", "us-east-1", "test",
-                headers, uriInfo, new byte[0], "req-1", null, null, null, null));
+                Map.of("environment", "review"), headers, uriInfo, new byte[0], "req-1",
+                Map.of("sub", "user-1"), List.of("read"), null, null));
 
         assertEquals("1.0", event.path("version").asText());
         assertEquals("/echo-v1", event.path("resource").asText());
@@ -642,8 +643,18 @@ class ApiGatewayExecuteControllerTest {
         assertEquals("GET", event.path("httpMethod").asText());
         assertTrue(event.path("rawPath").isMissingNode());
         assertTrue(event.path("pathParameters").isNull());
+        assertEquals("review", event.path("stageVariables").path("environment").asText());
         assertTrue(event.path("requestContext").path("resourceId").isNull());
-        assertTrue(event.path("requestContext").path("authorizer").path("claims").isNull());
+        assertTrue(event.path("requestContext").path("requestTime").isTextual());
+        assertTrue(event.path("requestContext").path("requestTimeEpoch").asLong() > 0);
+        assertTrue(event.path("requestContext").path("routeKey").isMissingNode());
+        assertTrue(event.path("requestContext").path("time").isMissingNode());
+        assertTrue(event.path("requestContext").path("timeEpoch").isMissingNode());
+        assertEquals("user-1", event.path("requestContext").path("authorizer").path("claims")
+                .path("sub").asText());
+        assertEquals("read", event.path("requestContext").path("authorizer").path("scopes")
+                .path(0).asText());
+        assertTrue(event.path("requestContext").path("authorizer").path("jwt").isMissingNode());
         assertEquals("second", event.path("headers").path("x-trace").asText());
         assertTrue(event.path("headers").path("X-Trace").isMissingNode());
         JsonNode queryValues = event.path("multiValueQueryStringParameters").path("q");

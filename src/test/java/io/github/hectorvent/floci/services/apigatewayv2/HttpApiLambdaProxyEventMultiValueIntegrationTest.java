@@ -58,7 +58,7 @@ class HttpApiLambdaProxyEventMultiValueIntegrationTest {
         given()
                 .contentType(ContentType.JSON)
                 .body("""
-                        {"stageName":"test"}
+                        {"stageName":"test","stageVariables":{"environment":"review"}}
                         """)
                 .when().post("/v2/apis/" + apiId + "/stages")
                 .then().statusCode(201);
@@ -160,6 +160,7 @@ class HttpApiLambdaProxyEventMultiValueIntegrationTest {
                 .body("path", equalTo("/echo-v1"))
                 .body("httpMethod", equalTo("GET"))
                 .body("rawPath", nullValue())
+                .body("stageVariables.environment", equalTo("review"))
                 .body("multiValueHeaders", notNullValue())
                 .body("multiValueQueryStringParameters.q", contains("1", "2"));
     }
