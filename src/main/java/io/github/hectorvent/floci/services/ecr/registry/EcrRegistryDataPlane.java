@@ -129,7 +129,7 @@ public class EcrRegistryDataPlane {
             if (result.failed()) {
                 context.request().resume();
                 exchange.end();
-                context.response().setStatusCode(503).end();
+                registryUnavailable(context);
             } else if (result.result()) {
                 context.request().resume();
                 exchange.end();
@@ -158,7 +158,7 @@ public class EcrRegistryDataPlane {
             if (upstreamRequest.failed()) {
                 context.request().resume();
                 exchange.end();
-                failUnlessGone(context, 503);
+                registryUnavailable(context);
                 return;
             }
             HttpClientRequest clientReq = upstreamRequest.result();
@@ -178,6 +178,19 @@ public class EcrRegistryDataPlane {
             });
             context.request().resume();
         });
+    }
+
+    private static void registryUnavailable(RoutingContext context) {
+        if (!context.response().ended() && !context.response().closed()) {
+            String message = "ECR registry is unavailable. Check Docker and registry connectivity. "
+                    + "When running Floci in Docker, use a user-defined network shared with the registry "
+                    + "(FLOCI_SERVICES_ECR_DOCKER_NETWORK).";
+            context.response().setStatusCode(503)
+                    .putHeader("Content-Type", "application/json")
+                    .putHeader("Docker-Distribution-API-Version", "registry/2.0")
+                    .end(new JsonObject().put("errors", new JsonArray().add(new JsonObject()
+                            .put("code", "UNAVAILABLE").put("message", message))).encode());
+        }
     }
 
     /** Answers {@code status} unless the response is already written or its client went away. */
