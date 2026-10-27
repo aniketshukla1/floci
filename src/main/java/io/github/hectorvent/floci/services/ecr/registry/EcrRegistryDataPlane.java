@@ -185,11 +185,8 @@ public class EcrRegistryDataPlane {
             String message = "ECR registry is unavailable. Check Docker and registry connectivity. "
                     + "When running Floci in Docker, use a user-defined network shared with the registry "
                     + "(FLOCI_SERVICES_ECR_DOCKER_NETWORK).";
-            context.response().setStatusCode(503)
-                    .putHeader("Content-Type", "application/json")
-                    .putHeader("Docker-Distribution-API-Version", "registry/2.0")
-                    .end(new JsonObject().put("errors", new JsonArray().add(new JsonObject()
-                            .put("code", "UNAVAILABLE").put("message", message))).encode());
+            context.response().putHeader("Docker-Distribution-API-Version", "registry/2.0");
+            registryError(context, 503, "UNAVAILABLE", message);
         }
     }
 
@@ -241,14 +238,14 @@ public class EcrRegistryDataPlane {
         String message = String.format(
                 "The image tag %s already exists in the %s repository and cannot be overwritten because the tag is immutable.",
                 tag, repository);
-        String body = new JsonObject()
-                .put("errors", new JsonArray().add(new JsonObject()
-                        .put("code", "TAG_INVALID")
-                        .put("message", message)))
-                .encode();
-        context.response().setStatusCode(400)
+        registryError(context, 400, "TAG_INVALID", message);
+    }
+
+    private static void registryError(RoutingContext context, int status, String code, String message) {
+        context.response().setStatusCode(status)
                 .putHeader("Content-Type", "application/json")
-                .end(body);
+                .end(new JsonObject().put("errors", new JsonArray().add(new JsonObject()
+                        .put("code", code).put("message", message))).encode());
     }
 
     private void release(String immutableTag) {
