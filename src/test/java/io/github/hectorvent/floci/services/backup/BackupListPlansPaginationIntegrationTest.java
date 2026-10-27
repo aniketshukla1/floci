@@ -1,9 +1,10 @@
 package io.github.hectorvent.floci.services.backup;
 
 import io.github.hectorvent.floci.core.common.RequestScopes;
+import io.github.hectorvent.floci.services.backup.model.BackupRule;
+import io.github.hectorvent.floci.testing.AwsTestClients;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
-import io.restassured.RestAssured;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -12,9 +13,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.backup.BackupClient;
 import software.amazon.awssdk.services.backup.model.BackupException;
@@ -23,7 +21,6 @@ import software.amazon.awssdk.services.backup.model.BackupRuleInput;
 import software.amazon.awssdk.services.backup.model.ListBackupPlansRequest;
 import software.amazon.awssdk.services.backup.model.ListBackupPlansResponse;
 
-import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,14 +54,14 @@ class BackupListPlansPaginationIntegrationTest {
 
     @BeforeEach
     void openClient() {
-        client = client(ACCOUNT, REGION);
+        client = AwsTestClients.create(BackupClient.builder(), ACCOUNT, Region.of(REGION));
         client.createBackupVault(request -> request.backupVaultName(name));
     }
 
     @AfterEach
     void cleanUp() {
         try {
-            plans.forEach(id -> client.deleteBackupPlan(request -> request.backupPlanId(id)));
+            RequestScopes.runAs(ACCOUNT, REGION, () -> plans.forEach(service::deleteBackupPlan));
             client.deleteBackupVault(request -> request.backupVaultName(name));
         } finally {
             client.close();
@@ -156,7 +153,7 @@ class BackupListPlansPaginationIntegrationTest {
     void listingsAndTokensStayWithinTheirAccountAndRegion(String account, String region) {
         create();
         create();
-        try (BackupClient other = client(account, region)) {
+        try (BackupClient other = AwsTestClients.create(BackupClient.builder(), account, Region.of(region))) {
             other.createBackupVault(request -> request.backupVaultName(name));
             String otherId = create(other);
             try {
@@ -194,9 +191,16 @@ class BackupListPlansPaginationIntegrationTest {
 
     @Test
     void omittedAndMaximumPageSizesReturnAtMostOneThousandPlans() {
-        for (int i = 0; i <= 1000; i++) {
-            create();
-        }
+        RequestScopes.runAs(ACCOUNT, REGION, () -> {
+            for (int i = 0; i <= 1000; i++) {
+                BackupRule rule = new BackupRule();
+                rule.setRuleName("daily");
+                rule.setTargetBackupVaultName(name);
+                rule.setScheduleExpression("cron(0 12 * * ? *)");
+                plans.add(service.createBackupPlan(name + "-" + ++sequence, List.of(rule), null, REGION)
+                        .getBackupPlanId());
+            }
+        });
         for (ListBackupPlansRequest request : List.of(ListBackupPlansRequest.builder().build(),
                 ListBackupPlansRequest.builder().maxResults(1000).build())) {
             ListBackupPlansResponse first = client.listBackupPlans(request);
@@ -244,9 +248,4 @@ class BackupListPlansPaginationIntegrationTest {
                         .scheduleExpression("cron(0 12 * * ? *)").build()))).backupPlanId();
     }
 
-    private BackupClient client(String account, String region) {
-        return BackupClient.builder().endpointOverride(URI.create("http://localhost:" + RestAssured.port))
-                .httpClientBuilder(UrlConnectionHttpClient.builder()).region(Region.of(region))
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(account, "test"))).build();
-    }
 }
