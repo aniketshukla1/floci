@@ -507,6 +507,15 @@ shortcut is not implemented yet.
 
 Any other `AuthFlow` value is rejected with `InvalidParameterException` and no tokens are issued.
 
+`CUSTOM_AUTH` can start with `CHALLENGE_NAME=SRP_A` and `SRP_A`. Floci seeds the
+DefineAuthChallenge history with `SRP_A=true`, issues a real `PASSWORD_VERIFIER` challenge,
+and verifies the SRP proof before returning to the trigger's custom challenges. Temporary-password
+users complete `NEW_PASSWORD_REQUIRED` within the same custom sequence. Each response must match
+the issued session's client, user and challenge; sessions are consumed once. Plain custom
+challenges remain supported. `RESET_REQUIRED` still requires password recovery first because
+Floci clears the SRP verifier when an administrator resets the password.
+See [AWS's custom SRP sequence](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-challenge.html#user-pool-lambda-challenge-srp-authentication).
+
 The challenge `Session` of a `USER_SRP_AUTH`, `CUSTOM_AUTH` or `USER_AUTH` sign-in is valid for 3 minutes
 from when it was issued, the AWS default for the client's `AuthSessionValidity`. Answering the challenge with
 an older session fails with `NotAuthorizedException` (`Invalid session for the user, session is expired.`)
