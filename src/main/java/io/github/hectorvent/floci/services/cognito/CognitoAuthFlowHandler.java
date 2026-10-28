@@ -780,6 +780,11 @@ final class CognitoAuthFlowHandler {
         Map<String, Object> result = new HashMap<>();
         result.put("ChallengeName", "NEW_PASSWORD_REQUIRED");
         result.put("Session", session);
+        result.put("ChallengeParameters", newPasswordChallengeParameters(user));
+        return result;
+    }
+
+    private static Map<String, String> newPasswordChallengeParameters(CognitoUser user) {
         Map<String, String> params = new HashMap<>();
         params.put("USER_ID_FOR_SRP", user.getUsername());
         params.put("requiredAttributes", "[]");
@@ -789,8 +794,7 @@ final class CognitoAuthFlowHandler {
         } catch (Exception e) {
             params.put("userAttributes", "{}");
         }
-        result.put("ChallengeParameters", params);
-        return result;
+        return params;
     }
 
     private static String buildSessionToken(String poolId, String username, String clientId) {
@@ -1707,7 +1711,8 @@ final class CognitoAuthFlowHandler {
             throw new AwsException("InvalidLambdaResponseException", "Unexpected custom SRP challenge", 400);
         }
         state.currentChallengeName = challengeName;
-        Map<String, String> params = new HashMap<>();
+        Map<String, String> params = "NEW_PASSWORD_REQUIRED".equals(challengeName)
+                ? newPasswordChallengeParameters(user) : new HashMap<>();
         params.put("USERNAME", state.username);
         applyCreateResponse(state, challengeName, "CUSTOM_CHALLENGE".equals(challengeName)
                 ? createAuthChallenge(pool, client, user, state, challengeName) : Map.of(), params);

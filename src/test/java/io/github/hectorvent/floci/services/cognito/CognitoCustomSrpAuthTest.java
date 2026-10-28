@@ -102,6 +102,10 @@ class CognitoCustomSrpAuthTest {
         assertDenied(() -> respond(admin, client.getClientId(), "PASSWORD_VERIFIER", started, proof));
         if (temporary) {
             assertEquals("NEW_PASSWORD_REQUIRED", next.get("ChallengeName"));
+            Map<?, ?> params = (Map<?, ?>) next.get("ChallengeParameters");
+            assertEquals(USERNAME, params.get("USER_ID_FOR_SRP"));
+            assertTrue(MAPPER.readTree((String) params.get("requiredAttributes")).isArray());
+            assertTrue(MAPPER.readTree((String) params.get("userAttributes")).isObject());
             Map<String, Object> passwordChallenge = next;
             next = respond(admin, client.getClientId(), "NEW_PASSWORD_REQUIRED", next,
                     Map.of("USERNAME", USERNAME, "NEW_PASSWORD", "NewPerm1234!"));
