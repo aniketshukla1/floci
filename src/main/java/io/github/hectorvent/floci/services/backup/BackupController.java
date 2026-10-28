@@ -584,13 +584,19 @@ public class BackupController {
         return n.asText();
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, String> readStringMap(JsonNode node, String field) {
         JsonNode mapNode = node.path(field);
         if (mapNode.isMissingNode() || mapNode.isNull()) {
             return new HashMap<>();
         }
-        return objectMapper.convertValue(mapNode, Map.class);
+        if (!mapNode.isObject() || mapNode.properties().stream()
+                .anyMatch(entry -> !entry.getValue().isTextual())) {
+            throw new AwsException("InvalidParameterValueException",
+                    field + " must be an object with string values", 400);
+        }
+        Map<String, String> result = new HashMap<>();
+        mapNode.properties().forEach(entry -> result.put(entry.getKey(), entry.getValue().textValue()));
+        return result;
     }
 
     private static List<String> readStringList(JsonNode node) {

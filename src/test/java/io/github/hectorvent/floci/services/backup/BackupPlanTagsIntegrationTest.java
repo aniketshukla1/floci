@@ -6,6 +6,7 @@ import io.github.hectorvent.floci.services.backup.model.BackupPlan;
 import io.github.hectorvent.floci.testing.AwsTestClients;
 import io.github.hectorvent.floci.testing.RestAssuredJsonUtils;
 import io.quarkus.test.junit.QuarkusTest;
+import io.restassured.response.Response;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static io.restassured.RestAssured.given;
 import static org.junit.jupiter.api.Assertions.*;
 
 @QuarkusTest
@@ -113,6 +115,28 @@ class BackupPlanTagsIntegrationTest {
         assertEquals(Map.of("vault", "kept", "env", "dev"), client.listTags(request -> request.resourceArn(arn)).tags());
         client.untagResource(request -> request.resourceArn(arn).tagKeyList("env"));
         assertEquals(Map.of("vault", "kept"), client.listTags(request -> request.resourceArn(arn)).tags());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{\"env\":123}", "{\"env\":true}", "{\"env\":null}",
+            "{\"env\":{}}", "{\"env\":[]}", "[]", "123", "\"invalid\""})
+    void malformedCreationTagsAreRejectedWithoutCreatingAPlan(String tags) {
+        Response response = given()
+                .header("Authorization", "AWS4-HMAC-SHA256 Credential=" + ACCOUNT + "/20261028/"
+                        + REGION + "/backup/aws4_request")
+                .contentType("application/json")
+                .body("""
+                        {"BackupPlan":{"BackupPlanName":"%s","Rules":[
+                          {"RuleName":"daily","TargetBackupVaultName":"%s"}]},"BackupPlanTags":%s}
+                        """.formatted(name, name, tags))
+                .put("/backup/plans/");
+        if (response.statusCode() == 200) {
+            plans.add(response.jsonPath().getString("BackupPlanId"));
+        }
+        assertEquals(400, response.statusCode());
+        assertEquals("InvalidParameterValueException", response.jsonPath().getString("__type"));
+        assertTrue(client.listBackupPlans().backupPlansList().stream()
+                .noneMatch(plan -> name.equals(plan.backupPlanName())));
     }
 
     @ParameterizedTest
