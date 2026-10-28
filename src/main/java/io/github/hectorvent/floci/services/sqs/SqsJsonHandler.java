@@ -259,7 +259,8 @@ public class SqsJsonHandler {
 
     private Response handleReceiveMessage(JsonNode request, String region) {
         String queueUrl = request.path("QueueUrl").asText(null);
-        int maxMessages = request.path("MaxNumberOfMessages").asInt(1);
+        Integer requestedMax = getOptionalIntField(request, "MaxNumberOfMessages");
+        int maxMessages = requestedMax == null ? 1 : requestedMax;
         int visibilityTimeout = request.path("VisibilityTimeout").asInt(-1);
         Integer waitTimeSeconds = getOptionalIntField(request, "WaitTimeSeconds");
 

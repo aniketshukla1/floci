@@ -84,6 +84,11 @@ curl -X DELETE "http://localhost:4566/_aws/sqs/messages?QueueUrl=$QUEUE_URL"
 
 `ReceiveMessage` waits up to `WaitTimeSeconds` (0 to 20) for a message to arrive and returns as soon as one is available. Values outside that range are rejected with `InvalidParameterValue`. When the request omits `WaitTimeSeconds`, the queue's `ReceiveMessageWaitTimeSeconds` attribute applies (default `0`, short polling), matching AWS.
 
+`MaxNumberOfMessages` defaults to 1 and must be an integer from 1 to 10.
+Out-of-range, malformed, and overflowing values return `InvalidParameterValue`
+without receiving a message or changing its receive count or visibility. Both
+the JSON and Query protocols enforce this limit.
+
 ```bash
 # Enable long polling for every consumer of the queue
 aws sqs set-queue-attributes \

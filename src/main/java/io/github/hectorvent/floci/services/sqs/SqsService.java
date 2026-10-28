@@ -1439,7 +1439,9 @@ public class SqsService implements Resettable, ResourceProvider {
                         "The specified queue does not exist.", 400));
 
         if (maxMessages < 1 || maxMessages > 10) {
-            maxMessages = 1;
+            throw new AwsException("InvalidParameterValue",
+                    "Value " + maxMessages + " for parameter MaxNumberOfMessages is invalid. "
+                            + "Reason: Must be between 1 and 10, if provided.", 400);
         }
         if (waitTimeSeconds != null && (waitTimeSeconds < 0 || waitTimeSeconds > MAX_RECEIVE_WAIT_TIME_SECONDS)) {
             throw new AwsException("InvalidParameterValue",
