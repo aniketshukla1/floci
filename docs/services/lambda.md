@@ -255,6 +255,13 @@ Not emulated yet:
   destinations for durable executions.
 - The per-execution limits of 3,000 operations and 100 MB of persisted payload.
 
+## Code signing configuration pagination
+
+`ListCodeSigningConfigs` accepts `MaxItems` from 1 to 10,000 and returns `NextMarker`
+when more configurations remain. Pass that value as `Marker` to continue listing.
+Omitting `MaxItems` returns up to 10,000 configurations. Markers are scoped to the
+account and region; the final page omits `NextMarker`.
+
 ## Hot-Reloading via Reactive S3 Sync
 
 Floci supports automatic hot reload for S3 deployments as a local development convenience.
