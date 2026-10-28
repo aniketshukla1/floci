@@ -59,6 +59,8 @@ public class EcrJsonHandler {
             EcrRequestShapes.check(action, request);
         }
         return switch (action) {
+            case "GetAccountSetting" -> handleAccountSetting(request, region, false);
+            case "PutAccountSetting" -> handleAccountSetting(request, region, true);
             case "CreateRepository" -> handleCreateRepository(request, region);
             case "CreatePullThroughCacheRule" -> handleCreatePullThroughCacheRule(request, region);
             case "DescribePullThroughCacheRules" -> handleDescribePullThroughCacheRules(request, region);
@@ -108,6 +110,24 @@ public class EcrJsonHandler {
                             "Operation " + action + " is not supported."))
                     .build();
         };
+    }
+
+    private Response handleAccountSetting(JsonNode request, String region, boolean put) {
+        String name = accountSettingText(request, "name");
+        String value = put ? service.putAccountSetting(name, accountSettingText(request, "value"), region)
+                : service.getAccountSetting(name, region);
+        ObjectNode response = objectMapper.createObjectNode();
+        response.put("name", name);
+        response.put("value", value);
+        return Response.ok(response).build();
+    }
+
+    private static String accountSettingText(JsonNode request, String field) {
+        JsonNode value = request.get(field);
+        if (value == null || !value.isTextual()) {
+            throw new AwsException("ValidationException", field + " must be a string.", 400);
+        }
+        return value.textValue();
     }
 
     private Response handleCreateRepository(JsonNode request, String region) {

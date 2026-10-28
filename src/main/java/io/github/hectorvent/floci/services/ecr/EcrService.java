@@ -42,6 +42,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -85,6 +86,8 @@ public class EcrService implements ResourceProvider {
             MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final int MAX_REPO_NAME_LENGTH = 256;
     private static final int MAX_PULL_THROUGH_CACHE_PREFIX_LENGTH = 30;
+    private static final Map<String, String> ACCOUNT_SETTING_DEFAULTS = Map.of(
+            "BASIC_SCAN_TYPE_VERSION", "AWS_NATIVE", "REGISTRY_POLICY_SCOPE", "V2", "BLOB_MOUNTING", "DISABLED");
 
     private final StorageBackend<String, Repository> repoStore;
     private final StorageBackend<String, ImageMetadata> imageMetaStore;
@@ -1312,6 +1315,37 @@ public class EcrService implements ResourceProvider {
     /** The registry ID of the caller's account. */
     public String registryId() {
         return regionResolver.getAccountId();
+    }
+
+    public String getAccountSetting(String name, String region) {
+        String defaultValue = accountSettingDefault(name);
+        synchronized (registryLock(region)) {
+            Map<String, String> values = registrySettings(region).getAccountSettings();
+            return values == null ? defaultValue : values.getOrDefault(name, defaultValue);
+        }
+    }
+
+    public String putAccountSetting(String name, String value, String region) {
+        String defaultValue = accountSettingDefault(name);
+        boolean valid = "BLOB_MOUNTING".equals(name)
+                ? "ENABLED".equals(value) || "DISABLED".equals(value) : defaultValue.equals(value);
+        if (!valid) {
+            throw new AwsException("ValidationException", "Invalid value for account setting " + name + ".", 400);
+        }
+        return updateRegistrySettings(region, settings -> {
+            Map<String, String> values = settings.getAccountSettings() == null
+                    ? new HashMap<>() : new HashMap<>(settings.getAccountSettings());
+            values.put(name, value);
+            settings.setAccountSettings(Map.copyOf(values));
+            return value;
+        });
+    }
+
+    private static String accountSettingDefault(String name) {
+        if (name == null || !ACCOUNT_SETTING_DEFAULTS.containsKey(name)) {
+            throw new AwsException("ValidationException", "Unsupported account setting name.", 400);
+        }
+        return ACCOUNT_SETTING_DEFAULTS.get(name);
     }
 
     private RegistrySettings registrySettings(String region) {

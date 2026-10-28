@@ -40,6 +40,14 @@
 | `PutRegistryPolicy` / `GetRegistryPolicy` / `DeleteRegistryPolicy` | Registry policy round-trip (stored, not enforced) |
 | `PutReplicationConfiguration` / `DescribeRegistry` | Store the registry's replication rules and return them with the registry ID (stored, not acted on) |
 | `PutRegistryScanningConfiguration` / `GetRegistryScanningConfiguration` | Store the registry's scan type and scanning rules (stored, not acted on) |
+| `GetAccountSetting` / `PutAccountSetting` | Read and store account settings for the registry (stored, not acted on) |
+
+`GetAccountSetting` and `PutAccountSetting` keep values per account and Region.
+Supported names are `BASIC_SCAN_TYPE_VERSION` (`AWS_NATIVE`), `REGISTRY_POLICY_SCOPE`
+(`V2`), and `BLOB_MOUNTING` (`ENABLED` or `DISABLED`). Floci defaults to `AWS_NATIVE`,
+`V2`, and `DISABLED`, respectively. Invalid names and values return `ValidationException`.
+These settings are metadata only: they do not start scanning, enforce registry policies,
+or change the registry's blob upload behavior.
 
 `ListImages` accepts `maxResults` from 1 to 1000 (default 100) and returns `nextToken`
 when another page remains. Tokens are scoped to the region, registry, and repository;
