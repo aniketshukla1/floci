@@ -69,8 +69,8 @@ public class BackupService {
     private final int jobCompletionDelaySeconds;
     private final ObjectMapper objectMapper;
 
-    // One monitor per vault key, so the check-then-write in createBackupVault and the
-    // multi-store cleanup in deleteBackupVault are atomic for a given name. Same shape as
+    // One monitor per account/resource key, so lookups, mutations, and deletion cannot
+    // interleave for a given resource. Same shape as
     // SecretsManagerService#lockFor and KinesisService's append locks.
     private final ConcurrentHashMap<String, Object> vaultLocks = new ConcurrentHashMap<>();
 
@@ -150,6 +150,10 @@ public class BackupService {
 
     private String jobLockKey(String jobId) {
         return "job:" + regionResolver.getAccountId() + ":" + jobId;
+    }
+
+    private String planLockKey(String planId) {
+        return "plan:" + regionResolver.getAccountId() + ":" + planId;
     }
 
     // ── Vault ──────────────────────────────────────────────────────────────────
@@ -661,27 +665,31 @@ public class BackupService {
     }
 
     public BackupPlan updateBackupPlan(String planId, String planName, List<BackupRule> rules) {
-        BackupPlan plan = getBackupPlan(planId);
-        if (planName != null) {
-            plan.setBackupPlanName(planName);
+        synchronized (lockFor(planLockKey(planId))) {
+            BackupPlan plan = getBackupPlan(planId);
+            if (planName != null) {
+                plan.setBackupPlanName(planName);
+            }
+            assignRuleIds(rules);
+            plan.setRules(rules);
+            plan.setVersionId(shortId());
+            planStore.put(planId, plan);
+            return plan;
         }
-        assignRuleIds(rules);
-        plan.setRules(rules);
-        plan.setVersionId(shortId());
-        planStore.put(planId, plan);
-        return plan;
     }
 
     public void deleteBackupPlan(String planId) {
-        getBackupPlan(planId);
-        long selectionCount = selectionStore.scan(k -> true).stream()
-                .filter(s -> planId.equals(s.getBackupPlanId()))
-                .count();
-        if (selectionCount > 0) {
-            throw new AwsException("InvalidRequestException",
-                    "Backup plan has active selections and cannot be deleted", 400);
+        synchronized (lockFor(planLockKey(planId))) {
+            getBackupPlan(planId);
+            long selectionCount = selectionStore.scan(k -> true).stream()
+                    .filter(s -> planId.equals(s.getBackupPlanId()))
+                    .count();
+            if (selectionCount > 0) {
+                throw new AwsException("InvalidRequestException",
+                        "Backup plan has active selections and cannot be deleted", 400);
+            }
+            planStore.delete(planId);
         }
-        planStore.delete(planId);
     }
 
     public List<BackupPlan> listBackupPlans() {
@@ -1017,7 +1025,10 @@ public class BackupService {
         if (vault.isPresent()) {
             return vault.get().getTags();
         }
-        return findPlanByArn(arn).getTags();
+        String planId = findPlanByArn(arn).getBackupPlanId();
+        synchronized (lockFor(planLockKey(planId))) {
+            return new HashMap<>(getBackupPlan(planId).getTags());
+        }
     }
 
     private BackupPlan findPlanByArn(String arn) {
@@ -1037,9 +1048,12 @@ public class BackupService {
             vaultStore.put(vaultKey(vault), vault);
             return;
         }
-        BackupPlan plan = findPlanByArn(arn);
-        plan.getTags().putAll(newTags);
-        planStore.put(plan.getBackupPlanId(), plan);
+        String planId = findPlanByArn(arn).getBackupPlanId();
+        synchronized (lockFor(planLockKey(planId))) {
+            BackupPlan plan = getBackupPlan(planId);
+            plan.getTags().putAll(newTags);
+            planStore.put(planId, plan);
+        }
     }
 
     private void removeTags(String arn, List<String> tagKeys) {
@@ -1052,9 +1066,12 @@ public class BackupService {
             vaultStore.put(vaultKey(vault), vault);
             return;
         }
-        BackupPlan plan = findPlanByArn(arn);
-        tagKeys.forEach(plan.getTags()::remove);
-        planStore.put(plan.getBackupPlanId(), plan);
+        String planId = findPlanByArn(arn).getBackupPlanId();
+        synchronized (lockFor(planLockKey(planId))) {
+            BackupPlan plan = getBackupPlan(planId);
+            tagKeys.forEach(plan.getTags()::remove);
+            planStore.put(planId, plan);
+        }
     }
 
     private static void assignRuleIds(List<BackupRule> rules) {
