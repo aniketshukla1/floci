@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
-import io.github.hectorvent.floci.core.common.Pagination;
 import io.github.hectorvent.floci.core.common.RegionResolver;
 import io.github.hectorvent.floci.core.common.SmithyValidationErrors;
 import io.github.hectorvent.floci.services.lambda.model.CodeSigningConfig;
@@ -146,13 +145,7 @@ public class LambdaCodeSigningConfigFunctionsController {
         int limit = parseMaxItems(maxItems);
         String region = regionResolver.resolveRegion(headers);
         String marker = uriInfo.getQueryParameters().getFirst("Marker");
-        if (marker != null && marker.isEmpty()) {
-            throw new AwsException("InvalidParameterValueException", "Invalid Marker.", 400);
-        }
-        PaginatedResult<CodeSigningConfig> page = Pagination.paginate(service.list(region),
-                CodeSigningConfig::getCodeSigningConfigId, limit, marker,
-                "ListCodeSigningConfigs:" + regionResolver.getAccountId() + ":" + region,
-                invalid -> new AwsException("InvalidParameterValueException", "Invalid Marker.", 400));
+        PaginatedResult<CodeSigningConfig> page = service.list(region, limit, marker);
         ObjectNode root = objectMapper.createObjectNode();
         root.set("CodeSigningConfigs", objectMapper.valueToTree(page.items()));
         if (page.nextToken() != null) {
