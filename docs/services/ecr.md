@@ -8,6 +8,8 @@
 
 | Action | Description |
 | --- | --- |
+| `RegisterPullTimeUpdateExclusion` / `DeregisterPullTimeUpdateExclusion` | Store or remove an IAM principal excluded from pull time updates (stored, not applied) |
+| `ListPullTimeUpdateExclusions` | List the registry's excluded principal ARNs with pagination |
 | `CreateRepository` | Create a new repository (lazy-starts the backing registry on first call) |
 | `CreatePullThroughCacheRule` | Create and persist pull-through cache rule configuration |
 | `DescribePullThroughCacheRules` | List or filter pull-through cache rules with pagination |
@@ -92,6 +94,16 @@ the optional `filter` fields.
 - **Upgrade from direct registry access.** Floci recreates an older backing container with the same volume and a loopback-only port binding. Repositories written through the former direct endpoint retain their physical paths and map to the default account and Region; their returned URI moves to port `4566`.
 - **Lambda and ECS integration.** Image-backed Lambda functions (`PackageType=Image`) and ECS task containers reference the same loopback `repositoryUri`. Floci rewrites real-AWS-shaped `<account>.dkr.ecr.<region>.amazonaws.com/...` URIs to the loopback registry at pull time, path style on `localhost` (`localhost:<flociPort>/<account>/<region>/<repo>`) in either URI style and with or without TLS, the one address every Docker daemon pulls from over plain HTTP, so CDK's `DockerImageFunction` (which generates AWS-shaped URIs in CloudFormation templates) works without any user-side rewriting.
 - **Locally built images win.** An AWS-shaped URI that names an image already present on the Docker daemon is used as-is instead of being rewritten (`FLOCI_SERVICES_ECR_PREFER_LOCAL_IMAGES`, default `true`). Build the image under the exact URI your function or task definition declares (`docker build -t <account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag> .`) and it runs without a push to the emulated registry, and without the registry container being started. The check uses the reference Floci would launch, so with `FLOCI_DOCKER_IMAGE_REGISTRY_BASE` set the image must be present as `<base>/<account>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>`.
+
+## Pull-time update exclusions
+
+Exclusions are stored per account and Region, with up to 100 registered IAM role or
+user ARNs per registry. Registration returns the principal ARN and creation timestamp;
+a duplicate is `ExclusionAlreadyExistsException`, and removing an unknown ARN is
+`ExclusionNotFoundException`. Listing accepts `maxResults` from 1 to 1000 (default 100)
+and returns a scoped `nextToken` when more results remain. Registry settings and
+exclusions survive storage reloads together. Floci records this metadata without
+changing image pull-time tracking.
 
 ## Configuration
 
