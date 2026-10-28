@@ -636,11 +636,17 @@ public class BackupService {
 
     public BackupPlan createBackupPlan(String planName, List<BackupRule> rules,
                                        String creatorRequestId, String region) {
+        return createBackupPlan(planName, rules, creatorRequestId, Map.of(), region);
+    }
+
+    public BackupPlan createBackupPlan(String planName, List<BackupRule> rules,
+                                       String creatorRequestId, Map<String, String> tags, String region) {
         String planId = UUID.randomUUID().toString();
         BackupPlan plan = new BackupPlan();
         plan.setBackupPlanId(planId);
         plan.setBackupPlanArn(regionResolver.buildArn("backup", region, "backup-plan:" + planId));
         plan.setBackupPlanName(planName);
+        plan.setTags(tags);
         plan.setCreationDate(Instant.now().getEpochSecond());
         plan.setVersionId(shortId());
         assignRuleIds(rules);
@@ -1011,13 +1017,14 @@ public class BackupService {
         if (vault.isPresent()) {
             return vault.get().getTags();
         }
-        Optional<BackupPlan> plan = planStore.scan(k -> true).stream()
-                .filter(p -> arn.equals(p.getBackupPlanArn()))
-                .findFirst();
-        if (plan.isPresent()) {
-            return new HashMap<>();
-        }
-        throw new AwsException("ResourceNotFoundException", "Resource not found: " + arn, 400);
+        return findPlanByArn(arn).getTags();
+    }
+
+    private BackupPlan findPlanByArn(String arn) {
+        return planStore.scan(k -> true).stream()
+                .filter(plan -> arn.equals(plan.getBackupPlanArn()))
+                .findFirst()
+                .orElseThrow(() -> new AwsException("ResourceNotFoundException", "Resource not found: " + arn, 400));
     }
 
     private void applyTags(String arn, Map<String, String> newTags) {
@@ -1030,7 +1037,9 @@ public class BackupService {
             vaultStore.put(vaultKey(vault), vault);
             return;
         }
-        throw new AwsException("ResourceNotFoundException", "Resource not found: " + arn, 400);
+        BackupPlan plan = findPlanByArn(arn);
+        plan.getTags().putAll(newTags);
+        planStore.put(plan.getBackupPlanId(), plan);
     }
 
     private void removeTags(String arn, List<String> tagKeys) {
@@ -1043,7 +1052,9 @@ public class BackupService {
             vaultStore.put(vaultKey(vault), vault);
             return;
         }
-        throw new AwsException("ResourceNotFoundException", "Resource not found: " + arn, 400);
+        BackupPlan plan = findPlanByArn(arn);
+        tagKeys.forEach(plan.getTags()::remove);
+        planStore.put(plan.getBackupPlanId(), plan);
     }
 
     private static void assignRuleIds(List<BackupRule> rules) {

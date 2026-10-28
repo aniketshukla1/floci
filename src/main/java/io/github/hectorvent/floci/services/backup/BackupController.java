@@ -264,7 +264,8 @@ public class BackupController {
         List<BackupRule> rules = readRules(planNode.path("Rules"));
         String creatorRequestId = textOrNull(req, "CreatorRequestId");
 
-        BackupPlan plan = service.createBackupPlan(planName, rules, creatorRequestId, region);
+        BackupPlan plan = service.createBackupPlan(planName, rules, creatorRequestId,
+                readStringMap(req, "BackupPlanTags"), region);
 
         ObjectNode out = objectMapper.createObjectNode();
         out.put("BackupPlanId", plan.getBackupPlanId());
