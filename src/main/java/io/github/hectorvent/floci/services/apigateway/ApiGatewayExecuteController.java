@@ -2864,7 +2864,7 @@ public class ApiGatewayExecuteController {
 
         if ("HTTP_PROXY".equalsIgnoreCase(integrationType)) {
             return dispatchHttpProxyV2(integration, route, httpMethod, path, headers, uriInfo, body,
-                    apiId, stageName, jwtClaims, region);
+                    apiId, stageName, jwtClaims, lambdaAuthorizerContext, region);
         }
 
         String functionName = functionNameFromUri(integration.getIntegrationUri());
@@ -2918,6 +2918,7 @@ public class ApiGatewayExecuteController {
                                           Route route, String httpMethod, String path,
                                           HttpHeaders headers, UriInfo uriInfo, byte[] body,
                                           String apiId, String stageName, Map<String, String> jwtClaims,
+                                          ObjectNode lambdaAuthorizerContext,
                                           String region) {
         // CDK HttpAlbIntegration sets integrationUri to an ALB listener ARN. Resolve it
         // to the listener's bound localhost port so HttpProxyInvoker (which assumes a
@@ -2995,6 +2996,8 @@ public class ApiGatewayExecuteController {
         // would otherwise have $context.authorizer.claims.* resolve from the unverified header
         // token instead of the one the authorizer actually checked.
         Map<String, Object> claims = jwtClaims != null ? Map.copyOf(jwtClaims) : Map.of();
+        Map<String, Object> authorizerContext = lambdaAuthorizerContext == null
+                ? Map.of() : objectMapper.convertValue(lambdaAuthorizerContext, MAP_TYPE);
 
         String sourceIp = requestHeaders.getOrDefault("X-Forwarded-For", "127.0.0.1");
         io.github.hectorvent.floci.services.apigatewayv2.proxy.RequestContext ctx =
@@ -3003,7 +3006,7 @@ public class ApiGatewayExecuteController {
                         pathParams.getOrDefault("proxy", ""), route.getRouteKey(),
                         UUID.randomUUID().toString(), sourceIp,
                         requestHeaders, queryParams, pathParams, body,
-                        claims, Map.of(), multiValueHeaders, multiValueQueryParams);
+                        claims, authorizerContext, multiValueHeaders, multiValueQueryParams);
 
         LOG.debugv("execute-api v2: {0} {1}/{2}{3} → HTTP_PROXY {4}",
                 httpMethod, apiId, stageName, path, effective.getIntegrationUri());

@@ -747,6 +747,12 @@ or string. A missing or empty configured value returns `401` without invoking
 Lambda in either format. Repeated request values use each event's delivered
 representation: last value in format `1.0`, comma-joined values in format `2.0`.
 
+HTTP API `HTTP_PROXY` integrations can map values from a successful Lambda
+authorizer's context into request headers, query strings, and paths. For a returned
+`context` containing `tenantId`, use `$context.authorizer.tenantId` in
+`requestParameters`. String, numeric, and boolean context values are rendered as
+text. This works with format `1.0` policy responses and format `2.0` simple responses.
+
 A Lambda proxy integration's response is read as AWS reads it (measured): a function that raises, a
 format 1.0 result that is not an object with a `statusCode`, and a `statusCode` that is not a whole
 number from 100 to 599 (text that spells one, such as `"201"`, is taken) are answered `500` with
