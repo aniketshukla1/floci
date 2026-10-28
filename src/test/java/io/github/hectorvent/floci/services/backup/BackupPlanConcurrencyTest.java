@@ -48,12 +48,13 @@ class BackupPlanConcurrencyTest {
                 return call.callRealMethod();
             }).when(plans).put(eq(id), any());
             FutureTask<Void> write = new FutureTask<>(() -> {
-                switch (operation) {
-                    case "tag" -> service.tagResource(plan.getBackupPlanArn(), Map.of("env", "new"));
-                    case "untag" -> service.untagResource(plan.getBackupPlanArn(), List.of("env"));
-                    case "update" -> service.updateBackupPlan(id, "updated", List.of());
+                Runnable mutation = switch (operation) {
+                    case "tag" -> () -> service.tagResource(plan.getBackupPlanArn(), Map.of("env", "new"));
+                    case "untag" -> () -> service.untagResource(plan.getBackupPlanArn(), List.of("env"));
+                    case "update" -> () -> service.updateBackupPlan(id, "updated", List.of());
                     default -> throw new AssertionError(operation);
-                }
+                };
+                mutation.run();
                 return null;
             });
             Thread writer = new Thread(write, "backup-plan-write");
