@@ -6039,8 +6039,10 @@ public class Ec2Service implements ContainerTeardown, ResourceProvider, Resettab
             return false;
         }
         return switch (optionKey) {
-            case "domain-name-servers" -> values.size() <= 4 &&
-                    (values.equals(List.of("AmazonProvidedDNS")) || values.stream().allMatch(this::isLiteralIp));
+            case "domain-name-servers" -> values.stream()
+                    .allMatch(value -> "AmazonProvidedDNS".equals(value) || isLiteralIp(value))
+                    && values.stream().filter(value -> !value.contains(":")).count() <= 4
+                    && values.stream().filter(value -> value.contains(":")).count() <= 4;
             case "ntp-servers" -> values.size() <= 8 && values.stream().allMatch(this::isLiteralIp)
                     && values.stream().filter(value -> !value.contains(":")).count() <= 4
                     && values.stream().filter(value -> value.contains(":")).count() <= 4;
