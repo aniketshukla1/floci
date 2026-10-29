@@ -1440,7 +1440,6 @@ public class EcrService implements ResourceProvider {
     }
 
     public RegistrySettings.PullTimeUpdateExclusion registerPullTimeUpdateExclusion(String principalArn, String region) {
-        validateExclusionPrincipal(principalArn);
         return updateRegistrySettings(region, settings -> {
             List<RegistrySettings.PullTimeUpdateExclusion> exclusions = pullTimeExclusions(settings);
             if (exclusions.stream().anyMatch(exclusion -> exclusion.principalArn().equals(principalArn))) {
@@ -1459,7 +1458,6 @@ public class EcrService implements ResourceProvider {
     }
 
     public String deregisterPullTimeUpdateExclusion(String principalArn, String region) {
-        validateExclusionPrincipal(principalArn);
         return updateRegistrySettings(region, settings -> {
             List<RegistrySettings.PullTimeUpdateExclusion> exclusions = pullTimeExclusions(settings);
             List<RegistrySettings.PullTimeUpdateExclusion> remaining = exclusions.stream()
@@ -1473,9 +1471,6 @@ public class EcrService implements ResourceProvider {
     }
 
     public PaginatedResult<String> listPullTimeUpdateExclusions(Integer maxResults, String nextToken, String region) {
-        if (maxResults != null && (maxResults < 1 || maxResults > 1000)) {
-            throw new AwsException("InvalidParameterException", "maxResults must be between 1 and 1000.", 400);
-        }
         synchronized (registryLock(region)) {
             List<String> principals = pullTimeExclusions(registrySettings(region)).stream()
                     .map(RegistrySettings.PullTimeUpdateExclusion::principalArn).toList();
@@ -1487,11 +1482,6 @@ public class EcrService implements ResourceProvider {
 
     private static List<RegistrySettings.PullTimeUpdateExclusion> pullTimeExclusions(RegistrySettings settings) {
         return settings.getPullTimeUpdateExclusions() == null ? List.of() : settings.getPullTimeUpdateExclusions();
-    }
-
-    private static void validateExclusionPrincipal(String principalArn) {
-        EcrRequestShapes.check("RegisterPullTimeUpdateExclusion",
-                MAPPER.createObjectNode().put("principalArn", principalArn));
     }
 
     /**
