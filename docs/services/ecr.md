@@ -45,7 +45,9 @@
 `GetAccountSetting` and `PutAccountSetting` keep values per account and Region.
 Supported names are `BASIC_SCAN_TYPE_VERSION` (`AWS_NATIVE`), `REGISTRY_POLICY_SCOPE`
 (`V2`), and `BLOB_MOUNTING` (`ENABLED` or `DISABLED`). Floci defaults to `AWS_NATIVE`,
-`V2`, and `DISABLED`, respectively. Invalid names and values return `ValidationException`.
+`V2`, and `DISABLED`, respectively. Unsupported setting names and values return
+`ValidationException`. Requests are checked against the vendored ECR model: missing
+or non-string members and names outside 1-64 characters return `InvalidParameterException`.
 These settings are metadata only: they do not start scanning, enforce registry policies,
 or change the registry's blob upload behavior.
 

@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ecr.EcrClient;
 import software.amazon.awssdk.services.ecr.model.GetAccountSettingResponse;
+import software.amazon.awssdk.services.ecr.model.InvalidParameterException;
 import software.amazon.awssdk.services.ecr.model.PutAccountSettingResponse;
 import software.amazon.awssdk.services.ecr.model.ValidationException;
 
@@ -82,11 +83,33 @@ class EcrAccountSettingsIntegrationTest {
     }
 
     @ParameterizedTest
-    @NullSource
-    @ValueSource(strings = {"", "UNKNOWN", "blob_mounting"})
+    @ValueSource(strings = {"UNKNOWN", "blob_mounting"})
     void unsupportedNamesAreValidationErrors(String name) {
         assertThrows(ValidationException.class, () -> client.getAccountSetting(request -> request.name(name)));
         assertThrows(ValidationException.class, () -> client.putAccountSetting(request -> request.name(name).value("ENABLED")));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {""})
+    void missingAndEmptyNamesUseTheRequestModelError(String name) {
+        assertThrows(InvalidParameterException.class, () -> client.getAccountSetting(request -> request.name(name)));
+        assertThrows(InvalidParameterException.class, () -> client.putAccountSetting(request -> request.name(name).value("ENABLED")));
+    }
+
+    @Test
+    void namesLongerThanTheModelLimitAreRejectedBeforeSettingLookup() {
+        String name = "x".repeat(65);
+        assertThrows(InvalidParameterException.class, () -> client.getAccountSetting(request -> request.name(name)));
+        assertThrows(InvalidParameterException.class, () -> client.putAccountSetting(request -> request.name(name).value("ENABLED")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"name\":null}", "{\"name\":1}", "{\"name\":[]}", "{\"name\":{}}"})
+    void getSettingUsesModelValidation(String body) {
+        given().contentType("application/x-amz-json-1.1")
+                .header("X-Amz-Target", "AmazonEC2ContainerRegistry_V20150921.GetAccountSetting")
+                .body(body).post("/").then().statusCode(400).body("__type", equalTo("InvalidParameterException"));
     }
 
     @ParameterizedTest
@@ -105,6 +128,6 @@ class EcrAccountSettingsIntegrationTest {
     void missingOrNonStringInputsAreRejected(String body) {
         given().contentType("application/x-amz-json-1.1")
                 .header("X-Amz-Target", "AmazonEC2ContainerRegistry_V20150921.PutAccountSetting")
-                .body(body).post("/").then().statusCode(400).body("__type", equalTo("ValidationException"));
+                .body(body).post("/").then().statusCode(400).body("__type", equalTo("InvalidParameterException"));
     }
 }

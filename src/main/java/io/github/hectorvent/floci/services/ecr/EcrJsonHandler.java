@@ -47,6 +47,7 @@ public class EcrJsonHandler {
 
     /** The actions whose requests are checked against the vendored model constraints first. */
     private static final Set<String> MODEL_CHECKED = Set.of(
+            "GetAccountSetting", "PutAccountSetting",
             "PutRegistryPolicy", "GetRegistryPolicy", "DeleteRegistryPolicy",
             "PutReplicationConfiguration", "DescribeRegistry",
             "PutRegistryScanningConfiguration", "GetRegistryScanningConfiguration",
@@ -113,21 +114,13 @@ public class EcrJsonHandler {
     }
 
     private Response handleAccountSetting(JsonNode request, String region, boolean put) {
-        String name = accountSettingText(request, "name");
-        String value = put ? service.putAccountSetting(name, accountSettingText(request, "value"), region)
+        String name = request.path("name").asText(null);
+        String value = put ? service.putAccountSetting(name, request.path("value").asText(null), region)
                 : service.getAccountSetting(name, region);
         ObjectNode response = objectMapper.createObjectNode();
         response.put("name", name);
         response.put("value", value);
         return Response.ok(response).build();
-    }
-
-    private static String accountSettingText(JsonNode request, String field) {
-        JsonNode value = request.get(field);
-        if (value == null || !value.isTextual()) {
-            throw new AwsException("ValidationException", field + " must be a string.", 400);
-        }
-        return value.textValue();
     }
 
     private Response handleCreateRepository(JsonNode request, String region) {
