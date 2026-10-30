@@ -13,6 +13,7 @@ import io.github.hectorvent.floci.core.storage.StorageFactory;
 import io.github.hectorvent.floci.services.ec2.Ec2Service;
 import io.github.hectorvent.floci.services.route53.model.AliasTarget;
 import io.github.hectorvent.floci.services.route53.model.ChangeInfo;
+import io.github.hectorvent.floci.services.route53.model.DelegationSet;
 import io.github.hectorvent.floci.services.route53.model.HealthCheck;
 import io.github.hectorvent.floci.services.route53.model.HealthCheckConfig;
 import io.github.hectorvent.floci.services.route53.model.HostedZone;
@@ -22,6 +23,7 @@ import io.github.hectorvent.floci.services.route53.model.VpcAssociation;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
+import java.math.BigInteger;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -48,6 +50,7 @@ public class Route53Service implements Resettable {
     private record OwnedZone(String accountId, HostedZone zone) {}
 
     private final StorageBackend<String, HostedZone> zoneStore;
+    private final StorageBackend<String, DelegationSet> delegationSetStore;
     private final StorageBackend<String, List<ResourceRecordSet>> recordStore;
     private final StorageBackend<String, HealthCheck> healthCheckStore;
     private final StorageBackend<String, ChangeInfo> changeStore;
@@ -68,6 +71,8 @@ public class Route53Service implements Resettable {
                           Ec2Service ec2Service) {
         this.zoneStore = factory.create("route53", "route53-zones.json",
                 new TypeReference<Map<String, HostedZone>>() {});
+        this.delegationSetStore = factory.create("route53", "route53-delegation-sets.json",
+                new TypeReference<Map<String, DelegationSet>>() {});
         this.recordStore = factory.create("route53", "route53-records.json",
                 new TypeReference<Map<String, List<ResourceRecordSet>>>() {});
         this.healthCheckStore = factory.create("route53", "route53-health-checks.json",
@@ -94,6 +99,67 @@ public class Route53Service implements Resettable {
             zoneNameCounts(owned.zone().isPrivateZone()).merge(
                     normalizeName(owned.zone().getName()).toLowerCase(), 1, Integer::sum);
         }
+    }
+
+    public synchronized DelegationSet createReusableDelegationSet(String callerReference) {
+        if (callerReference == null || callerReference.isEmpty() || callerReference.length() > 128) {
+            throw new AwsException("InvalidInput", "CallerReference must contain between 1 and 128 characters.", 400);
+        }
+        for (DelegationSet existing : delegationSetStore.scan(k -> true)) {
+            if (existing.callerReference().equals(callerReference)) {
+                throw new AwsException("DelegationSetAlreadyCreated",
+                        "A reusable delegation set with this caller reference already exists.", 400);
+            }
+        }
+        if (delegationSetStore.keys().size() >= 100) {
+            throw new AwsException("LimitsExceeded", "The reusable delegation set limit has been reached.", 400);
+        }
+        String id = "N" + generateZoneId().substring(1);
+        DelegationSet set = new DelegationSet(id, callerReference, nameServers);
+        delegationSetStore.put(id, set);
+        return set;
+    }
+
+    public DelegationSet getReusableDelegationSet(String id) {
+        String cleanId = delegationSetId(id);
+        return delegationSetStore.get(cleanId).orElseThrow(() ->
+                new AwsException("NoSuchDelegationSet", "No reusable delegation set found with ID: " + cleanId, 400));
+    }
+
+    public synchronized void deleteReusableDelegationSet(String id) {
+        delegationSetStore.delete(getReusableDelegationSet(id).id());
+    }
+
+    public long getReusableDelegationSetCount() {
+        return delegationSetStore.keys().size();
+    }
+
+    Route53Pagination.Page<DelegationSet> pageReusableDelegationSets(String marker, String maxItems) {
+        if (marker != null && marker.length() > 64) {
+            throw new AwsException("InvalidInput", "Marker must contain at most 64 characters.", 400);
+        }
+        int pageSize;
+        try {
+            BigInteger requested = new BigInteger(maxItems);
+            if (requested.signum() <= 0) {
+                throw new NumberFormatException("Nonpositive page size");
+            }
+            pageSize = requested.min(BigInteger.valueOf(100)).intValueExact();
+        } catch (NumberFormatException e) {
+            throw new AwsException("InvalidInput", "MaxItems must be a positive integer.", 400);
+        }
+        List<DelegationSet> sets = delegationSetStore.scan(k -> true).stream()
+                .filter(set -> marker == null || set.id().compareTo(marker) >= 0)
+                .sorted(Comparator.comparing(DelegationSet::id)).toList();
+        return Route53Pagination.page(sets, null, pageSize, DelegationSet::id);
+    }
+
+    private static String delegationSetId(String id) {
+        String cleanId = id == null ? "" : id.startsWith("/delegationset/") ? id.substring(15) : id;
+        if (cleanId.isEmpty() || cleanId.length() > 32) {
+            throw new AwsException("InvalidInput", "DelegationSetId must contain between 1 and 32 characters.", 400);
+        }
+        return cleanId;
     }
 
     // ── Hosted Zones ──────────────────────────────────────────────────────────

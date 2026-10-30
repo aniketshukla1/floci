@@ -7,6 +7,7 @@ import io.github.hectorvent.floci.core.common.XmlParser;
 import io.github.hectorvent.floci.services.route53.Route53Service.CreateZoneResult;
 import io.github.hectorvent.floci.services.route53.model.AliasTarget;
 import io.github.hectorvent.floci.services.route53.model.ChangeInfo;
+import io.github.hectorvent.floci.services.route53.model.DelegationSet;
 import io.github.hectorvent.floci.services.route53.model.HealthCheck;
 import io.github.hectorvent.floci.services.route53.model.HealthCheckConfig;
 import io.github.hectorvent.floci.services.route53.model.HostedZone;
@@ -44,6 +45,69 @@ public class Route53Controller {
 
     @Inject
     Route53Service service;
+
+    @POST
+    @Path("/delegationset")
+    public Response createReusableDelegationSet(String body) {
+        try {
+            if (!"CreateReusableDelegationSetRequest".equals(XmlParser.rootElementName(body))) {
+                throw new AwsException("InvalidInput",
+                        "The request body must be a CreateReusableDelegationSetRequest document.", 400);
+            }
+            DelegationSet set = service.createReusableDelegationSet(XmlParser.extractFirst(body, "CallerReference", null));
+            String xml = new XmlBuilder().start("CreateReusableDelegationSetResponse", NS)
+                    .raw(xmlDelegationSet(set)).end("CreateReusableDelegationSetResponse").build();
+            return Response.created(URI.create("/2013-04-01/delegationset/" + set.id())).type(XML).entity(xml).build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    @GET
+    @Path("/delegationset/{Id}")
+    public Response getReusableDelegationSet(@PathParam("Id") String id) {
+        try {
+            String xml = new XmlBuilder().start("GetReusableDelegationSetResponse", NS)
+                    .raw(xmlDelegationSet(service.getReusableDelegationSet(id)))
+                    .end("GetReusableDelegationSetResponse").build();
+            return Response.ok(xml, XML).build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    @DELETE
+    @Path("/delegationset/{Id}")
+    public Response deleteReusableDelegationSet(@PathParam("Id") String id) {
+        try {
+            service.deleteReusableDelegationSet(id);
+            return Response.ok().build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
+
+    @GET
+    @Path("/delegationset")
+    public Response listReusableDelegationSets(@QueryParam("marker") String marker,
+                                               @QueryParam("maxitems") @DefaultValue("100") String maxItems) {
+        try {
+            Route53Pagination.Page<DelegationSet> page = service.pageReusableDelegationSets(marker, maxItems);
+            XmlBuilder xml = new XmlBuilder().start("ListReusableDelegationSetsResponse", NS).start("DelegationSets");
+            for (DelegationSet set : page.items()) {
+                xml.raw(xmlDelegationSet(set));
+            }
+            xml.end("DelegationSets").elem("Marker", marker == null ? "" : marker)
+                    .elem("IsTruncated", page.isTruncated());
+            if (page.isTruncated()) {
+                xml.elem("NextMarker", page.nextMarker());
+            }
+            xml.elem("MaxItems", maxItems).end("ListReusableDelegationSetsResponse");
+            return Response.ok(xml.build(), XML).build();
+        } catch (AwsException e) {
+            return xmlErrorResponse(e);
+        }
+    }
 
     // ── Hosted Zones ──────────────────────────────────────────────────────────
 
@@ -733,6 +797,16 @@ public class Route53Controller {
                 .elem("Comment", change.getComment())
                 .end("ChangeInfo")
                 .build();
+    }
+
+    private String xmlDelegationSet(DelegationSet set) {
+        XmlBuilder xml = new XmlBuilder().start("DelegationSet")
+                .elem("Id", "/delegationset/" + set.id()).elem("CallerReference", set.callerReference())
+                .start("NameServers");
+        for (String ns : set.nameServers()) {
+            xml.elem("NameServer", ns);
+        }
+        return xml.end("NameServers").end("DelegationSet").build();
     }
 
     private String xmlDelegationSet() {
