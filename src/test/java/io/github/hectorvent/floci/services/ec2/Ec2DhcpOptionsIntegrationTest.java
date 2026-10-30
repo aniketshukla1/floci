@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.ec2;
 
+import io.github.hectorvent.floci.testing.AwsTestClients;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
@@ -486,11 +487,7 @@ class Ec2DhcpOptionsIntegrationTest {
     @ParameterizedTest
     @MethodSource("validDnsServerLists")
     void dnsServersRoundTripThroughAwsSdk(List<String> servers) {
-        try (Ec2Client client = Ec2Client.builder()
-                .endpointOverride(URI.create("http://localhost:" + RestAssured.port))
-                .region(Region.US_EAST_1)
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
-                .httpClientBuilder(UrlConnectionHttpClient.builder()).build()) {
+        try (Ec2Client client = AwsTestClients.create(Ec2Client.builder(), "test", Region.US_EAST_1)) {
             DhcpOptions created = client.createDhcpOptions(request -> request
                     .dhcpConfigurations(configuration -> configuration.key("domain-name-servers")
                             .values(servers))).dhcpOptions();
@@ -521,11 +518,7 @@ class Ec2DhcpOptionsIntegrationTest {
     @ParameterizedTest
     @MethodSource("invalidDnsServerLists")
     void invalidDnsServersStillFailWithInvalidParameterValue(List<String> servers) {
-        try (Ec2Client client = Ec2Client.builder()
-                .endpointOverride(URI.create("http://localhost:" + RestAssured.port))
-                .region(Region.US_EAST_1)
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("test", "test")))
-                .httpClientBuilder(UrlConnectionHttpClient.builder()).build()) {
+        try (Ec2Client client = AwsTestClients.create(Ec2Client.builder(), "test", Region.US_EAST_1)) {
             Ec2Exception failure = assertThrows(Ec2Exception.class, () -> client.createDhcpOptions(request -> request
                     .dhcpConfigurations(configuration -> configuration.key("domain-name-servers").values(servers))));
             assertEquals(400, failure.statusCode());
