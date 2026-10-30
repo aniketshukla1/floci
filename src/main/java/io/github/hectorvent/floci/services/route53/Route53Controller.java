@@ -211,9 +211,10 @@ public class Route53Controller {
     @GET
     @Path("/hostedzone")
     public Response listHostedZones(@QueryParam("marker") String marker,
-                                     @QueryParam("maxitems") @DefaultValue("100") int maxItems) {
+                                     @QueryParam("maxitems") @DefaultValue("100") int maxItems,
+                                     @QueryParam("delegationsetid") String delegationSetId) {
         try {
-            Route53Pagination.Page<HostedZone> page = service.pageHostedZones(marker, maxItems);
+            Route53Pagination.Page<HostedZone> page = service.pageHostedZones(marker, maxItems, delegationSetId);
 
             XmlBuilder xml = new XmlBuilder()
                     .start("ListHostedZonesResponse", NS)

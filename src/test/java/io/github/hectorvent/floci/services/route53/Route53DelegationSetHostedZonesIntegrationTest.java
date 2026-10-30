@@ -7,6 +7,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.route53.Route53Client;
 import software.amazon.awssdk.services.route53.model.CreateHostedZoneResponse;
 import software.amazon.awssdk.services.route53.model.DelegationSet;
+import software.amazon.awssdk.services.route53.model.ListHostedZonesResponse;
 import software.amazon.awssdk.services.route53.model.RRType;
 import software.amazon.awssdk.services.route53.model.ResourceRecord;
 import software.amazon.awssdk.services.route53.model.ResourceRecordSet;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -145,6 +147,50 @@ class Route53DelegationSetHostedZonesIntegrationTest {
             } finally {
                 owner.deleteHostedZone(r -> r.id(zone));
                 owner.deleteReusableDelegationSet(r -> r.id(set.id()));
+            }
+        }
+    }
+
+    @Test
+    void hostedZoneFilteringByDelegationSetHappensBeforePagination() {
+        try (Route53Client client = client("741686000040")) {
+            DelegationSet selected = createSet(client);
+            DelegationSet other = createSet(client);
+            String alpha = createZone(client, "alpha.example.", selected.id()).hostedZone().id();
+            String beta = createZone(client, "beta.example.", selected.id()).hostedZone().id();
+            String excluded = createZone(client, "excluded.example.", other.id()).hostedZone().id();
+            String ordinary = createZone(client, "aardvark.example.", null).hostedZone().id();
+            try {
+                ListHostedZonesResponse first = client.listHostedZones(r -> r.delegationSetId(selected.id()).maxItems("1"));
+                assertEquals(List.of(alpha), first.hostedZones().stream().map(zone -> zone.id()).toList());
+                assertTrue(first.isTruncated());
+                ListHostedZonesResponse second = client.listHostedZones(r -> r.delegationSetId(selected.id())
+                        .marker(first.nextMarker()).maxItems("1"));
+                assertEquals(List.of(beta), second.hostedZones().stream().map(zone -> zone.id()).toList());
+                assertFalse(second.isTruncated());
+                assertEquals(List.of(excluded), client.listHostedZones(r -> r.delegationSetId(other.id()))
+                        .hostedZones().stream().map(zone -> zone.id()).toList());
+                assertEquals(4, client.listHostedZones().hostedZones().size());
+            } finally {
+                for (String id : List.of(alpha, beta, excluded, ordinary)) {
+                    client.deleteHostedZone(r -> r.id(id));
+                }
+                client.deleteReusableDelegationSet(r -> r.id(selected.id()));
+                client.deleteReusableDelegationSet(r -> r.id(other.id()));
+            }
+        }
+    }
+
+    @Test
+    void hostedZoneFilteringValidatesTheSetEvenWhenNoZonesExist() {
+        try (Route53Client owner = client("741686000041"); Route53Client stranger = client("741686000042")) {
+            DelegationSet empty = createSet(owner);
+            try {
+                assertTrue(owner.listHostedZones(r -> r.delegationSetId(empty.id())).hostedZones().isEmpty());
+                assertError("NoSuchDelegationSet", () -> owner.listHostedZones(r -> r.delegationSetId("NMissing")));
+                assertError("NoSuchDelegationSet", () -> stranger.listHostedZones(r -> r.delegationSetId(empty.id())));
+            } finally {
+                owner.deleteReusableDelegationSet(r -> r.id(empty.id()));
             }
         }
     }

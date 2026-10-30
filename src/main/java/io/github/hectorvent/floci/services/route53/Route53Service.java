@@ -321,7 +321,15 @@ public class Route53Service implements Resettable {
     }
 
     Route53Pagination.Page<HostedZone> pageHostedZones(String marker, int maxItems) {
+        return pageHostedZones(marker, maxItems, null);
+    }
+
+    Route53Pagination.Page<HostedZone> pageHostedZones(String marker, int maxItems, String delegationSetId) {
+        String selected = delegationSetId == null ? null : getReusableDelegationSet(delegationSetId).id();
         List<HostedZone> all = new ArrayList<>(zoneStore.scan(k -> true));
+        if (selected != null) {
+            all.removeIf(zone -> !selected.equals(zone.getDelegationSetId()));
+        }
         all.sort(Comparator.comparing(HostedZone::getName).thenComparing(HostedZone::getId));
         for (HostedZone zone : all) {
             zone.setResourceRecordSetCount(recordCount(zone.getId()));
