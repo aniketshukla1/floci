@@ -776,7 +776,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         boolean rest = claimValue instanceof ProtocolClaim claim && claim.protocol() == WireProtocol.REST;
         String servingScope = servingCredentialScope(claimedScope, ctx);
         if (rest) {
-            return new ResolvedAuthorization(servingScope, actionRegistry.resolveRoute(servingScope, ctx));
+            return new ResolvedAuthorization(servingScope, routeAction(servingScope, ctx));
         }
         String targetOperation = IamActionRegistry.targetOperation(ctx);
         String action = actionRegistry.resolve(servingScope, ctx);
@@ -907,13 +907,18 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                         && claim.protocol() != WireProtocol.REST;
     }
 
+    private String routeAction(String scope, ContainerRequestContext ctx) {
+        String matched = actionRegistry.resolveMatchedRoute(scope, resourceInfo);
+        return matched != null ? matched : actionRegistry.resolveRoute(scope, ctx);
+    }
+
     private ResolvedAuthorization resolveRestAuthorization(ServiceDescriptor descriptor,
                                                             ContainerRequestContext ctx) {
         return descriptor.credentialScopes().stream()
                 .map(catalog::canonicalCredentialScope)
                 .distinct()
                 .sorted()
-                .map(scope -> new ResolvedAuthorization(scope, actionRegistry.resolveRoute(scope, ctx)))
+                .map(scope -> new ResolvedAuthorization(scope, routeAction(scope, ctx)))
                 .filter(authorization -> authorization.action() != null)
                 .findFirst()
                 .orElse(null);
@@ -1661,8 +1666,8 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
                 || "apigateway".equals(credentialScope)) {
             return arnBuilder.buildResources(credentialScope, ctx, region, accountId, requestPartition());
         }
-        return arnBuilder.buildResources(credentialScope, operation, ctx, region, accountId,
-                AwsRegions.partitionFor(region));
+        String partition = "route53".equals(credentialScope) ? requestPartition() : AwsRegions.partitionFor(region);
+        return arnBuilder.buildResources(credentialScope, operation, ctx, region, accountId, partition);
     }
 
     /**
@@ -1806,7 +1811,7 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
             String resourcePath = formatS3ResourcePath(resourceArn);
             return s3XmlAccessDenied(message, resourcePath);
         }
-        if (protocol == WireProtocol.AWS_QUERY || isFormEncoded(requestMediaType)) {
+        if ("route53".equals(credentialScope) || protocol == WireProtocol.AWS_QUERY || isFormEncoded(requestMediaType)) {
             return queryXmlError(queryAccessDeniedCode(credentialScope), message);
         }
         int status = protocol == WireProtocol.AWS_JSON_1_0 || protocol == WireProtocol.AWS_JSON_1_1 ? 400 : 403;
