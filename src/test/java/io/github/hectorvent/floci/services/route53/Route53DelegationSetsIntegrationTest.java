@@ -44,6 +44,7 @@ class Route53DelegationSetsIntegrationTest {
                         .body(containsString("<Id>/delegationset/" + created.id() + "</Id>"))
                         .body(containsString("<CallerReference>delegation&lt;&amp;&gt;"));
                 assertEquals(4, created.nameServers().size());
+                assertEquals(1, client.getAccountLimit(r -> r.type("MAX_REUSABLE_DELEGATION_SETS_BY_OWNER")).count());
                 assertEquals(created, client.getReusableDelegationSet(r -> r.id(created.id())).delegationSet());
             } finally {
                 client.deleteReusableDelegationSet(r -> r.id(created.id()));
@@ -141,6 +142,34 @@ class Route53DelegationSetsIntegrationTest {
             ListReusableDelegationSetsResponse page = client.listReusableDelegationSets(r -> r.maxItems("2147483648"));
             assertEquals("2147483648", page.maxItems());
             assertFalse(page.isTruncated());
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "<Wrong><CallerReference>wrong</CallerReference></Wrong>",
+            "<CreateReusableDelegationSetRequest/>",
+            "<CreateReusableDelegationSetRequest><CallerReference>x</CallerReference></CreateReusableDelegationSetRequest>broken"
+    })
+    void malformedCreateRequestsReturnXmlErrors(String body) {
+        given().contentType("application/xml").body(body).post("/2013-04-01/delegationset")
+                .then().statusCode(400).body(containsString("<Code>InvalidInput</Code>"));
+    }
+
+    @Test
+    void callerReferenceMaximumLengthIsAccepted() {
+        try (Route53Client client = client("741686000008", Region.US_EAST_1)) {
+            String id = client.createReusableDelegationSet(r -> r.callerReference("x".repeat(128))).delegationSet().id();
+            client.deleteReusableDelegationSet(r -> r.id(id));
+        }
+    }
+
+    @Test
+    void overlongIdsAndMarkersReturnXmlErrors() {
+        try (Route53Client client = client("741686000009", Region.US_EAST_1)) {
+            assertError("InvalidInput", () -> client.getReusableDelegationSet(r -> r.id("N".repeat(33))));
+            assertError("InvalidInput", () -> client.deleteReusableDelegationSet(r -> r.id("N".repeat(33))));
+            assertError("InvalidInput", () -> client.listReusableDelegationSets(r -> r.marker("N".repeat(65))));
         }
     }
 

@@ -120,8 +120,14 @@ public class Route53Service implements Resettable {
             if (zoneId.isEmpty() || zoneId.length() > 32) {
                 throw new AwsException("InvalidInput", "HostedZoneId must contain between 1 and 32 characters.", 400);
             }
-            source = zoneStore.get(zoneId).orElseThrow(() ->
-                    new AwsException("HostedZoneNotFound", "The specified hosted zone cannot be found.", 400));
+            try {
+                source = getHostedZoneOwnedByCaller(zoneId);
+            } catch (AwsException e) {
+                if (!"NoSuchHostedZone".equals(e.getErrorCode())) {
+                    throw e;
+                }
+                throw new AwsException("HostedZoneNotFound", "The specified hosted zone cannot be found.", 400);
+            }
             if (source.isPrivateZone()) {
                 throw new AwsException("InvalidArgument", "A private hosted zone cannot have a reusable delegation set.", 400);
             }
@@ -131,10 +137,11 @@ public class Route53Service implements Resettable {
         }
         String id = "N" + generateZoneId().substring(1);
         DelegationSet set = new DelegationSet(id, callerReference,
-                source == null ? nameServers : getDelegationSet(source).nameServers());
+                source == null ? nameServers : assignedNameServers(source));
         delegationSetStore.put(id, set);
         if (source != null) {
             source.setDelegationSetId(id);
+            source.setDelegationNameServers(set.nameServers());
             zoneStore.put(source.getId(), source);
         }
         return set;
@@ -183,6 +190,21 @@ public class Route53Service implements Resettable {
         return Route53Pagination.page(sets, null, pageSize, DelegationSet::id);
     }
 
+    private List<String> assignedNameServers(HostedZone zone) {
+        if (zone.getDelegationSetId() != null) {
+            return getReusableDelegationSet(zone.getDelegationSetId()).nameServers();
+        }
+        if (!zone.getDelegationNameServers().isEmpty()) {
+            return zone.getDelegationNameServers();
+        }
+        // Older zones did not store their assignment separately from the apex NS records.
+        List<String> stored = recordStore.get(zone.getId()).orElse(List.of()).stream()
+                .filter(record -> "NS".equals(record.getType()) && isApexSoaOrNs(record, zone.getName()))
+                .flatMap(record -> record.getRecords().stream()).map(ResourceRecord::getValue)
+                .map(Route53Service::delegationName).toList();
+        return stored.size() == 4 ? stored : nameServers;
+    }
+
     private static String delegationSetId(String id) {
         String cleanId = id == null ? "" : id.startsWith("/delegationset/") ? id.substring(15) : id;
         if (cleanId.isEmpty() || cleanId.length() > 32) {
@@ -223,18 +245,22 @@ public class Route53Service implements Resettable {
         HostedZone zone = new HostedZone(id, normalizedName, callerReference, comment, vpcAssociation);
         zone.setOwnerAccountId(callerAccountId);
         zone.setDelegationSetId(set == null ? null : set.id());
+        zone.setDelegationNameServers(set == null ? nameServers : set.nameServers());
         if (vpcAssociation != null) {
             vpcAssociation.setOwnerAccountId(callerAccountId);
         }
         zoneNameCounts(zone.isPrivateZone()).merge(normalizedName.toLowerCase(), 1, Integer::sum);
         zoneStore.put(id, zone);
-        recordStore.put(id, buildDefaultRecords(normalizedName, set == null ? nameServers : set.nameServers()));
+        recordStore.put(id, buildDefaultRecords(normalizedName, zone.getDelegationNameServers()));
         ChangeInfo change = newChange(null);
         return new CreateZoneResult(zone, change);
     }
 
     private void validateDelegationSetForZone(DelegationSet set, String name) {
-        List<HostedZone> zones = zoneStore.scan(k -> true);
+        String accountId = callerAccountId();
+        List<HostedZone> zones = allHostedZonesAcrossAccounts().stream()
+                .filter(owned -> accountId.equals(owned.accountId()) && accountId.equals(ownerAccountId(owned.zone())))
+                .map(OwnedZone::zone).toList();
         if (zones.stream().filter(zone -> set.id().equals(zone.getDelegationSetId())).count() >= 100) {
             throw new AwsException("TooManyHostedZones", "The hosted zone limit for this reusable delegation set has been reached.", 400);
         }
@@ -246,7 +272,7 @@ public class Route53Service implements Resettable {
             String existingName = normalizeRecordName(existing.getName());
             boolean related = DomainNames.isWithin(normalizedName, existingName)
                     || DomainNames.isWithin(existingName, normalizedName);
-            if (related && getDelegationSet(existing).nameServers().stream().anyMatch(ns ->
+            if (related && assignedNameServers(existing).stream().anyMatch(ns ->
                     set.nameServers().stream().anyMatch(candidate -> ns.equalsIgnoreCase(candidate)))) {
                 throw new AwsException("ConflictingDomainExists",
                         "The domain overlaps a public hosted zone that uses the same name servers.", 400);
@@ -255,9 +281,7 @@ public class Route53Service implements Resettable {
     }
 
     public HostedZone getHostedZone(String id) {
-        HostedZone zone = zoneStore.get(id).orElseThrow(() ->
-                new AwsException("NoSuchHostedZone",
-                        "No hosted zone found with ID: " + id, 404));
+        HostedZone zone = getHostedZoneOwnedByCaller(id);
         zone.setResourceRecordSetCount(recordCount(id));
         return zone;
     }
@@ -961,7 +985,8 @@ public class Route53Service implements Resettable {
             return zone;
         }
 
-        HostedZone zone = getHostedZone(zoneId);
+        HostedZone zone = zoneStore.get(zoneId).orElseThrow(() ->
+                new AwsException("NoSuchHostedZone", "No hosted zone found with ID: " + zoneId, 404));
         if (!ownerAccountId(zone).equals(callerAccountId)) {
             throw new AwsException("NoSuchHostedZone",
                     "No hosted zone found with ID: " + zoneId, 404);
