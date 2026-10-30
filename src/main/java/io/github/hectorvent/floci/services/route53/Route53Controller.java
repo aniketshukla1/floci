@@ -54,7 +54,8 @@ public class Route53Controller {
                 throw new AwsException("InvalidInput",
                         "The request body must be a CreateReusableDelegationSetRequest document.", 400);
             }
-            DelegationSet set = service.createReusableDelegationSet(XmlParser.extractFirst(body, "CallerReference", null));
+            DelegationSet set = service.createReusableDelegationSet(XmlParser.extractFirst(body, "CallerReference", null),
+                    XmlParser.extractFirst(body, "HostedZoneId", null));
             String xml = new XmlBuilder().start("CreateReusableDelegationSetResponse", NS)
                     .raw(xmlDelegationSet(set)).end("CreateReusableDelegationSetResponse").build();
             return Response.created(URI.create("/2013-04-01/delegationset/" + set.id())).type(XML).entity(xml).build();
@@ -127,12 +128,16 @@ public class Route53Controller {
                 throw new AwsException("InvalidInput", "Name and CallerReference are required.", 400);
             }
 
-            CreateZoneResult result = service.createHostedZone(name, callerRef, comment, vpcAssociation);
+            String delegationSetId = XmlParser.extractFirst(body, "DelegationSetId", null);
+            if (delegationSetId != null && Boolean.parseBoolean(XmlParser.extractFirst(body, "PrivateZone", "false"))) {
+                throw new AwsException("InvalidInput", "A private hosted zone cannot use a reusable delegation set.", 400);
+            }
+            CreateZoneResult result = service.createHostedZone(name, callerRef, comment, vpcAssociation, delegationSetId);
             XmlBuilder xml = new XmlBuilder()
                     .start("CreateHostedZoneResponse", NS)
                     .raw(xmlHostedZone(result.zone()))
                     .raw(xmlChangeInfo(result.change()))
-                    .raw(xmlDelegationSet());
+                    .raw(xmlDelegationSet(service.getDelegationSet(result.zone())));
             if (!result.zone().getVpcAssociations().isEmpty()) {
                 xml.raw(xmlVpcAssociation(result.zone().getVpcAssociations().getFirst()));
             }
@@ -155,7 +160,7 @@ public class Route53Controller {
             String xml = new XmlBuilder()
                     .start("GetHostedZoneResponse", NS)
                     .raw(xmlHostedZone(zone))
-                    .raw(xmlDelegationSet())
+                    .raw(xmlDelegationSet(service.getDelegationSet(zone)))
                     .raw(xmlVpcAssociations(zone.getVpcAssociations()))
                     .end("GetHostedZoneResponse")
                     .build();
@@ -692,7 +697,7 @@ public class Route53Controller {
                 .elem("Type", type)
                 .elem("Value", value)
                 .end("Limit")
-                .elem("Count", 0L)
+                .elem("Count", "MAX_REUSABLE_DELEGATION_SETS_BY_OWNER".equals(type) ? service.getReusableDelegationSetCount() : 0L)
                 .end("GetAccountLimitResponse")
                 .build();
         return Response.ok(xml, XML).build();
@@ -801,23 +806,12 @@ public class Route53Controller {
 
     private String xmlDelegationSet(DelegationSet set) {
         XmlBuilder xml = new XmlBuilder().start("DelegationSet")
-                .elem("Id", "/delegationset/" + set.id()).elem("CallerReference", set.callerReference())
+                .elem("Id", set.id() == null ? null : "/delegationset/" + set.id()).elem("CallerReference", set.callerReference())
                 .start("NameServers");
         for (String ns : set.nameServers()) {
             xml.elem("NameServer", ns);
         }
         return xml.end("NameServers").end("DelegationSet").build();
-    }
-
-    private String xmlDelegationSet() {
-        XmlBuilder xml = new XmlBuilder()
-                .start("DelegationSet")
-                .start("NameServers");
-        for (String ns : service.getNameServers()) {
-            xml.elem("NameServer", ns);
-        }
-        xml.end("NameServers").end("DelegationSet");
-        return xml.build();
     }
 
     private String xmlVpcAssociation(VpcAssociation association) {

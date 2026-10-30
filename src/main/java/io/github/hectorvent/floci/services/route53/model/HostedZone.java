@@ -13,6 +13,7 @@ public class HostedZone {
     private String callerReference;
     private String comment;
     private String ownerAccountId;
+    private String delegationSetId;
     private boolean privateZone;
     private int resourceRecordSetCount;
     private List<VpcAssociation> vpcAssociations = new ArrayList<>();
@@ -51,6 +52,9 @@ public class HostedZone {
 
     public String getOwnerAccountId() { return ownerAccountId; }
     public void setOwnerAccountId(String ownerAccountId) { this.ownerAccountId = ownerAccountId; }
+
+    public String getDelegationSetId() { return delegationSetId; }
+    public void setDelegationSetId(String delegationSetId) { this.delegationSetId = delegationSetId; }
 
     public boolean isPrivateZone() { return privateZone; }
     public void setPrivateZone(boolean privateZone) { this.privateZone = privateZone; }

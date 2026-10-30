@@ -7,10 +7,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.route53.Route53Client;
+import software.amazon.awssdk.services.route53.model.CreateReusableDelegationSetResponse;
 import software.amazon.awssdk.services.route53.model.DelegationSet;
 import software.amazon.awssdk.services.route53.model.ListReusableDelegationSetsResponse;
 import software.amazon.awssdk.services.route53.model.Route53Exception;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -28,10 +30,19 @@ class Route53DelegationSetsIntegrationTest {
     void createGetAndDeleteRoundTripThroughAwsSdk() {
         try (Route53Client client = client("741686000001", Region.US_EAST_1)) {
             String reference = "delegation<&>" + UUID.randomUUID();
-            DelegationSet created = client.createReusableDelegationSet(r -> r.callerReference(reference)).delegationSet();
+            CreateReusableDelegationSetResponse response = client.createReusableDelegationSet(r -> r.callerReference(reference));
+            DelegationSet created = response.delegationSet();
             try {
                 assertTrue(created.id().startsWith("N"));
                 assertEquals(reference, created.callerReference());
+                assertEquals(201, response.sdkHttpResponse().statusCode());
+                assertEquals("/2013-04-01/delegationset/" + created.id(),
+                        URI.create(response.sdkHttpResponse().firstMatchingHeader("Location").orElseThrow()).getPath());
+                given().header("Authorization", "AWS4-HMAC-SHA256 Credential=741686000001"
+                                + "/20261030/us-east-1/route53/aws4_request, SignedHeaders=host, Signature=abc")
+                        .get("/2013-04-01/delegationset/" + created.id()).then().statusCode(200)
+                        .body(containsString("<Id>/delegationset/" + created.id() + "</Id>"))
+                        .body(containsString("<CallerReference>delegation&lt;&amp;&gt;"));
                 assertEquals(4, created.nameServers().size());
                 assertEquals(created, client.getReusableDelegationSet(r -> r.id(created.id())).delegationSet());
             } finally {
