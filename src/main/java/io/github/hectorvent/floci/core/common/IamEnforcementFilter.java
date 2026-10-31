@@ -1780,11 +1780,11 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         return accessDeniedResponse(action, credentialScope, requestMediaType, resourceArn, WireProtocol.REST);
     }
 
-    private static Response accessDeniedForRequest(String action, String credentialScope, ContainerRequestContext ctx) {
+    private Response accessDeniedForRequest(String action, String credentialScope, ContainerRequestContext ctx) {
         return accessDeniedForRequest(action, credentialScope, ctx, null);
     }
 
-    private static Response accessDeniedForRequest(String action, String credentialScope,
+    private Response accessDeniedForRequest(String action, String credentialScope,
                                                  ContainerRequestContext ctx, String resourceArn) {
         WireProtocol protocol = claimedProtocol(ctx);
         if (isCbor(protocol)) {
@@ -1797,7 +1797,9 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
         if (IamActionRegistry.isS3ControlRequest(credentialScope, ctx)) {
             return s3ControlXmlAccessDenied(accessDeniedMessage(action));
         }
-        return accessDeniedResponse(action, credentialScope, ctx.getMediaType(), resourceArn, protocol);
+        boolean restXml = catalog.byCredentialScope(credentialScope)
+                .filter(descriptor -> descriptor.supportsProtocol(ServiceProtocol.REST_XML)).isPresent();
+        return accessDeniedResponse(action, credentialScope, ctx.getMediaType(), resourceArn, protocol, restXml);
     }
 
     private static String accessDeniedMessage(String action) {
@@ -1806,12 +1808,17 @@ public class IamEnforcementFilter implements ContainerRequestFilter {
 
     static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType,
                                          String resourceArn, WireProtocol protocol) {
+        return accessDeniedResponse(action, credentialScope, requestMediaType, resourceArn, protocol, false);
+    }
+
+    private static Response accessDeniedResponse(String action, String credentialScope, MediaType requestMediaType,
+                                                 String resourceArn, WireProtocol protocol, boolean restXml) {
         String message = accessDeniedMessage(action);
         if ("s3".equals(credentialScope)) {
             String resourcePath = formatS3ResourcePath(resourceArn);
             return s3XmlAccessDenied(message, resourcePath);
         }
-        if ("route53".equals(credentialScope) || protocol == WireProtocol.AWS_QUERY || isFormEncoded(requestMediaType)) {
+        if (restXml || protocol == WireProtocol.AWS_QUERY || isFormEncoded(requestMediaType)) {
             return queryXmlError(queryAccessDeniedCode(credentialScope), message);
         }
         int status = protocol == WireProtocol.AWS_JSON_1_0 || protocol == WireProtocol.AWS_JSON_1_1 ? 400 : 403;

@@ -2075,6 +2075,31 @@ class IamEnforcementFilterTest {
         assertTrue(body.contains("<RequestId>"), body);
     }
 
+    @ParameterizedTest
+    @CsvSource({"REST_XML, application/xml", "REST_JSON, application/json"})
+    void restDenialUsesTheServiceCatalogProtocol(ServiceProtocol serviceProtocol, String expectedContentType) {
+        ContainerRequestContext request = mock(ContainerRequestContext.class);
+        String auth = "AWS4-HMAC-SHA256 Credential=AKIAUSER/20261030/us-east-1/catalog-service/aws4_request, "
+                + "SignedHeaders=host, Signature=abc";
+        ServiceDescriptor descriptor = descriptor("catalog-service", serviceProtocol, Set.of("catalog-service"), null);
+        requestContext.setAccountId("000000000000");
+        when(accountResolver.extractAccessKeyId(auth)).thenReturn("AKIAUSER");
+        when(request.getHeaderString("Authorization")).thenReturn(auth);
+        stubClaim(request, WireProtocol.REST, descriptor);
+        when(catalog.byCredentialScope("catalog-service")).thenReturn(Optional.of(descriptor));
+        when(actionRegistry.resolveRoute("catalog-service", request)).thenReturn("catalog-service:Read");
+        when(iamService.resolveCallerContext(eq("AKIAUSER"), any())).thenReturn(CallerContext.of(List.of()));
+        when(evaluator.evaluateResolvedResourcePolicy(any(), any(), any(), eq("catalog-service:Read"), any(), any()))
+                .thenReturn(IamPolicyEvaluator.Decision.DENY);
+
+        newFilter().filter(request);
+
+        ArgumentCaptor<Response> response = ArgumentCaptor.captor();
+        verify(request).abortWith(response.capture());
+        assertEquals(403, response.getValue().getStatus());
+        assertEquals(MediaType.valueOf(expectedContentType), response.getValue().getMediaType());
+    }
+
     /**
      * SNS refuses with its own {@code AuthorizationError}, the 403 every SNS operation lists, whichever action is
      * denied (a role it is passed as well as its own); another Query service still answers {@code AccessDenied}.
