@@ -12,14 +12,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.core.common.PaginatedResult;
 import io.github.hectorvent.floci.core.common.Pagination;
+import io.github.hectorvent.floci.core.common.SignedMarkers;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -27,7 +28,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.IntStream;
 
 /** Stateless policy validation; findings never grant permissions or persist the submitted policy. */
 @ApplicationScoped
@@ -41,6 +41,7 @@ public class PolicyValidationService {
     static final String CHECK_REFERENCE = "https://docs.aws.amazon.com/IAM/latest/UserGuide/"
             + "access-analyzer-reference-policy-checks.html";
     private final ObjectMapper mapper;
+    private final SignedMarkers markers = new SignedMarkers(2048);
     private static final Set<String> CONDITION_OPERATORS = Set.of("StringEquals", "StringNotEquals",
             "StringEqualsIgnoreCase", "StringNotEqualsIgnoreCase", "StringLike", "StringNotLike",
             "NumericEquals", "NumericNotEquals", "NumericLessThan", "NumericLessThanEquals",
@@ -54,6 +55,12 @@ public class PolicyValidationService {
     }
 
     public ObjectNode validate(JsonNode request, Integer maxResults, String nextToken) {
+        if (maxResults != null && (maxResults < 1 || maxResults > 1000)) {
+            throw invalid("maxResults must be between 1 and 1000.");
+        }
+        if (nextToken != null && (nextToken.isBlank() || nextToken.length() > 2048)) {
+            throw invalid("Invalid nextToken.");
+        }
         String document = text(request, "policyDocument", true);
         String type = text(request, "policyType", true);
         if (!POLICY_TYPES.contains(type)) {
@@ -67,36 +74,28 @@ public class PolicyValidationService {
         if (resourceType != null && (!"RESOURCE_POLICY".equals(type) || !RESOURCE_TYPES.contains(resourceType))) {
             throw invalid("validatePolicyResourceType must identify a supported resource policy type.");
         }
-        ObjectNode result = mapper.createObjectNode();
-        result.putArray("findings");
+        List<Finding> findings;
         try {
             Document source = new Document(document);
             checkDocument(source, type, resourceType);
-            source.findings.forEach(result.withArray("findings")::add);
+            findings = source.findings;
         } catch (JsonProcessingException e) {
             JsonLocation location = e.getLocation();
             int offset = location == null ? 0 : (int) Math.clamp(location.getCharOffset(), 0, document.length());
-            ObjectNode finding = mapper.createObjectNode().put("issueCode", "JSON_SYNTAX_ERROR")
-                    .put("findingType", "ERROR").put("findingDetails", "Correct the policy document's JSON syntax.")
-                    .put("learnMoreLink", CHECK_REFERENCE + "#access-analyzer-reference-policy-checks-error-json-syntax-error");
-            ObjectNode source = finding.putArray("locations").addObject();
-            source.putArray("path");
-            ObjectNode span = source.putObject("span");
-            span.set("start", position(document, offset));
-            span.set("end", position(document, offset));
-            result.withArray("findings").add(finding);
+            findings = List.of(new Finding("0000000000", "JSON_SYNTAX_ERROR", "ERROR",
+                    "Correct the policy document's JSON syntax.", new Span(List.of(), offset, offset)));
         } catch (IOException e) {
             throw new IllegalStateException("Could not read the policy document", e);
         }
-        List<JsonNode> findings = new ArrayList<>();
-        result.withArray("findings").forEach(findings::add);
         String namespace = "validate-policy:" + digest(document + "\u0000" + type + "\u0000"
                 + (resourceType == null ? "" : resourceType) + "\u0000" + (locale == null ? "EN" : locale));
-        PaginatedResult<Integer> page = Pagination.paginate(IntStream.range(0, findings.size()).boxed().toList(),
-                index -> String.format(Locale.ROOT, "%010d", index), maxResults, nextToken,
-                100, 1000, 2048, "ValidationException", namespace);
+        PaginatedResult<Finding> page = Pagination.paginate(findings, Finding::cursor,
+                maxResults == null ? 100 : maxResults, nextToken, markers, namespace + ":",
+                token -> invalid("Invalid nextToken."));
+        ObjectNode result = mapper.createObjectNode();
         ArrayNode items = result.putArray("findings");
-        page.items().forEach(index -> items.add(findings.get(index)));
+        LineMap positions = new LineMap(document);
+        page.items().forEach(finding -> items.add(findingJson(finding, positions)));
         if (page.nextToken() != null) {
             result.put("nextToken", page.nextToken());
         }
@@ -105,7 +104,13 @@ public class PolicyValidationService {
 
     private static String digest(String value) {
         try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            // Preserve every UTF-16 code unit, including unpaired surrogates accepted in JSON strings.
+            for (int i = 0; i < value.length(); i++) {
+                digest.update((byte) (value.charAt(i) >>> 8));
+                digest.update((byte) value.charAt(i));
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is unavailable", e);
         }
@@ -129,14 +134,16 @@ public class PolicyValidationService {
             source.dataType("/Id", "a string");
         }
         JsonNode statements = root.path("Statement");
+        boolean trustPolicy = "AWS::IAM::AssumeRolePolicyDocument".equals(resourceType)
+                || resourceType == null && "RESOURCE_POLICY".equals(type) && hasTrustActions(statements);
         if (statements.isMissingNode() || statements.isNull() || statements.isArray() && statements.isEmpty()) {
             source.add("", "MISSING_STATEMENT", "ERROR", "The policy needs at least one statement.");
         } else if (statements.isObject()) {
-            checkStatement(source, statements, "/Statement", type, resourceType, new HashSet<>());
+            checkStatement(source, statements, "/Statement", type, trustPolicy, new HashSet<>());
         } else if (statements.isArray()) {
             Set<String> sids = new HashSet<>();
             for (int i = 0; i < statements.size(); i++) {
-                checkStatement(source, statements.get(i), "/Statement/" + i, type, resourceType, sids);
+                checkStatement(source, statements.get(i), "/Statement/" + i, type, trustPolicy, sids);
             }
         } else {
             source.dataType("/Statement", "an object or an array of objects");
@@ -144,7 +151,7 @@ public class PolicyValidationService {
     }
 
     private void checkStatement(Document source, JsonNode statement, String path, String type,
-                                String resourceType, Set<String> sids) {
+                                boolean trustPolicy, Set<String> sids) {
         if (!statement.isObject()) {
             source.dataType(path, "a statement object");
             return;
@@ -159,8 +166,6 @@ public class PolicyValidationService {
             source.add(path + "/Effect", "INVALID_EFFECT", "ERROR", "The effect must be Allow or Deny.");
         }
         checkPair(source, statement, path, "Action", "NotAction", true, "MISSING_ACTION");
-        boolean trustPolicy = "AWS::IAM::AssumeRolePolicyDocument".equals(resourceType)
-                || "RESOURCE_POLICY".equals(type) && hasAssumeRoleAction(statement.path("Action"));
         checkPair(source, statement, path, "Resource", "NotResource", !trustPolicy, "MISSING_RESOURCE");
         boolean resourcePolicy = "RESOURCE_POLICY".equals(type) || "RESOURCE_CONTROL_POLICY".equals(type);
         checkPair(source, statement, path, "Principal", "NotPrincipal", resourcePolicy, "MISSING_PRINCIPAL");
@@ -209,15 +214,35 @@ public class PolicyValidationService {
             source.add(path, "RCP_SYNTAX_ERROR_PRINCIPAL", "ERROR", "Resource control policies require the wildcard principal.");
         }
         if ("Allow".equals(statement.path("Effect").asText()) && (statement.has("Condition")
-                || !"*".equals(statement.path("Resource").asText()) || !"*".equals(statement.path("Principal").asText()))) {
+                || !onlyWildcard(statement.path("Resource")) || !"*".equals(statement.path("Principal").asText()))) {
             source.add(path, "RCP_SYNTAX_ERROR_ALLOW", "ERROR", "Allow statements in resource control policies require "
                     + "wildcard principals and resources without conditions.");
         }
     }
 
+    private static boolean onlyWildcard(JsonNode node) {
+        return node.isTextual() && "*".equals(node.asText())
+                || node.isArray() && node.size() == 1 && onlyWildcard(node.get(0));
+    }
+
+    private static boolean hasTrustActions(JsonNode statements) {
+        if (statements.isObject()) {
+            return hasAssumeRoleAction(statements.path("Action"));
+        }
+        if (statements.isArray()) {
+            for (JsonNode statement : statements) {
+                if (hasAssumeRoleAction(statement.path("Action"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean hasAssumeRoleAction(JsonNode actions) {
         if (actions.isTextual()) {
-            return Set.of("sts:AssumeRole", "sts:AssumeRoleWithSAML", "sts:AssumeRoleWithWebIdentity")
+            return Set.of("sts:AssumeRole", "sts:AssumeRoleWithSAML", "sts:AssumeRoleWithWebIdentity",
+                            "sts:TagSession", "sts:SetSourceIdentity")
                     .stream().anyMatch(action -> action.equalsIgnoreCase(actions.asText()));
         }
         if (actions.isArray()) {
@@ -265,8 +290,13 @@ public class PolicyValidationService {
         } else if (node.isEmpty()) {
             source.add(path, "EMPTY_OBJECT_PRINCIPAL", "SUGGESTION", "Specify the intended principal.");
         } else {
-            node.properties().forEach(entry -> checkStringList(source, entry.getValue(),
-                    child(path, entry.getKey()), "EMPTY_ARRAY_PRINCIPAL"));
+            node.properties().forEach(entry -> {
+                String memberPath = child(path, entry.getKey());
+                if (!Set.of("AWS", "Federated", "Service", "CanonicalUser").contains(entry.getKey())) {
+                    source.addKey(memberPath, "INVALID_PRINCIPAL_KEY", "ERROR", "Choose a supported principal key.");
+                }
+                checkStringList(source, entry.getValue(), memberPath, "EMPTY_ARRAY_PRINCIPAL");
+            });
         }
     }
 
@@ -286,25 +316,32 @@ public class PolicyValidationService {
                     name = name.substring(name.indexOf(':') + 1);
                 }
                 if ("NullIfExists".equals(name)) {
-                    source.add(operatorPath, "NULL_WITH_IF_EXISTS", "ERROR", "The Null operator cannot use IfExists.");
+                    source.addKey(operatorPath, "NULL_WITH_IF_EXISTS", "ERROR", "The Null operator cannot use IfExists.");
                 } else {
                     String base = name.endsWith("IfExists") ? name.substring(0, name.length() - "IfExists".length()) : name;
                     if (!CONDITION_OPERATORS.contains(base)) {
-                        source.add(operatorPath, "INVALID_CONDITION_OPERATOR", "ERROR", "Choose a supported condition operator.");
+                        source.addKey(operatorPath, "INVALID_CONDITION_OPERATOR", "ERROR", "Choose a supported condition operator.");
                     }
                 }
             });
         }
     }
 
-    private record Span(List<Object> path, int start, int end) {}
+    private record Span(List<Object> path, int start, int end, boolean key) {
+        private Span(List<Object> path, int start, int end) {
+            this(path, start, end, false);
+        }
+    }
+
+    private record Finding(String cursor, String code, String type, String details, Span span) {}
 
     /** Keeps the original source ranges while parsing, rather than locating reformatted JSON. */
     private final class Document {
         private final String text;
         private final JsonNode root;
         private final Map<String, Span> spans = new LinkedHashMap<>();
-        private final List<ObjectNode> findings = new ArrayList<>();
+        private final Map<String, Span> keys = new LinkedHashMap<>();
+        private final List<Finding> findings = new ArrayList<>();
 
         private Document(String text) throws IOException {
             this.text = text;
@@ -327,8 +364,11 @@ public class PolicyValidationService {
                 ObjectNode object = mapper.createObjectNode();
                 while (parser.nextToken() != JsonToken.END_OBJECT) {
                     String field = parser.currentName();
+                    int keyStart = (int) parser.currentTokenLocation().getCharOffset();
+                    List<Object> fieldPath = append(path, field);
+                    keys.put(child(pointer, field), new Span(fieldPath, keyStart, keyEnd(keyStart), true));
                     parser.nextToken();
-                    object.set(field, read(parser, child(pointer, field), append(path, field)));
+                    object.set(field, read(parser, child(pointer, field), fieldPath));
                 }
                 node = object;
             } else if (token == JsonToken.START_ARRAY) {
@@ -358,7 +398,7 @@ public class PolicyValidationService {
         private void checkKeys(JsonNode node, String path, Set<String> allowed) {
             node.fieldNames().forEachRemaining(key -> {
                 if (!allowed.contains(key)) {
-                    add(child(path, key), "INVALID_POLICY_ELEMENT", "ERROR", "Remove the unsupported policy element " + key + ".");
+                    addKey(child(path, key), "INVALID_POLICY_ELEMENT", "ERROR", "Remove the unsupported policy element " + key + ".");
                 }
             });
         }
@@ -369,25 +409,46 @@ public class PolicyValidationService {
 
         private void add(String pointer, String code, String type, String details) {
             Span span = spans.getOrDefault(pointer, spans.get(""));
-            ObjectNode finding = mapper.createObjectNode().put("issueCode", code).put("findingType", type)
-                    .put("findingDetails", details).put("learnMoreLink", CHECK_REFERENCE);
-            ObjectNode location = finding.putArray("locations").addObject();
-            for (Object element : span.path()) {
-                ObjectNode member = location.withArray("path").addObject();
-                if (element instanceof Integer index) {
-                    member.put("index", index);
-                } else {
-                    member.put("value", element.toString());
+            findings.add(new Finding(String.format(Locale.ROOT, "%010d", findings.size()), code, type, details, span));
+        }
+
+        private void addKey(String pointer, String code, String type, String details) {
+            Span span = keys.getOrDefault(pointer, spans.get(""));
+            findings.add(new Finding(String.format(Locale.ROOT, "%010d", findings.size()), code, type, details, span));
+        }
+
+        private int keyEnd(int start) {
+            int end = start + 1;
+            while (end < text.length()) {
+                char character = text.charAt(end++);
+                if (character == '\\') {
+                    end++;
+                } else if (character == '"') {
+                    break;
                 }
             }
-            if (span.path().isEmpty()) {
-                location.putArray("path");
-            }
-            ObjectNode range = location.putObject("span");
-            range.set("start", position(text, span.start()));
-            range.set("end", position(text, span.end()));
-            findings.add(finding);
+            return end;
         }
+    }
+
+    private ObjectNode findingJson(Finding finding, LineMap positions) {
+        ObjectNode result = mapper.createObjectNode().put("issueCode", finding.code()).put("findingType", finding.type())
+                .put("findingDetails", finding.details()).put("learnMoreLink", CHECK_REFERENCE);
+        ObjectNode location = result.putArray("locations").addObject();
+        ArrayNode path = location.putArray("path");
+        for (int i = 0; i < finding.span().path().size(); i++) {
+            Object element = finding.span().path().get(i);
+            ObjectNode member = path.addObject();
+            if (element instanceof Integer index) {
+                member.put("index", index);
+            } else {
+                member.put(finding.span().key() && i == finding.span().path().size() - 1 ? "key" : "value", element.toString());
+            }
+        }
+        ObjectNode range = location.putObject("span");
+        range.set("start", position(positions, finding.span().start()));
+        range.set("end", position(positions, finding.span().end()));
+        return result;
     }
 
     private static String child(String path, String key) {
@@ -400,24 +461,28 @@ public class PolicyValidationService {
         return List.copyOf(result);
     }
 
-    private ObjectNode position(String document, int offset) {
-        int line = 1;
-        int column = 0;
-        for (int i = 0; i < offset; i++) {
-            if (document.charAt(i) == '\r') {
-                line++;
-                column = 0;
-                if (i + 1 < offset && document.charAt(i + 1) == '\n') {
-                    i++;
+    private static final class LineMap {
+        private final List<Integer> starts = new ArrayList<>(List.of(0));
+
+        private LineMap(String document) {
+            for (int i = 0; i < document.length(); i++) {
+                if (document.charAt(i) == '\r') {
+                    if (i + 1 < document.length() && document.charAt(i + 1) == '\n') {
+                        i++;
+                    }
+                    starts.add(i + 1);
+                } else if (document.charAt(i) == '\n') {
+                    starts.add(i + 1);
                 }
-            } else if (document.charAt(i) == '\n') {
-                line++;
-                column = 0;
-            } else {
-                column++;
             }
         }
-        return mapper.createObjectNode().put("offset", offset).put("line", line).put("column", column);
+    }
+
+    private ObjectNode position(LineMap positions, int offset) {
+        int index = Collections.binarySearch(positions.starts, offset);
+        int line = index >= 0 ? index : -index - 2;
+        return mapper.createObjectNode().put("offset", offset).put("line", line + 1)
+                .put("column", offset - positions.starts.get(line));
     }
 
     private static String text(JsonNode request, String key, boolean required) {

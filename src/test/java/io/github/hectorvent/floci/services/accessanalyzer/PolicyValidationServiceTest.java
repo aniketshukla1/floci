@@ -2,14 +2,20 @@ package io.github.hectorvent.floci.services.accessanalyzer;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.hectorvent.floci.core.common.AwsException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Collections;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PolicyValidationServiceTest {
@@ -86,6 +92,119 @@ class PolicyValidationServiceTest {
         JsonNode finding = StreamSupport.stream(validate(policy).path("findings").spliterator(), false)
                 .filter(item -> "INVALID_EFFECT".equals(item.path("issueCode").asText())).findFirst().orElseThrow();
         assertEquals(3, finding.at("/locations/0/span/start/line").asInt());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"sts:TagSession", "sts:SetSourceIdentity"})
+    void trustPolicyContextAppliesToAllOfItsStatements(String additionalAction) {
+        String policy = """
+                {"Version":"2012-10-17","Statement":[
+                  {"Effect":"Allow","Principal":{"AWS":"123456789012"},"Action":"sts:AssumeRole"},
+                  {"Effect":"Allow","Principal":{"AWS":"123456789012"},"Action":"%s"}]}
+                """.formatted(additionalAction);
+        JsonNode result = service.validate(mapper.createObjectNode().put("policyType", "RESOURCE_POLICY")
+                .put("policyDocument", policy), null, null);
+        assertTrue(result.path("findings").isEmpty(), result::toString);
+    }
+
+    @Test
+    void resourceControlAllowAcceptsAResourceWildcardArray() {
+        JsonNode result = service.validate(mapper.createObjectNode().put("policyType", "RESOURCE_CONTROL_POLICY")
+                .put("policyDocument", """
+                        {"Version":"2012-10-17","Statement":{"Effect":"Allow","Principal":"*",
+                          "Action":"*","Resource":["*"]}}
+                        """), null, null);
+        assertTrue(result.path("findings").isEmpty(), result::toString);
+    }
+
+    @Test
+    void principalKeyNamesAreValidated() {
+        JsonNode result = service.validate(mapper.createObjectNode().put("policyType", "RESOURCE_POLICY")
+                .put("policyDocument", """
+                        {"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"s3:GetObject",
+                          "Resource":"*","Principal":{"Aws":"123456789012"}}}
+                        """), null, null);
+        assertEquals("INVALID_PRINCIPAL_KEY", result.at("/findings/0/issueCode").asText());
+    }
+
+    @Test
+    void anInvalidPrincipalKeyPointsToTheKeyRatherThanItsValue() {
+        String policy = """
+                {"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"s3:GetObject",
+                  "Resource":"*","Principal":{"Aws":"123456789012"}}}
+                """;
+        JsonNode result = service.validate(mapper.createObjectNode().put("policyType", "RESOURCE_POLICY")
+                .put("policyDocument", policy), null, null);
+        JsonNode location = result.at("/findings/0/locations/0");
+        assertEquals("Aws", location.at("/path/2/key").asText());
+        assertEquals(policy.indexOf("\"Aws\""), location.at("/span/start/offset").asInt());
+        assertEquals(policy.indexOf("\"Aws\"") + 5, location.at("/span/end/offset").asInt());
+    }
+
+    @Test
+    void anEscapedUnsupportedPolicyKeyHasItsOriginalSourceSpan() {
+        String policy = "{\"A\\u0077s\":0}";
+        JsonNode result = validate(policy);
+        JsonNode location = result.at("/findings/0/locations/0");
+        assertEquals("Aws", location.at("/path/0/key").asText());
+        assertEquals(1, location.at("/span/start/offset").asInt());
+        assertEquals(11, location.at("/span/end/offset").asInt());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"policyDocument\":7,\"policyType\":\"IDENTITY_POLICY\"}",
+        "{\"policyDocument\":\"{}\",\"policyType\":\"OTHER\"}",
+        "{\"policyDocument\":\"{}\",\"policyType\":\"IDENTITY_POLICY\",\"locale\":\"XX\"}",
+        "{\"policyDocument\":\"{}\",\"policyType\":\"IDENTITY_POLICY\",\"validatePolicyResourceType\":\"AWS::S3::Bucket\"}"})
+    void rejectsInvalidRequestMembers(String request) throws Exception {
+        AwsException error = assertThrows(AwsException.class, () -> service.validate(mapper.readTree(request), null, null));
+        assertEquals("ValidationException", error.getErrorCode());
+    }
+
+    @Test
+    void paginationTokensAreBoundToThePolicyAndPageSizeIsValidated() {
+        ObjectNode request = mapper.createObjectNode().put("policyType", "IDENTITY_POLICY").put("policyDocument", "{}");
+        String token = service.validate(request, 1, null).path("nextToken").asText();
+        ObjectNode changed = request.deepCopy().put("policyDocument", "{\"Statement\":[]}");
+        assertThrows(AwsException.class, () -> service.validate(changed, 1, token));
+        assertThrows(AwsException.class, () -> service.validate(request, 0, null));
+        assertThrows(AwsException.class, () -> service.validate(request, 1001, null));
+    }
+
+    @Test
+    void paginationDistinguishesUnpairedSurrogatesFromReplacementCharacters() {
+        ObjectNode request = mapper.createObjectNode().put("policyType", "IDENTITY_POLICY")
+                .put("policyDocument", "{\"" + (char) 0xD800 + "\":0}");
+        String token = service.validate(request, 1, null).path("nextToken").asText();
+        ObjectNode changed = request.deepCopy().put("policyDocument", "{\"?\":0}");
+        AwsException error = assertThrows(AwsException.class, () -> service.validate(changed, 1, token));
+        assertEquals("ValidationException", error.getErrorCode());
+    }
+
+    @Test
+    void aForgedCursorWithTheRightRequestHashIsStillRejected() {
+        // A captured cursor namespace for this request followed by a forged nonnumeric cursor.
+        String token = "dmFsaWRhdGUtcG9saWN5OjAwNjI0ZjA4YzRlNDk1NGQ5MjgwYTMxN2IwMWI4YWY2N2YzMTRmMzVhNDUyNmQwYjI2NzBhYmI0MGE0NjgwMGE6Z2FyYmFnZQ";
+        AwsException error = assertThrows(AwsException.class, () -> service.validate(mapper.createObjectNode()
+                .put("policyType", "IDENTITY_POLICY").put("policyDocument", "{}"), 1, token));
+        assertEquals("ValidationException", error.getErrorCode());
+    }
+
+    @Test
+    void findingJsonIsMaterializedOnlyForTheRequestedPage() {
+        AtomicInteger objects = new AtomicInteger();
+        ObjectMapper counting = new ObjectMapper().setNodeFactory(new JsonNodeFactory(false) {
+            @Override
+            public ObjectNode objectNode() {
+                objects.incrementAndGet();
+                return super.objectNode();
+            }
+        });
+        String policy = "{\"Statement\":[" + String.join(",", Collections.nCopies(1000, "{}")) + "]}";
+        JsonNode result = new PolicyValidationService(counting).validate(counting.createObjectNode()
+                .put("policyType", "IDENTITY_POLICY").put("policyDocument", policy), 1, null);
+        assertEquals(1, result.path("findings").size());
+        assertTrue(objects.get() < 2000, () -> "Created " + objects.get() + " JSON objects for one finding page");
     }
 
     private ObjectNode validate(String policy) {
