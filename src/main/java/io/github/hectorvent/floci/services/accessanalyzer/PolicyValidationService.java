@@ -367,6 +367,10 @@ public class PolicyValidationService {
                     int keyStart = (int) parser.currentTokenLocation().getCharOffset();
                     List<Object> fieldPath = append(path, field);
                     keys.put(child(pointer, field), new Span(fieldPath, keyStart, keyEnd(keyStart), true));
+                    if (object.has(field)) {
+                        addKey(child(pointer, field), "JSON_SYNTAX_ERROR", "ERROR",
+                                "Policy objects must not repeat the same key.");
+                    }
                     parser.nextToken();
                     object.set(field, read(parser, child(pointer, field), fieldPath));
                 }

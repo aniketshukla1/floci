@@ -3,6 +3,8 @@ package io.github.hectorvent.floci.services.accessanalyzer;
 import io.github.hectorvent.floci.testing.AwsTestClients;
 import io.quarkus.test.junit.QuarkusTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.accessanalyzer.AccessAnalyzerClient;
 import software.amazon.awssdk.services.accessanalyzer.model.PolicyType;
@@ -101,5 +103,17 @@ class AccessAnalyzerValidatePolicyIntegrationTest {
                 .header("Authorization", "AWS4-HMAC-SHA256 Credential=test/20261031/us-east-1/access-analyzer/aws4_request")
                 .body("{\"policyDocument\":").post("/policy/validation")
                 .then().statusCode(400).body("__type", equalTo("SerializationException"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{\"Version\":null,\"Version\":\"2012-10-17\"}",
+        "{\"Statement\":{\"Condition\":{\"StringEquals\":{\"aws:username\":\"alice\",\"aws:username\":\"bob\"}}}}"})
+    void duplicateKeysAtAnyObjectDepthReturnSdkFindings(String policy) {
+        try (AccessAnalyzerClient client = AwsTestClients.create(
+                AccessAnalyzerClient.builder(), "test", Region.US_EAST_1)) {
+            ValidatePolicyResponse result = client.validatePolicy(r -> r.policyType(PolicyType.IDENTITY_POLICY)
+                    .policyDocument(policy));
+            assertTrue(result.findings().stream().anyMatch(finding -> "JSON_SYNTAX_ERROR".equals(finding.issueCode())));
+        }
     }
 }

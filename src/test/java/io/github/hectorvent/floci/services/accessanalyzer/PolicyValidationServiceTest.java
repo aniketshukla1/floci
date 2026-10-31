@@ -72,6 +72,24 @@ class PolicyValidationServiceTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"\"Effect\":\"Permit\",\"Effect\":\"Allow\"",
+        "\"Effect\":null,\"Effect\":\"Allow\"", "\"Effect\":\"Allow\",\"Eff\\u0065ct\":\"Allow\""})
+    void repeatedKeysAreSyntaxFindingsAtTheRepeatedSourceKey(String effects) {
+        String policy = "{\"Version\":\"2012-10-17\",\"Statement\":{\"Action\":\"*\",\"Resource\":\"*\"," + effects + "}}";
+        JsonNode result = validate(policy);
+        assertEquals(1, result.path("findings").size(), result::toString);
+        JsonNode finding = result.at("/findings/0");
+        assertEquals("JSON_SYNTAX_ERROR", finding.path("issueCode").asText());
+        assertEquals("ERROR", finding.path("findingType").asText());
+        JsonNode location = finding.at("/locations/0");
+        assertEquals("Statement", location.at("/path/0/value").asText());
+        assertEquals("Effect", location.at("/path/1/key").asText());
+        int keyStart = policy.indexOf(effects) + effects.indexOf(',') + 1;
+        assertEquals(keyStart, location.at("/span/start/offset").asInt());
+        assertEquals(policy.indexOf('"', keyStart + 1) + 1, location.at("/span/end/offset").asInt());
+    }
+
+    @ParameterizedTest
     @CsvSource(delimiter = '|', value = {
         "RESOURCE_POLICY|{\"Statement\":{\"Effect\":\"Allow\",\"Action\":\"s3:GetObject\",\"Resource\":\"*\"}}|MISSING_PRINCIPAL",
         "SERVICE_CONTROL_POLICY|{\"Statement\":{\"Principal\":\"*\"}}|SCP_SYNTAX_ERROR_PRINCIPAL",
