@@ -1,6 +1,5 @@
 package io.github.hectorvent.floci.services.cloudformation.provisioners;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
@@ -109,7 +108,7 @@ class SesReceiptRuleCfnProvisionerTest {
     }
 
     @Test
-    void legacyRuleUsesItsPreviousTemplateAfterWithoutMovingOnContentUpdate() {
+    void legacyRuleRepositionsOnceThenTracksAfterForContentUpdates() {
         addRule("anchor", null);
         ObjectNode props = properties("first", "store").put("After", "anchor");
         StackResource resource = resource();
@@ -119,10 +118,18 @@ class SesReceiptRuleCfnProvisionerTest {
         ObjectNode updated = props.deepCopy();
         updated.withObject("/Rule").put("Enabled", true);
 
-        provisioner.provision(resource, updated, contextWithPreviousProperties("store", props));
+        provisioner.provision(resource, updated, context("store"));
 
-        assertEquals(List.of("anchor", "between", "store"), names());
+        assertEquals(List.of("anchor", "store", "between"), names());
         assertTrue(rules.describeReceiptRule("first", "store", REGION).isEnabled());
+        provisioner.clearUpdate(resource);
+        addRule("later", "anchor");
+        updated.withObject("/Rule").put("Enabled", false);
+
+        provisioner.provision(resource, updated, context("store"));
+
+        assertEquals(List.of("anchor", "later", "store", "between"), names());
+        assertFalse(rules.describeReceiptRule("first", "store", REGION).isEnabled());
     }
 
     private void addRule(String name, String after) {
@@ -133,11 +140,6 @@ class SesReceiptRuleCfnProvisionerTest {
 
     private List<String> names() {
         return rules.describeReceiptRuleSet("first", REGION).getRules().stream().map(ReceiptRule::getName).toList();
-    }
-
-    private ProvisionContext contextWithPreviousProperties(String prior, JsonNode previous) {
-        ProvisionContext ctx = context(prior);
-        return new ProvisionContext(ctx.engine(), REGION, ACCOUNT, "stack", prior, ctx.progress(), previous);
     }
 
     @Test

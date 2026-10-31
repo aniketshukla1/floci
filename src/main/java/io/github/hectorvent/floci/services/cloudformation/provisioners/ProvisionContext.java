@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -21,14 +20,7 @@ import java.util.function.Consumer;
  */
 public record ProvisionContext(CloudFormationTemplateEngine engine, String region,
                                String accountId, String stackName, String priorPhysicalId,
-                               Consumer<StackEvent> progress, JsonNode priorProperties,
-                               CloudFormationTemplateEngine priorEngine) {
-
-    public ProvisionContext(CloudFormationTemplateEngine engine, String region,
-                            String accountId, String stackName, String priorPhysicalId,
-                            Consumer<StackEvent> progress, JsonNode priorProperties) {
-        this(engine, region, accountId, stackName, priorPhysicalId, progress, priorProperties, null);
-    }
+                               Consumer<StackEvent> progress, JsonNode priorProperties) {
 
     public ProvisionContext(CloudFormationTemplateEngine engine, String region,
                             String accountId, String stackName, String priorPhysicalId) {
@@ -129,18 +121,6 @@ public record ProvisionContext(CloudFormationTemplateEngine engine, String regio
             return null;
         }
         return engine.resolve(props.get(name));
-    }
-
-    /**
-     * Compares a prior property against its deployment. A dynamic-dependent value is unknown and
-     * never matches: a fresh service lookup cannot recover the value that deployment applied.
-     */
-    public boolean matchesPreviousOptional(String name, String value) {
-        if (priorProperties == null || !priorProperties.has(name) || priorProperties.get(name).isNull()) {
-            return value == null;
-        }
-        return (priorEngine == null ? engine : priorEngine).resolveWithoutDynamicLookup(priorProperties.get(name))
-                .map(previous -> Objects.equals(previous.isBlank() ? null : previous, value)).orElse(false);
     }
 
     /**

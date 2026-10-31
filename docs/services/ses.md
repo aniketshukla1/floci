@@ -556,8 +556,8 @@ through the SES API first. `Ref` and `Fn::GetAtt RuleName` return the stored rul
 
 Rule contents and `After` update in place. Content-only updates preserve the rule's position;
 changing the resolved `After` value repositions it, and removing `After` moves it to the front.
-For rules stored before resolved ordering metadata was recorded, a dynamic `After` is reapplied
-on the first update because its previously applied value cannot be recovered.
+Rules stored before resolved ordering metadata was recorded reapply the current `After` value
+once on their next update. Subsequent content-only updates preserve their position.
 Changing the rule name or `RuleSetName` creates a
 replacement; the old rule is deleted after the stack update commits unless `UpdateReplacePolicy`
 is `Retain`. Failed updates restore the previous contents and ordering, and stack deletion removes

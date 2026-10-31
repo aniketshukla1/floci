@@ -112,8 +112,8 @@ class CloudFormationSesReceiptRuleIntegrationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void contentOnlyUpdatesKeepTheExistingOrder(boolean explicitAfter) throws Exception {
+    @CsvSource({"false, false", "false, true", "true, false", "true, true"})
+    void contentOnlyUpdatesKeepTheExistingOrderAfterLegacyMigration(boolean explicitAfter, boolean legacy) throws Exception {
         ReceiptRule anchor = new ReceiptRule();
         anchor.setName("anchor");
         ses.createReceiptRule(ruleSet, anchor, null, "us-east-1", sender -> false);
@@ -131,11 +131,21 @@ class CloudFormationSesReceiptRuleIntegrationTest {
         List<String> expected = explicitAfter ? List.of("anchor", "second", "first")
                 : List.of("second", "first", "anchor");
         assertEquals(expected, ruleNames());
+        if (legacy) {
+            cloudFormation.describeStacks(stackName, "us-east-1", "000000000000").getFirst()
+                    .getResources().get("Rule").getAttributes().remove("__FlociSesReceiptRuleAfter");
+        }
         template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", false);
         cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
         awaitStatus("UPDATE_COMPLETE");
-        assertEquals(expected, ruleNames());
+        List<String> migratedOrder = explicitAfter ? List.of("anchor", "first", "second")
+                : List.of("first", "second", "anchor");
+        assertEquals(legacy ? migratedOrder : expected, ruleNames());
         assertFalse(ses.describeReceiptRule(ruleSet, "first", "us-east-1").isEnabled());
+        template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", true);
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(legacy ? migratedOrder : expected, ruleNames());
     }
 
     @ParameterizedTest
@@ -164,7 +174,7 @@ class CloudFormationSesReceiptRuleIntegrationTest {
     }
 
     @Test
-    void legacyTypedGetAttKeepsThePositionOnAContentOnlyUpdate() throws Exception {
+    void typedGetAttKeepsThePositionOnAContentOnlyUpdate() throws Exception {
         ReceiptRule anchor = new ReceiptRule();
         anchor.setName("management");
         ses.createReceiptRule(ruleSet, anchor, null, "us-east-1", sender -> false);
@@ -186,8 +196,6 @@ class CloudFormationSesReceiptRuleIntegrationTest {
         cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()));
         awaitStatus("CREATE_COMPLETE");
         assertEquals(List.of("management", "between", "store"), ruleNames());
-        cloudFormation.describeStacks(stackName, "us-east-1", "000000000000").getFirst()
-                .getResources().get("Rule").getAttributes().remove("__FlociSesReceiptRuleAfter");
         template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", false);
         cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
         awaitStatus("UPDATE_COMPLETE");
