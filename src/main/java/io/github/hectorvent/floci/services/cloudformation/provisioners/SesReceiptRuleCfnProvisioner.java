@@ -88,14 +88,12 @@ public class SesReceiptRuleCfnProvisioner implements CfnResourceProvisioner {
             snapshot.set("rule", MAPPER.valueToTree(previous));
             snapshot.put("after", previousRule(prior, ctx.region()));
             resource.getAttributes().put(UPDATE_ATTR, snapshot.toString());
-            String previousAfter = resource.getAttributes().containsKey(AFTER_ATTR)
-                    ? resource.getAttributes().get(AFTER_ATTR) : ctx.resolvePreviousOptional("After");
-            if (previousAfter != null && previousAfter.isBlank()) {
-                previousAfter = null;
-            }
+            boolean unchangedAfter = resource.getAttributes().containsKey(AFTER_ATTR)
+                    ? Objects.equals(resource.getAttributes().get(AFTER_ATTR), after == null ? "" : after)
+                    : ctx.matchesPreviousOptional("After", after);
             rules.updateReceiptRule(ruleSet, rule, ctx.region(),
                     sender -> identities.isVerifiedSender(sender, ctx.region()));
-            if (!Objects.equals(previousAfter, after)) {
+            if (!unchangedAfter) {
                 rules.setReceiptRulePosition(ruleSet, name, after, ctx.region());
             }
         } else {

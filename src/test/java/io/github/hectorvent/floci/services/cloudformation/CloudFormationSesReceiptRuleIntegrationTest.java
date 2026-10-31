@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
 import io.github.hectorvent.floci.services.ses.SesReceiptRuleService;
 import io.github.hectorvent.floci.services.ses.model.ReceiptRule;
+import io.github.hectorvent.floci.services.ssm.SsmService;
 import io.github.hectorvent.floci.testing.AwsTestClients;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudformation.CloudFormationClient;
@@ -34,6 +36,8 @@ class CloudFormationSesReceiptRuleIntegrationTest {
     SesReceiptRuleService ses;
     @Inject
     CloudFormationService cloudFormation;
+    @Inject
+    SsmService ssm;
     private String stackName;
     private String ruleSet;
 
@@ -188,6 +192,44 @@ class CloudFormationSesReceiptRuleIntegrationTest {
         cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
         awaitStatus("UPDATE_COMPLETE");
         assertEquals(List.of("management", "between", "store"), ruleNames());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false, false", "false, true", "true, false", "true, true"})
+    void dynamicReferenceChangesApplyTheCurrentAnchor(boolean legacy, boolean indexReference) throws Exception {
+        for (String name : List.of("anchor", "other")) {
+            ReceiptRule rule = new ReceiptRule();
+            rule.setName(name);
+            ses.createReceiptRule(ruleSet, rule, null, "us-east-1", sender -> false);
+        }
+        String parameter = "/" + stackName + "/anchor";
+        ssm.putParameter(parameter, indexReference ? "1" : "anchor", "String", null, true, "us-east-1");
+        try {
+            ObjectNode template = (ObjectNode) mapper.readTree(template("store", true));
+            String reference = "{{resolve:ssm:" + parameter + "}}";
+            ObjectNode properties = template.withObject("/Resources/Rule/Properties");
+            if (indexReference) {
+                properties.putObject("After").putArray("Fn::Select").add(reference)
+                        .addArray().add("other").add("anchor");
+            } else {
+                properties.put("After", reference);
+            }
+            cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()));
+            awaitStatus("CREATE_COMPLETE");
+            assertEquals(List.of("other", "anchor", "store"), ruleNames());
+            if (legacy) {
+                cloudFormation.describeStacks(stackName, "us-east-1", "000000000000").getFirst()
+                        .getResources().get("Rule").getAttributes().remove("__FlociSesReceiptRuleAfter");
+            }
+            ssm.putParameter(parameter, indexReference ? "0" : "other", "String", null, true, "us-east-1");
+            template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", false);
+            cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+            awaitStatus("UPDATE_COMPLETE");
+            assertEquals(List.of("other", "store", "anchor"), ruleNames());
+            assertFalse(ses.describeReceiptRule(ruleSet, "store", "us-east-1").isEnabled());
+        } finally {
+            ssm.deleteParameter(parameter, "us-east-1");
+        }
     }
 
     @Test

@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -130,12 +131,16 @@ public record ProvisionContext(CloudFormationTemplateEngine engine, String regio
         return engine.resolve(props.get(name));
     }
 
-    /** Resolves a prior property against the deployment that actually applied it. */
-    public String resolvePreviousOptional(String name) {
+    /**
+     * Compares a prior property against its deployment. A dynamic-dependent value is unknown and
+     * never matches: a fresh service lookup cannot recover the value that deployment applied.
+     */
+    public boolean matchesPreviousOptional(String name, String value) {
         if (priorProperties == null || !priorProperties.has(name) || priorProperties.get(name).isNull()) {
-            return null;
+            return value == null;
         }
-        return (priorEngine == null ? engine : priorEngine).resolve(priorProperties.get(name));
+        return (priorEngine == null ? engine : priorEngine).resolveWithoutDynamicLookup(priorProperties.get(name))
+                .map(previous -> Objects.equals(previous.isBlank() ? null : previous, value)).orElse(false);
     }
 
     /**

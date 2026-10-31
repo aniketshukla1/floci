@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
@@ -84,6 +85,7 @@ public class CloudFormationTemplateEngine {
      * including nested intrinsic calls.
      */
     private int dynamicReferencesSuspended;
+    private int dynamicLookupsForbidden;
 
     /**
      * A minimal engine for a resource provisioned outside any stack (Cloud Control CreateResource).
@@ -240,6 +242,25 @@ public class CloudFormationTemplateEngine {
         } finally {
             dynamicReferencesSuspended--;
         }
+    }
+
+    /**
+     * Resolves a value only when it needs no dynamic service lookup. Empty means the historical
+     * value is unknown, including when a dynamic reference supplies an intrinsic's argument.
+     */
+    public Optional<String> resolveWithoutDynamicLookup(JsonNode node) {
+        dynamicLookupsForbidden++;
+        try {
+            return Optional.of(resolve(node));
+        } catch (DynamicLookupRequired e) {
+            return Optional.empty();
+        } finally {
+            dynamicLookupsForbidden--;
+        }
+    }
+
+    private static final class DynamicLookupRequired extends RuntimeException {
+        private static final long serialVersionUID = 1L;
     }
 
     private String resolveIntrinsic(JsonNode node) {
@@ -432,6 +453,9 @@ public class CloudFormationTemplateEngine {
      * text an intrinsic function (e.g. {@code Fn::Sub}) produces.
      */
     private TextNode resolveDynamicReferences(String value) {
+        if (dynamicLookupsForbidden > 0 && value != null && value.contains("{{resolve:")) {
+            throw new DynamicLookupRequired();
+        }
         if (dynamicReferenceResolver == null || dynamicReferencesSuspended > 0 || value == null
                 || !value.contains("{{resolve:")) {
             return TextNode.valueOf(value);

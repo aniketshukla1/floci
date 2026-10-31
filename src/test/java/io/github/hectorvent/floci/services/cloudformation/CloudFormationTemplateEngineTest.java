@@ -27,6 +27,29 @@ class CloudFormationTemplateEngineTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "\"{{resolve:ssm:/anchor}}\"",
+        "{\"Fn::Select\":[\"{{resolve:ssm:/index}}\",[\"anchor\",\"other\"]]}",
+        "{\"Fn::Select\":[1,{\"Fn::Split\":[\",\",\"{{resolve:ssm:/anchors}}\"]}]}",
+        "{\"Fn::Base64\":\"{{resolve:ssm:/anchor}}\"}",
+        "{\"Fn::Join\":[\"\",[\"{{res\",\"olve:ssm:/anchor}}\"]]}"
+    })
+    void dynamicDependentValuesRemainUnknownWithoutLookingUpCurrentServices(String expression) {
+        List<String> lookups = new ArrayList<>();
+        CloudFormationTemplateEngine engine = CloudFormationTemplateEngine.standalone(
+                "000000000000", "us-east-1", "my-stack", mapper, reference -> {
+                    lookups.add(reference);
+                    return "current";
+                });
+
+        assertTrue(engine.resolveWithoutDynamicLookup(json(expression)).isEmpty());
+        assertTrue(lookups.isEmpty());
+        assertEquals("anchor", engine.resolveWithoutDynamicLookup(json("\"anchor\"")).orElseThrow());
+        assertEquals("current", engine.resolve(json("\"{{resolve:ssm:/anchor}}\"")));
+        assertEquals(List.of("{{resolve:ssm:/anchor}}"), lookups);
+    }
+
     private CloudFormationTemplateEngine engine() {
         return new CloudFormationTemplateEngine("000000000000", "us-east-1", "my-stack",
                 "stack/id", Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), mapper,
