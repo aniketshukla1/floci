@@ -47,8 +47,10 @@ public class AccessAnalyzerController {
 
     @POST
     @Path("/policy/validation")
-    public Response validatePolicy(String body) {
-        return Response.ok(policyValidationService.validate(readTree(body))).build();
+    public Response validatePolicy(String body, @QueryParam("maxResults") String maxResults,
+                                    @QueryParam("nextToken") String nextToken) {
+        return Response.ok(policyValidationService.validate(readTree(body),
+                Pagination.parseMaxResults(maxResults, "ValidationException"), nextToken)).build();
     }
 
     @GET
