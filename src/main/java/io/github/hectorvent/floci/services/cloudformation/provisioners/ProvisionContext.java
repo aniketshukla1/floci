@@ -20,7 +20,14 @@ import java.util.function.Consumer;
  */
 public record ProvisionContext(CloudFormationTemplateEngine engine, String region,
                                String accountId, String stackName, String priorPhysicalId,
-                               Consumer<StackEvent> progress, JsonNode priorProperties) {
+                               Consumer<StackEvent> progress, JsonNode priorProperties,
+                               CloudFormationTemplateEngine priorEngine) {
+
+    public ProvisionContext(CloudFormationTemplateEngine engine, String region,
+                            String accountId, String stackName, String priorPhysicalId,
+                            Consumer<StackEvent> progress, JsonNode priorProperties) {
+        this(engine, region, accountId, stackName, priorPhysicalId, progress, priorProperties, null);
+    }
 
     public ProvisionContext(CloudFormationTemplateEngine engine, String region,
                             String accountId, String stackName, String priorPhysicalId) {
@@ -121,6 +128,14 @@ public record ProvisionContext(CloudFormationTemplateEngine engine, String regio
             return null;
         }
         return engine.resolve(props.get(name));
+    }
+
+    /** Resolves a prior property against the deployment that actually applied it. */
+    public String resolvePreviousOptional(String name) {
+        if (priorProperties == null || !priorProperties.has(name) || priorProperties.get(name).isNull()) {
+            return null;
+        }
+        return (priorEngine == null ? engine : priorEngine).resolve(priorProperties.get(name));
     }
 
     /**

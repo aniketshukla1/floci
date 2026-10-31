@@ -1,5 +1,6 @@
 package io.github.hectorvent.floci.services.cloudformation.provisioners;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.hectorvent.floci.core.common.AwsException;
@@ -105,6 +106,38 @@ class SesReceiptRuleCfnProvisionerTest {
         assertMissing("second", "store");
         provisioner.delete(resource, REGION);
         assertMissing("first", "store");
+    }
+
+    @Test
+    void legacyRuleUsesItsPreviousTemplateAfterWithoutMovingOnContentUpdate() {
+        addRule("anchor", null);
+        ObjectNode props = properties("first", "store").put("After", "anchor");
+        StackResource resource = resource();
+        provisioner.provision(resource, props, context(null));
+        resource.getAttributes().remove("__FlociSesReceiptRuleAfter");
+        addRule("between", "anchor");
+        ObjectNode updated = props.deepCopy();
+        updated.withObject("/Rule").put("Enabled", true);
+
+        provisioner.provision(resource, updated, contextWithPreviousProperties("store", props));
+
+        assertEquals(List.of("anchor", "between", "store"), names());
+        assertTrue(rules.describeReceiptRule("first", "store", REGION).isEnabled());
+    }
+
+    private void addRule(String name, String after) {
+        ReceiptRule rule = new ReceiptRule();
+        rule.setName(name);
+        rules.createReceiptRule("first", rule, after, REGION, sender -> false);
+    }
+
+    private List<String> names() {
+        return rules.describeReceiptRuleSet("first", REGION).getRules().stream().map(ReceiptRule::getName).toList();
+    }
+
+    private ProvisionContext contextWithPreviousProperties(String prior, JsonNode previous) {
+        ProvisionContext ctx = context(prior);
+        return new ProvisionContext(ctx.engine(), REGION, ACCOUNT, "stack", prior, ctx.progress(), previous);
     }
 
     @Test

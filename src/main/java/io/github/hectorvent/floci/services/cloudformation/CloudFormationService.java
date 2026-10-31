@@ -1930,9 +1930,10 @@ public class CloudFormationService implements ResourceProvider {
             Set<String> changedResourceIds = isCreate
                     ? Set.of()
                     : changedResourceIds(stack, templateBody, params, region);
-            JsonNode previousResources = isCreate
-                    ? objectMapper.missingNode()
+            PreviousDeployment previousDeployment = isCreate
+                    ? new PreviousDeployment(objectMapper.missingNode(), null)
                     : previousResources(stack, previousState, region, accountId);
+            JsonNode previousResources = previousDeployment.resources();
             JsonNode template = parseTemplate(templateBody);
             stack.setOriginalTemplateBody(templateBody);
 
@@ -2073,7 +2074,7 @@ public class CloudFormationService implements ResourceProvider {
                                 resource.getPhysicalId(), resource.getAttributes(),
                                 event -> addEvent(stack, logicalId, event.getPhysicalResourceId(), type,
                                         event.getResourceStatus(), event.getResourceStatusReason()),
-                                priorProps);
+                                priorProps, previousDeployment.engine());
                     }
                     resource.setUpdateReplacePolicy(
                             resDef.path("UpdateReplacePolicy").asText(null));
@@ -2928,10 +2929,12 @@ public class CloudFormationService implements ResourceProvider {
      * was never applied and is left out. Missing when there is no previous template, and when it no
      * longer parses: the update then proceeds as if nothing had been declared.
      */
-    private JsonNode previousResources(Stack stack, StackUpdateSnapshot previousState, String region,
-                                       String accountId) {
+    private record PreviousDeployment(JsonNode resources, CloudFormationTemplateEngine engine) {}
+
+    private PreviousDeployment previousResources(Stack stack, StackUpdateSnapshot previousState, String region,
+                                                   String accountId) {
         if (previousState.templateBody() == null) {
-            return objectMapper.missingNode();
+            return new PreviousDeployment(objectMapper.missingNode(), null);
         }
         try {
             JsonNode previousTemplate = parseTemplate(previousState.templateBody());
@@ -2941,6 +2944,25 @@ public class CloudFormationService implements ResourceProvider {
                     ? previousState.parameters() : previousState.resolvedParameters();
             Map<String, Boolean> conditions = resolveConditions(previousTemplate, previousParams, stack, region,
                     accountId);
+            Map<String, String> physicalIds = new LinkedHashMap<>();
+            Map<String, Map<String, String>> attributes = new LinkedHashMap<>();
+            previousState.resources().forEach((id, resource) -> {
+                if (resource.getPhysicalId() != null) {
+                    physicalIds.put(id, resource.getPhysicalId());
+                    attributes.put(id, resource.getAttributes());
+                }
+            });
+            Map<String, JsonNode> mappings = new HashMap<>();
+            previousTemplate.path("Mappings").fields().forEachRemaining(e -> mappings.put(e.getKey(), e.getValue()));
+            CloudFormationTemplateEngine engine = new CloudFormationTemplateEngine(accountId, region,
+                    stack.getStackName(), stack.getStackId(), previousParams, physicalIds, attributes, conditions,
+                    mappings, objectMapper, name -> exports.get(accountExportKey(accountId, exportKey(region, name))),
+                    value -> dynamicReferences.resolveDynamicReferences(value, region, false),
+                    (name, output, outputRegion, roleArn) ->
+                            resolveStackOutput(accountId, name, output, outputRegion, roleArn),
+                    parameterTypes(previousTemplate),
+                    (id, attribute, value) -> dispatcher.attributeValue(
+                            previousTemplate.path("Resources").path(id).path("Type").asText(), attribute, value));
             ObjectNode resources = objectMapper.createObjectNode();
             for (Map.Entry<String, JsonNode> entry : previousTemplate.path("Resources").properties()) {
                 JsonNode definition = entry.getValue();
@@ -2950,11 +2972,11 @@ public class CloudFormationService implements ResourceProvider {
                     applied.set("Properties", appliedProperties(definition.path("Properties"), conditions));
                 }
             }
-            return resources;
+            return new PreviousDeployment(resources, engine);
         } catch (Exception e) {
             LOG.warnv("Previous template of stack {0} could not be evaluated ({1}); its updated resources see no prior properties",
                     stack.getStackName(), e.getMessage());
-            return objectMapper.missingNode();
+            return new PreviousDeployment(objectMapper.missingNode(), null);
         }
     }
 

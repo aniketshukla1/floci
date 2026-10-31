@@ -99,6 +99,15 @@ public class CfnResourceDispatcher {
                                    String stackName, String existingPhysicalId,
                                    Map<String, String> existingAttributes, Consumer<StackEvent> progress,
                                    JsonNode priorProperties) {
+        return provision(logicalId, resourceType, properties, engine, region, accountId, stackName,
+                existingPhysicalId, existingAttributes, progress, priorProperties, null);
+    }
+
+    public StackResource provision(String logicalId, String resourceType, JsonNode properties,
+                                   CloudFormationTemplateEngine engine, String region, String accountId,
+                                   String stackName, String existingPhysicalId,
+                                   Map<String, String> existingAttributes, Consumer<StackEvent> progress,
+                                   JsonNode priorProperties, CloudFormationTemplateEngine priorEngine) {
         StackResource resource = new StackResource();
         resource.setLogicalId(logicalId);
         resource.setResourceType(resourceType);
@@ -110,7 +119,7 @@ public class CfnResourceDispatcher {
             if (owner != null) {
                 owner.provision(resource, properties,
                         new ProvisionContext(engine, region, accountId, stackName, existingPhysicalId, progress,
-                                priorProperties));
+                                priorProperties, priorEngine));
                 // A provisioner that migrated a stub without writing its own Arn would leave the
                 // stub's, and the real resource would read as a stub on its next update.
                 String arn = resource.getAttributes().get("Arn");

@@ -16,6 +16,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudformation.CloudFormationClient;
 import software.amazon.awssdk.services.cloudformation.model.CloudFormationException;
+import software.amazon.awssdk.services.cloudformation.model.Parameter;
 import software.amazon.awssdk.services.cloudformation.model.Stack;
 
 import java.time.Duration;
@@ -31,6 +32,8 @@ class CloudFormationSesReceiptRuleIntegrationTest {
     private CloudFormationClient cfn;
     @Inject
     SesReceiptRuleService ses;
+    @Inject
+    CloudFormationService cloudFormation;
     private String stackName;
     private String ruleSet;
 
@@ -102,6 +105,116 @@ class CloudFormationSesReceiptRuleIntegrationTest {
         assertTrue(ses.describeReceiptRule(ruleSet, "store", "us-east-1").isEnabled());
         assertEquals(List.of("anchor", "store"), ses.describeReceiptRuleSet(ruleSet, "us-east-1")
                 .getRules().stream().map(ReceiptRule::getName).toList());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void contentOnlyUpdatesKeepTheExistingOrder(boolean explicitAfter) throws Exception {
+        ReceiptRule anchor = new ReceiptRule();
+        anchor.setName("anchor");
+        ses.createReceiptRule(ruleSet, anchor, null, "us-east-1", sender -> false);
+        ObjectNode template = (ObjectNode) mapper.readTree(template("first", true));
+        ObjectNode second = template.withObject("/Resources").putObject("Second");
+        second.put("Type", "AWS::SES::ReceiptRule").put("DependsOn", "Rule");
+        ObjectNode secondProperties = second.putObject("Properties").put("RuleSetName", ruleSet);
+        secondProperties.putObject("Rule").put("Name", "second");
+        if (explicitAfter) {
+            template.withObject("/Resources/Rule/Properties").put("After", "anchor");
+            secondProperties.put("After", "anchor");
+        }
+        cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("CREATE_COMPLETE");
+        List<String> expected = explicitAfter ? List.of("anchor", "second", "first")
+                : List.of("second", "first", "anchor");
+        assertEquals(expected, ruleNames());
+        template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", false);
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(expected, ruleNames());
+        assertFalse(ses.describeReceiptRule(ruleSet, "first", "us-east-1").isEnabled());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void parameterChangesRepositionEvenWhenTheAfterExpressionIsUnchanged(boolean legacy) throws Exception {
+        for (String name : List.of("anchor", "other")) {
+            ReceiptRule rule = new ReceiptRule();
+            rule.setName(name);
+            ses.createReceiptRule(ruleSet, rule, null, "us-east-1", sender -> false);
+        }
+        ObjectNode template = (ObjectNode) mapper.readTree(template("store", true));
+        template.putObject("Parameters").putObject("AfterAnchor").put("Type", "String");
+        template.withObject("/Resources/Rule/Properties").putObject("After").put("Ref", "AfterAnchor");
+        cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()).parameters(
+                Parameter.builder().parameterKey("AfterAnchor").parameterValue("anchor").build()));
+        awaitStatus("CREATE_COMPLETE");
+        assertEquals(List.of("other", "anchor", "store"), ruleNames());
+        if (legacy) {
+            cloudFormation.describeStacks(stackName, "us-east-1", "000000000000").getFirst()
+                    .getResources().get("Rule").getAttributes().remove("__FlociSesReceiptRuleAfter");
+        }
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()).parameters(
+                Parameter.builder().parameterKey("AfterAnchor").parameterValue("other").build()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(List.of("other", "store", "anchor"), ruleNames());
+    }
+
+    @Test
+    void legacyTypedGetAttKeepsThePositionOnAContentOnlyUpdate() throws Exception {
+        ReceiptRule anchor = new ReceiptRule();
+        anchor.setName("management");
+        ses.createReceiptRule(ruleSet, anchor, null, "us-east-1", sender -> false);
+        ObjectNode template = (ObjectNode) mapper.readTree(template("store", true));
+        ObjectNode resources = template.withObject("/Resources");
+        resources.putObject("Topic").put("Type", "AWS::SNS::Topic").putObject("Properties")
+                .put("TopicName", stackName + "-events");
+        ObjectNode subscription = resources.putObject("Subscription").put("Type", "AWS::Redshift::EventSubscription")
+                .putObject("Properties").put("SubscriptionName", stackName + "-subscription")
+                .put("SourceType", "cluster");
+        subscription.putObject("SnsTopicArn").put("Ref", "Topic");
+        subscription.putArray("EventCategories").add("management");
+        template.withObject("/Resources/Rule/Properties").putObject("After").putArray("Fn::Select")
+                .add(0).addObject().putArray("Fn::GetAtt").add("Subscription").add("EventCategoriesList");
+        ObjectNode second = resources.putObject("Second").put("Type", "AWS::SES::ReceiptRule")
+                .put("DependsOn", "Rule").putObject("Properties").put("RuleSetName", ruleSet)
+                .put("After", "management");
+        second.putObject("Rule").put("Name", "between");
+        cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("CREATE_COMPLETE");
+        assertEquals(List.of("management", "between", "store"), ruleNames());
+        cloudFormation.describeStacks(stackName, "us-east-1", "000000000000").getFirst()
+                .getResources().get("Rule").getAttributes().remove("__FlociSesReceiptRuleAfter");
+        template.withObject("/Resources/Rule/Properties/Rule").put("Enabled", false);
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(List.of("management", "between", "store"), ruleNames());
+    }
+
+    @Test
+    void changingAndRemovingAfterStillRepositionsTheRule() throws Exception {
+        ReceiptRule anchor = new ReceiptRule();
+        anchor.setName("anchor");
+        ses.createReceiptRule(ruleSet, anchor, null, "us-east-1", sender -> false);
+        ObjectNode template = (ObjectNode) mapper.readTree(template("first", true));
+        template.withObject("/Resources/Rule/Properties").put("After", "anchor");
+        ObjectNode second = template.withObject("/Resources").putObject("Second");
+        second.put("Type", "AWS::SES::ReceiptRule").put("DependsOn", "Rule");
+        second.putObject("Properties").put("RuleSetName", ruleSet).putObject("Rule").put("Name", "second");
+        cfn.createStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("CREATE_COMPLETE");
+        assertEquals(List.of("second", "anchor", "first"), ruleNames());
+        template.withObject("/Resources/Rule/Properties").put("After", "second");
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(List.of("second", "first", "anchor"), ruleNames());
+        template.withObject("/Resources/Rule/Properties").remove("After");
+        cfn.updateStack(r -> r.stackName(stackName).templateBody(template.toString()));
+        awaitStatus("UPDATE_COMPLETE");
+        assertEquals(List.of("first", "second", "anchor"), ruleNames());
+    }
+
+    private List<String> ruleNames() {
+        return ses.describeReceiptRuleSet(ruleSet, "us-east-1").getRules().stream().map(ReceiptRule::getName).toList();
     }
 
     @Test

@@ -16,6 +16,7 @@ import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 @ApplicationScoped
@@ -23,6 +24,7 @@ public class SesReceiptRuleCfnProvisioner implements CfnResourceProvisioner {
     private static final String TYPE = "AWS::SES::ReceiptRule";
     private static final String SET_ATTR = "__FlociSesReceiptRuleSet";
     private static final String MODE_ATTR = "__FlociSesReceiptRuleNameMode";
+    private static final String AFTER_ATTR = "__FlociSesReceiptRuleAfter";
     private static final String UPDATE_ATTR = "__FlociSesReceiptRuleUpdate";
     private static final String CLEANUP_ATTR = "__FlociSesReceiptRuleCleanup";
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -86,9 +88,16 @@ public class SesReceiptRuleCfnProvisioner implements CfnResourceProvisioner {
             snapshot.set("rule", MAPPER.valueToTree(previous));
             snapshot.put("after", previousRule(prior, ctx.region()));
             resource.getAttributes().put(UPDATE_ATTR, snapshot.toString());
+            String previousAfter = resource.getAttributes().containsKey(AFTER_ATTR)
+                    ? resource.getAttributes().get(AFTER_ATTR) : ctx.resolvePreviousOptional("After");
+            if (previousAfter != null && previousAfter.isBlank()) {
+                previousAfter = null;
+            }
             rules.updateReceiptRule(ruleSet, rule, ctx.region(),
                     sender -> identities.isVerifiedSender(sender, ctx.region()));
-            rules.setReceiptRulePosition(ruleSet, name, after, ctx.region());
+            if (!Objects.equals(previousAfter, after)) {
+                rules.setReceiptRulePosition(ruleSet, name, after, ctx.region());
+            }
         } else {
             rules.createReceiptRule(ruleSet, rule, after, ctx.region(),
                     sender -> identities.isVerifiedSender(sender, ctx.region()));
@@ -101,6 +110,7 @@ public class SesReceiptRuleCfnProvisioner implements CfnResourceProvisioner {
         }
         setIdentity(resource, target);
         resource.getAttributes().put(MODE_ATTR, explicitName == null ? "generated" : "explicit");
+        resource.getAttributes().put(AFTER_ATTR, after == null ? "" : after);
         resource.getAttributes().put(CfnRollback.ROLLBACK_OWNED_ATTR, "true");
     }
 

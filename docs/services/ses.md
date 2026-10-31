@@ -554,7 +554,9 @@ The body shapes are vendored in `src/main/resources/aws/sesv2-request-shapes.jso
 through the SES API first. `Ref` and `Fn::GetAtt RuleName` return the stored rule's name. A missing
 `Rule.Name` gets a generated name that remains stable across updates.
 
-Rule contents and `After` update in place. Changing the rule name or `RuleSetName` creates a
+Rule contents and `After` update in place. Content-only updates preserve the rule's position;
+changing the resolved `After` value repositions it, and removing `After` moves it to the front.
+Changing the rule name or `RuleSetName` creates a
 replacement; the old rule is deleted after the stack update commits unless `UpdateReplacePolicy`
 is `Retain`. Failed updates restore the previous contents and ordering, and stack deletion removes
 the managed rule. Actions use the same local-target validation as the SES API.
